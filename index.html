@@ -1,0 +1,86 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>my little agent</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link
+    href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:ital,wght@0,400;0,500;1,400&family=IBM+Plex+Sans:wght@300;400;500&display=swap"
+    rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+</head>
+
+<body>
+
+  <aside>
+    <div class="logo">yay yippie learning<br><span>// mcp agent</span></div>
+
+    <div>
+      <div class="section-label">Model</div>
+      <div class="config-group">
+        <div class="config-row">
+          <label>ollama model</label>
+          <input id="cfg-model" type="text" placeholder="gemma4:2b">
+        </div>
+        <div class="config-row">
+          <label>groq model</label>
+          <input id="cfg-groq-model" type="text" placeholder="llama-3.1-8b-instant">
+        </div>
+        <div class="toggle-row">
+          <label>use groq</label>
+          <label class="toggle">
+            <input id="cfg-use-groq" type="checkbox">
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
+      </div>
+    </div>
+
+    <div>
+      <div class="section-label">Search</div>
+      <div class="config-group">
+        <div class="range-row">
+          <label>max searches/turn <span id="max-searches-val">5</span></label>
+          <input id="cfg-max-searches" type="range" min="1" max="10" value="5">
+        </div>
+      </div>
+    </div>
+
+    <div>
+      <div class="section-label">System Prompt</div>
+      <div class="config-row">
+        <textarea id="cfg-system-prompt"
+          rows="4">You are a helpful assistant with access to web search tools. Use web_search to look up current information when needed. Always cite your sources.</textarea>
+      </div>
+    </div>
+
+    <button class="btn btn-apply">apply config</button>
+    <button class="btn btn-clear">clear history</button>
+
+    <div class="status-dot">
+      <div class="dot" id="status-dot"></div>
+      <span id="status-text">connecting...</span>
+    </div>
+  </aside>
+
+  <main>
+    <div id="messages"></div>
+
+    <div class="input-area">
+      <div class="input-wrap">
+        <textarea id="user-input" placeholder="ask something..." rows="1"></textarea>
+        <button id="send-btn">send</button>
+      </div>
+      <div class="hint">enter to send · shift+enter for newline</div>
+    </div>
+  </main>
+
+  <div class="toast" id="toast"></div>
+
+  <script src="app.js" defer></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/9.1.6/marked.min.js"></script>
+</body>
+
+</html>
