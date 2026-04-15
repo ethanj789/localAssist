@@ -29,8 +29,8 @@ CONFIG = {
         "Never attempt to write, edit, or delete files — only read and suggest changes in chat."
     )),
 }
-SUMMARY_MODEL = "meta-llama/llama-4-scout-17b-16e-instruct"  # always use small model for compression tasks
-# SUMMARY_MODEL = "llama-3.108b-instant"
+# SUMMARY_MODEL = "meta-llama/llama-4-scout-17b-16e-instruct"  # always use small model for compression tasks
+SUMMARY_MODEL = "llama-3.1-8b-instant"
 
 # history options
 MAX_HISTORY = 10
