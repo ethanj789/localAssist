@@ -8,7 +8,7 @@ import httpx
 
 from config import (
     CONFIG, MAX_HISTORY, SUMMARIZE_THRESHOLD, SUMMARIZE_KEEP_LAST,
-    CODING_MODEL, load_memory, select_groq_model
+    CODING_MODEL, SUMMARY_MODEL, load_memory, select_groq_model
 )
 
 log = logging.getLogger(__name__)
@@ -46,7 +46,7 @@ async def _maybe_summarize_history(groq_client) -> None:
         return
 
     summary_response = await groq_client.chat.completions.create(
-        model=CONFIG["groq_model"],
+        model=SUMMARY_MODEL,
         messages=[
             {"role": "system", "content": "Summarize the following conversation history concisely in 3-5 sentences, preserving key facts and context."},
             {"role": "user", "content": json.dumps(summarizable)}
@@ -67,12 +67,13 @@ async def _summarize_tool_result(groq_client, tool_name: str, result: str) -> st
         return result
     try:
         summary = await groq_client.chat.completions.create(
-            model=CONFIG["groq_model"],
+            model=SUMMARY_MODEL,
             messages=[
                 {"role": "system", "content": (
                     "Summarize this search result in 3-4 sentences. "
-                    "Preserve all key facts, numbers, dates, URLs, and names. "
-                    "Be concise but don't lose important details."
+                    "Preserve ALL URLs exactly as they appear — never paraphrase or omit them. "
+                    "Preserve all key facts, numbers, dates, and names. "
+                    "Be concise but don't lose important details." 
                 )},
                 {"role": "user", "content": result}
             ],
@@ -135,22 +136,36 @@ async def agent_loop(user_message: str, mcp) -> AsyncGenerator[str, None]:
                     system = system + "\n\n" + memory
 
                 if CONFIG["use_groq"]:
-                    response = await groq_client.chat.completions.create(
-                        model=current_model,
-                        messages=[
-                            {"role": "system", "content": system},
-                            *trimmed_history,
-                        ],
-                        tools=ollama_tools if search_count < max_searches else [],
-                        temperature=CONFIG["temperature"],
-                        max_completion_tokens=CONFIG["max_tokens"],
-                    )
+                    try: 
+                        yield _sse("model", json.dumps({
+                            "provider": "groq",
+                            "model": current_model
+                        }))
+
+                        response = await groq_client.chat.completions.create(
+                            model=current_model,
+                            messages=[
+                                {"role": "system", "content": system},
+                                *trimmed_history,
+                            ],
+                            tools=ollama_tools if search_count < max_searches else [],
+                            temperature=CONFIG["temperature"],
+                            max_completion_tokens=CONFIG["max_tokens"],
+                        )
+                    except Exception as e:
+                        if hasattr(e, 'response'):
+                            log.error("Groq 400 body: %s", e.response.text)
+                        raise
                     msg = response.choices[0].message
                     tool_calls = msg.tool_calls or []
                     content = msg.content or ""
                     log.info("groq response | content=%s | tool_calls=%s", content, tool_calls)
                     yield _sse("status", "groq responded")
                 else:
+                    yield _sse("model", json.dumps({
+                        "provider": "ollama",
+                        "model": CONFIG["model"]
+                    }))
                     payload = {
                         "model": CONFIG["model"],
                         "messages": [

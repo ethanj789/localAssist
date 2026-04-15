@@ -68,6 +68,8 @@ async def list_tools() -> list[types.Tool]:
                 description=(
                     "Fetch and extract readable text content from a web URL. "
                     "Only use this for http/https URLs from the internet, never for local files."
+                    "Note: some major news sites (CNN, WSJ, NYT) block content extraction. "
+                    "If a fetch fails, try a different source from the search results."
                 ),
                 inputSchema={
                 "type": "object",

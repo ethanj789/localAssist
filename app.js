@@ -263,8 +263,13 @@ async function sendMessage() {
                         aBody.appendChild(meta)
                     }
                 }
-                if (event === 'model_upgrade') {
-                    appendPill(aDiv, `switching to ${data}`, 'done')
+                if (event === 'model') {
+                    const info = JSON.parse(data)
+                    appendPill(
+                        aDiv,
+                        `model: ${info.provider}/${info.model}`,
+                        'done'
+                    )
                 }
             }
         }
