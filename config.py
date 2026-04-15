@@ -31,6 +31,9 @@ CONFIG = {
 }
 # SUMMARY_MODEL = "meta-llama/llama-4-scout-17b-16e-instruct"  # always use small model for compression tasks
 SUMMARY_MODEL = "llama-3.1-8b-instant"
+SMALL_MODEL = "llama-3.1-8b-instant"
+RESPONSE_MODEL = "meta-llama/llama-4-scout-17b-16e-instruct"
+CODING_MODEL = "llama-3.3-70b-versatile"
 
 # history options
 MAX_HISTORY = 10
