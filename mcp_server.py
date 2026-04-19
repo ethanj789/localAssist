@@ -192,31 +192,61 @@ def _ddg_search(query: str) -> list[dict]:
         return []
 
 # ── Page fetch implementation ─────────────────────────────────────────────────
+# async def _fetch_webpage(url: str) -> list[types.TextContent]:
+#     log.info("fetch_webpage | url=%s", url)
+#     try:
+#         downloaded = trafilatura.fetch_url(url)
+#         if not downloaded:
+#             return [types.TextContent(type="text", text=f"Could not fetch: {url}")]
+
+#         text = trafilatura.extract(
+#             downloaded,
+#             include_comments=False,
+#             include_tables=True,
+#             no_fallback=False
+#         )
+
+#         if not text:
+#             return [types.TextContent(type="text", text=f"No readable content extracted from: {url}")]
+
+#         if len(text) > MAX_TEXT_CHARS:
+#             text = text[:MAX_TEXT_CHARS] + f"\n\n[... truncated at {MAX_TEXT_CHARS} chars]"
+
+#         return [types.TextContent(type="text", text=f"Content from {url}:\n\n{text}")]
+
+#     except Exception as e:
+#         log.error("fetch_webpage error | url=%s | %s", url, e)
+#         return [types.TextContent(type="text", text=f"Error fetching page: {e}")]
+
+#switch to tavily's api
 async def _fetch_webpage(url: str) -> list[types.TextContent]:
-    log.info("fetch_webpage | url=%s", url)
     try:
-        downloaded = trafilatura.fetch_url(url)
-        if not downloaded:
-            return [types.TextContent(type="text", text=f"Could not fetch: {url}")]
+        client = TavilyClient(api_key=TAVILY_API_KEY)
 
-        text = trafilatura.extract(
-            downloaded,
-            include_comments=False,
-            include_tables=True,
-            no_fallback=False
-        )
+        resp = client.extract(urls=[url])
 
-        if not text:
-            return [types.TextContent(type="text", text=f"No readable content extracted from: {url}")]
+        results = resp.get("results", [])
+        if not results:
+            return [types.TextContent(type="text", text="No content found.")]
 
-        if len(text) > MAX_TEXT_CHARS:
-            text = text[:MAX_TEXT_CHARS] + f"\n\n[... truncated at {MAX_TEXT_CHARS} chars]"
+        r = results[0]
 
-        return [types.TextContent(type="text", text=f"Content from {url}:\n\n{text}")]
+        title = r.get("title", "")
+        content = r.get("content", "")
+        failed = resp.get("failed_results", [])
+        if failed:
+            log.warning("fetch_webpage | failed_results=%s", failed)
+        # truncate for small models
+        MAX_CHARS = 2000
+        if len(content) > MAX_CHARS:
+            content = content[:MAX_CHARS] + "\n...[truncated]"
+
+        text = f"Title: {title}\nURL: {url}\n\nContent:\n{content}"        
+        return [types.TextContent(type="text", text=text)]
 
     except Exception as e:
-        log.error("fetch_webpage error | url=%s | %s", url, e)
-        return [types.TextContent(type="text", text=f"Error fetching page: {e}")]
+        log.error("fetch_webpage error: %s", e)
+        return [types.TextContent(type="text", text="Failed to fetch webpage.")]
 
 async def _list_files() -> list[types.TextContent]:
     log.info("list_files | listing workspace root")
