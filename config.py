@@ -32,6 +32,10 @@ CONFIG = {
         "If the user asks you to review, debug, or improve existing code or files, call list_files first to see what's available, then read_file on relevant files before responding. "
         "If the user asks you to generate, write, or explain code from scratch, just do it directly without checking the workspace. "
         "Never attempt to write, edit, or delete files — only read and suggest changes in chat."
+
+        "Before calling a tool, ask: "
+        "Is this explicitly asking for external or real-time data?"
+        "If NO → do not call a tool."
     )),
 }
 # SUMMARY_MODEL = "meta-llama/llama-4-scout-17b-16e-instruct"  # always use small model for compression tasks

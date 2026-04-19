@@ -3,7 +3,7 @@ import json
 import traceback
 import logging
 from typing import AsyncGenerator
-
+import groq
 import httpx
 
 from config import (
@@ -120,160 +120,187 @@ async def agent_loop(user_message: str, mcp) -> AsyncGenerator[str, None]:
 
         async with httpx.AsyncClient(timeout=240) as client:
             while True:
-                trimmed_history = _prune_history(conversation_history[-MAX_HISTORY:])
-                is_final_call = len(trimmed_history) > 0 and trimmed_history[-1]["role"] == "tool"
-                current_model = answer_model if is_final_call else tool_model
+                try:
+                    trimmed_history = _prune_history(conversation_history[-MAX_HISTORY:])
+                    is_final_call = len(trimmed_history) > 0 and trimmed_history[-1]["role"] == "tool"
+                    current_model = answer_model if is_final_call else tool_model
 
-                groq_client = None
-                if CONFIG["use_groq"]:
-                    from groq import AsyncGroq
-                    groq_client = AsyncGroq(api_key=CONFIG["groq_api_key"])
-                    await _maybe_summarize_history(groq_client)
+                    groq_client = None
+                    if CONFIG["use_groq"]:
+                        from groq import AsyncGroq
+                        groq_client = AsyncGroq(api_key=CONFIG["groq_api_key"])
+                        await _maybe_summarize_history(groq_client)
 
-                memory = load_memory()
-                system = CONFIG["system_prompt"]
-                if memory:
-                    system = system + "\n\n" + memory
+                    memory = load_memory()
+                    system = CONFIG["system_prompt"]
+                    if memory:
+                        system = system + "\n\n" + memory
 
-                if CONFIG["use_groq"]:
-                    try: 
+                    if CONFIG["use_groq"]:
+                        try: 
+                            yield _sse("model", json.dumps({
+                                "provider": "groq",
+                                "model": current_model
+                            }))
+
+                            response = await groq_client.chat.completions.create(
+                                model=current_model,
+                                messages=[
+                                    {"role": "system", "content": system},
+                                    *trimmed_history,
+                                ],
+                                tools=ollama_tools if search_count < max_searches else [],
+                                temperature=CONFIG["temperature"],
+                                max_completion_tokens=CONFIG["max_tokens"],
+                            )
+                        except Exception as e:
+                            if hasattr(e, 'response'):
+                                log.error("Groq 400 body: %s", e.response.text)
+                            raise
+                        msg = response.choices[0].message
+                        tool_calls = msg.tool_calls or []
+                        content = msg.content or ""
+                        log.info("groq response | content=%s | tool_calls=%s", content, tool_calls)
+                        yield _sse("status", "groq responded")
+                    else:
                         yield _sse("model", json.dumps({
-                            "provider": "groq",
-                            "model": current_model
+                            "provider": "ollama",
+                            "model": CONFIG["model"]
                         }))
+                        payload = {
+                            "model": CONFIG["model"],
+                            "messages": [
+                                {"role": "system", "content": system},
+                                *trimmed_history,
+                            ],
+                            "tools": ollama_tools if search_count < max_searches else [],
+                            "options": {
+                                "temperature": CONFIG["temperature"],
+                                "num_predict": CONFIG["max_tokens"],
+                            },
+                            "stream": False,
+                        }
+                        resp = await client.post(f"{CONFIG['ollama_base_url']}/api/chat", json=payload)
+                        yield _sse("status", f"ollama responded: {resp.status_code}")
+                        resp.raise_for_status()
+                        data = resp.json()
+                        msg = data.get("message", {})
+                        tool_calls = msg.get("tool_calls", [])
+                        content = msg.get("content", "")
 
+                    if not tool_calls:
+                        conversation_history.append({"role": "assistant", "content": content})
+                        for word in content.split(" "):
+                            yield _sse("token", word + " ")
+                            await asyncio.sleep(0.01)
+                        yield _sse("done", json.dumps({
+                            "searches_used": search_count,
+                            "max_searches": max_searches
+                        }))
+                        return
+
+                    if CONFIG["use_groq"]:
+                        tool_calls_for_history = [
+                            {
+                                "id": tc.id,
+                                "type": "function",
+                                "function": {
+                                    "name": tc.function.name,
+                                    "arguments": tc.function.arguments if tc.function.arguments and tc.function.arguments != "null" else "{}"
+                                }
+                            }
+                            for tc in tool_calls
+                        ]
+                    else:
+                        tool_calls_for_history = tool_calls
+
+                    conversation_history.append({"role": "assistant", "content": "", "tool_calls": tool_calls_for_history})
+
+                    for tc in tool_calls:
+                        if CONFIG["use_groq"]:
+                            name = tc.function.name
+                            raw_args = tc.function.arguments
+                            args = json.loads(raw_args) if raw_args and raw_args != "null" else {}
+                        else:
+                            fn = tc.get("function", {})
+                            name = fn.get("name", "")
+                            args = fn.get("arguments", {})
+
+                        yield _sse("tool_requested", json.dumps({"tool": name, "args": args}))
+
+                        if search_count >= max_searches and name in ("web_search", "fetch_webpage"):
+                            yield _sse("status", f"Search cap ({max_searches}) reached, answering from context...")
+                            tool_call_id = tc.id if CONFIG["use_groq"] else f"call_{name}"
+                            conversation_history.append({
+                                "role": "tool",
+                                "tool_call_id": tool_call_id,
+                                "content": f"Search limit of {max_searches} reached."
+                            })
+                            continue
+
+                        event_payload = {"tool": name, "args": args}
+                        if name == "web_search":
+                            event_payload["count"] = search_count + 1
+                            event_payload["max"] = max_searches
+                            event_payload["label"] = f'searching: "{args.get("query", "")}" ({search_count + 1}/{max_searches})'
+                        elif name == "fetch_webpage":
+                            event_payload["label"] = f'fetching: {args.get("url", "")}'
+                        elif name == "list_files":
+                            event_payload["label"] = "listing workspace files"
+                        elif name == "read_file":
+                            event_payload["label"] = f'reading: {args.get("path", "")}'
+                        elif name == "calculate":
+                            event_payload["label"] = f'calculating: {args.get("expression", "")}'
+                        elif name == "recent_events":
+                            event_payload["label"] = f'getting recent info for: {args.get("infoType", "")}, for/about {args.get("details","")}'
+                        else:
+                            event_payload["label"] = f'{name}: {json.dumps(args)}'
+
+                        yield _sse("searching", json.dumps(event_payload))
+                        log.info("tool_call | %s | args=%s", name, json.dumps(args))
+
+                        result = await mcp.call_tool(name, args)
+
+                        if CONFIG["use_groq"] and groq_client and name in ("web_search", "fetch_webpage"):
+                            result = await _summarize_tool_result(groq_client, name, result)
+                            yield _sse("status", f"summarized {name} result")
+
+                        if name in ("web_search", "fetch_webpage"):
+                            search_count += 1
+
+                        yield _sse("search_result", json.dumps({"tool": name, "count": search_count}))
+                        tool_call_id = tc.id if CONFIG["use_groq"] else f"call_{name}"
+                        conversation_history.append({
+                            "role": "tool",
+                            "tool_call_id": tool_call_id,
+                            "content": result
+                        })
+                except groq.BadRequestError as e:
+                    if hasattr(e, 'response'):
+                        log.error("Groq 400 body: %s", e.response.text)
+                    if "tool_use_failed" in str(e):
+                        log.warning("tool_use_failed — retrying without tools")
                         response = await groq_client.chat.completions.create(
                             model=current_model,
                             messages=[
                                 {"role": "system", "content": system},
                                 *trimmed_history,
                             ],
-                            tools=ollama_tools if search_count < max_searches else [],
                             temperature=CONFIG["temperature"],
                             max_completion_tokens=CONFIG["max_tokens"],
                         )
-                    except Exception as e:
-                        if hasattr(e, 'response'):
-                            log.error("Groq 400 body: %s", e.response.text)
-                        raise
-                    msg = response.choices[0].message
-                    tool_calls = msg.tool_calls or []
-                    content = msg.content or ""
-                    log.info("groq response | content=%s | tool_calls=%s", content, tool_calls)
-                    yield _sse("status", "groq responded")
-                else:
-                    yield _sse("model", json.dumps({
-                        "provider": "ollama",
-                        "model": CONFIG["model"]
-                    }))
-                    payload = {
-                        "model": CONFIG["model"],
-                        "messages": [
-                            {"role": "system", "content": system},
-                            *trimmed_history,
-                        ],
-                        "tools": ollama_tools if search_count < max_searches else [],
-                        "options": {
-                            "temperature": CONFIG["temperature"],
-                            "num_predict": CONFIG["max_tokens"],
-                        },
-                        "stream": False,
-                    }
-                    resp = await client.post(f"{CONFIG['ollama_base_url']}/api/chat", json=payload)
-                    yield _sse("status", f"ollama responded: {resp.status_code}")
-                    resp.raise_for_status()
-                    data = resp.json()
-                    msg = data.get("message", {})
-                    tool_calls = msg.get("tool_calls", [])
-                    content = msg.get("content", "")
-
-                if not tool_calls:
-                    conversation_history.append({"role": "assistant", "content": content})
-                    for word in content.split(" "):
-                        yield _sse("token", word + " ")
-                        await asyncio.sleep(0.01)
-                    yield _sse("done", json.dumps({
-                        "searches_used": search_count,
-                        "max_searches": max_searches
-                    }))
-                    return
-
-                if CONFIG["use_groq"]:
-                    tool_calls_for_history = [
-                        {
-                            "id": tc.id,
-                            "type": "function",
-                            "function": {
-                                "name": tc.function.name,
-                                "arguments": tc.function.arguments if tc.function.arguments and tc.function.arguments != "null" else "{}"
-                            }
-                        }
-                        for tc in tool_calls
-                    ]
-                else:
-                    tool_calls_for_history = tool_calls
-
-                conversation_history.append({"role": "assistant", "content": "", "tool_calls": tool_calls_for_history})
-
-                for tc in tool_calls:
-                    if CONFIG["use_groq"]:
-                        name = tc.function.name
-                        raw_args = tc.function.arguments
-                        args = json.loads(raw_args) if raw_args and raw_args != "null" else {}
-                    else:
-                        fn = tc.get("function", {})
-                        name = fn.get("name", "")
-                        args = fn.get("arguments", {})
-
-                    yield _sse("tool_requested", json.dumps({"tool": name, "args": args}))
-
-                    if search_count >= max_searches and name in ("web_search", "fetch_webpage"):
-                        yield _sse("status", f"Search cap ({max_searches}) reached, answering from context...")
-                        tool_call_id = tc.id if CONFIG["use_groq"] else f"call_{name}"
-                        conversation_history.append({
-                            "role": "tool",
-                            "tool_call_id": tool_call_id,
-                            "content": f"Search limit of {max_searches} reached."
-                        })
-                        continue
-
-                    event_payload = {"tool": name, "args": args}
-                    if name == "web_search":
-                        event_payload["count"] = search_count + 1
-                        event_payload["max"] = max_searches
-                        event_payload["label"] = f'searching: "{args.get("query", "")}" ({search_count + 1}/{max_searches})'
-                    elif name == "fetch_webpage":
-                        event_payload["label"] = f'fetching: {args.get("url", "")}'
-                    elif name == "list_files":
-                        event_payload["label"] = "listing workspace files"
-                    elif name == "read_file":
-                        event_payload["label"] = f'reading: {args.get("path", "")}'
-                    elif name == "calculate":
-                        event_payload["label"] = f'calculating: {args.get("expression", "")}'
-                    elif name == "recent_events":
-                        event_payload["label"] = f'getting recent info for: {args.get("infoType", "")}, for/about {args.get("details","")}'
-                    else:
-                        event_payload["label"] = f'{name}: {json.dumps(args)}'
-
-                    yield _sse("searching", json.dumps(event_payload))
-                    log.info("tool_call | %s | args=%s", name, json.dumps(args))
-
-                    result = await mcp.call_tool(name, args)
-
-                    if CONFIG["use_groq"] and groq_client and name in ("web_search", "fetch_webpage"):
-                        result = await _summarize_tool_result(groq_client, name, result)
-                        yield _sse("status", f"summarized {name} result")
-
-                    if name in ("web_search", "fetch_webpage"):
-                        search_count += 1
-
-                    yield _sse("search_result", json.dumps({"tool": name, "count": search_count}))
-                    tool_call_id = tc.id if CONFIG["use_groq"] else f"call_{name}"
-                    conversation_history.append({
-                        "role": "tool",
-                        "tool_call_id": tool_call_id,
-                        "content": result
-                    })
+                        msg = response.choices[0].message
+                        content = msg.content or ""
+                        conversation_history.append({"role": "assistant", "content": content})
+                        for word in content.split(" "):
+                            yield _sse("token", word + " ")
+                            await asyncio.sleep(0.01)
+                        yield _sse("done", json.dumps({
+                            "searches_used": search_count,
+                            "max_searches": max_searches
+                        }))
+                        return
+                    raise
 
     except Exception as e:
         yield _sse("error", traceback.format_exc())
