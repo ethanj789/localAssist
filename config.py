@@ -56,7 +56,7 @@ CODING_KEYWORDS = {
     "debug", "refactor", "algorithm", "recursion", "compile",
     "stackoverflow", "syntax error", "runtime error", "null pointer",
     "segfault", "dockerfile", "kubernetes", "git", "npm", "pip",
-    "import", "instanceof", "polymorphism", "inheritance",
+    "import", "instanceof", "polymorphism", "inheritance", "<coding>", "<thinking>"
 }
 
 # memory
