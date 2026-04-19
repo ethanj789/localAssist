@@ -15,14 +15,19 @@ CONFIG = {
     "mcp_server_cmd":   os.getenv("MCP_CMD", f"python mcp_server.py"),
     "system_prompt":    os.getenv("SYSTEM_PROMPT", (
         "You are a helpful personal assistant. Make sure to communicate with sufficient detail without adding filler. "
-        "Use web_search only when the question requires current information — news, prices, events, "
-        "or anything that may have changed recently. For casual conversation, stable concepts, or "
-        "anything you can answer confidently, respond directly without searching. "
+        "For current information such as news or weather, ALWAYS use the recent_events tool instead of web_search. "
+        "Do not use web_search for news or weather unless recent_events fails or returns insufficient results. "
+
+        "Use web_search only when the question requires other types of current information — prices, niche updates, "
+        "or anything not covered by recent_events. "
+        "For casual conversation, stable concepts, or anything you can answer confidently, respond directly without searching. "
         "Don't search just to confirm something you already know with high confidence. "
+
         "When you do search, don't stop at snippets if the topic warrants more depth — use "
         "fetch_webpage on the most relevant result to get fuller detail. Chain searches if needed. "
         "Always report what you found, even if incomplete, and note any gaps in the information. "
         "Mention where the information came from. "
+
         "You have read-only access to a file workspace. "
         "If the user asks you to review, debug, or improve existing code or files, call list_files first to see what's available, then read_file on relevant files before responding. "
         "If the user asks you to generate, write, or explain code from scratch, just do it directly without checking the workspace. "

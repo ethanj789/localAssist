@@ -29,7 +29,7 @@ mcp = MCPClient(CONFIG["mcp_server_cmd"])
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await asyncio.get_event_loop().run_in_executor(None, mcp.start)
-    print(f"[server] MCP client started | model={CONFIG['model']} | use_groq={CONFIG['use_groq']}")
+    print(f"[server] MCP client started | model={CONFIG['model']} | use_groq={CONFIG['use_groq']} | groq model={CONFIG["groq_model"]}")
     yield
     await asyncio.get_event_loop().run_in_executor(None, mcp.stop)
 

@@ -18,6 +18,7 @@ from tavily import TavilyClient
 from dotenv import load_dotenv
 import logging
 from datetime import datetime
+import httpx
 
 logging.basicConfig(
     filename="logs.txt",
@@ -29,6 +30,7 @@ log = logging.getLogger(__name__)
 load_dotenv()
 
 TAVILY_API_KEY = os.getenv("TAVILY_API_KEY", "")
+GNEWS_API_KEY = os.getenv("GNEWS_API_KEY", "")
 WORKSPACE_ROOT = (Path(__file__).parent / os.getenv("WORKSPACE", "aiWorkspace")).resolve()
 # ── Config (override via env vars if needed) ─────────────────────────────────
 DDG_MAX_RESULTS = 3           # how many DDG results to return
@@ -124,6 +126,29 @@ async def list_tools() -> list[types.Tool]:
                 "required": ["expression"]
             },
         ),
+        types.Tool(
+            name="recent_events",
+            description=(
+                "Fetch recent information such as news or weather. "
+                "Use this when the user asks about current events, latest updates, or weather conditions. "
+                "For news, provide a topic or keyword (e.g. 'AI', 'Ukraine'). "
+                "For weather, provide a city name (e.g. 'Miami', 'London')."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "infoType": {
+                        "type": "string",
+                        "description": "Type of information to retrieve. Must be either 'news' or 'weather'."
+                    },
+                    "details": {
+                        "type": "string",
+                        "description": "Search query for news or city name for weather."
+                    }
+                },
+                "required": ["infoType", "details"]
+            }
+        ),
     ]
 
 
@@ -139,6 +164,8 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
         return await _read_file(arguments["path"])
     elif name == "calculate":
         return await _calculate(arguments["expression"])
+    elif name == "recent_events":
+        return await _recent_events(arguments["type"], arguments["details"]) #type = news/weather, details = location/news topic
 
     else:
         raise ValueError(f"Unknown tool: {name}")
@@ -295,6 +322,95 @@ async def _calculate(expression: str) -> list[types.TextContent]:
         return [types.TextContent(type="text", text=f"{expression} = {result}")]
     except Exception as e:
         return [types.TextContent(type="text", text=f"Could not evaluate '{expression}': {e}")]
+
+# recent events getter
+async def _recent_events(infoType: str, details: str):
+    log.info(f"{infoType}, for {details}")
+    try:
+        if infoType == "news":
+            return _gnews(details)
+        elif infoType == "weather":
+            # return _weather(details)
+            return _weather_simple(details)
+
+    except Exception as e:
+        return [types.TextContent(type="text", text=f"failed getting info on {infoType}': {e}")]
+
+async def _weather_simple(city: str) -> str:
+    try:
+        url = f"https://wttr.in{city}"
+        params = {"format": "j1"}
+        headers = {"User-Agent": "curl/7.68.0"}
+        
+        async with httpx.AsyncClient(timeout=10) as client:
+            r = await client.get(url, params=params, headers=headers)
+            if r.status_code != 200:
+                return "Weather fetch failed."
+            data = r.json()
+
+        # 1. Current Weather
+        curr = data["current_condition"][0]
+        
+        # 2. Get local time to find future slots (0-23)
+        # localObsDateTime looks like "2023-10-27 10:15 AM"
+        import datetime
+        obs_time = datetime.datetime.strptime(curr['localObsDateTime'], "%Y-%m-%d %I:%M %p")
+        curr_hour = obs_time.hour
+
+        def get_hourly_data(target_hour):
+            # Slots are every 3 hours: 0, 3, 6, 9, 12, 15, 18, 21
+            day_offset = target_hour // 24
+            hour_in_day = target_hour % 24
+            slot_idx = min(hour_in_day // 3, 7) # Round down to nearest 3-hour slot
+            
+            day_data = data["weather"][day_offset]
+            hour_data = day_data["hourly"][slot_idx]
+            return f"{hour_data['tempF']}°F & {hour_data['weatherDesc'][0]['value']}"
+        return (
+            f"Weather for {city}:\n"
+            f"NOW: {curr['temp_F']}°F, {curr['weatherDesc'][0]['value']}\n"
+            f"+6H:  {get_hourly_data(curr_hour + 6)}\n"
+            f"+12H: {get_hourly_data(curr_hour + 12)}\n"
+            f"+18H: {get_hourly_data(curr_hour + 18)}\n"
+            f"+24H: {get_hourly_data(curr_hour + 24)}"
+        )
+    except Exception as e:
+        return f"Error: {e}"
+        
+async def _weather(lat: float, lon: float):
+    url = "https://api.open-meteo.com/v1/forecast"
+    params = {
+        "latitude": lat,
+        "longitude": lon,
+        "current_weather": True
+    }
+
+    async with httpx.AsyncClient(timeout=10) as client:
+        r = await client.get(url, params=params)
+        return r.json()
+
+
+async def _gnews(query: str):
+    url = "https://gnews.io/api/v4/search"
+    params = {
+        "q": query,
+        "lang": "en",
+        "max": 5,
+        "token": GNEWS_API_KEY
+    }
+
+    async with httpx.AsyncClient(timeout=10) as client:
+        r = await client.get(url, params=params)
+        data = r.json()    
+
+    return [
+        {
+            "title": a["title"],
+            "url": a["url"],
+            "snippet": a["description"]
+        }
+        for a in data.get("articles", [])
+    ]
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────

@@ -250,6 +250,8 @@ async def agent_loop(user_message: str, mcp) -> AsyncGenerator[str, None]:
                         event_payload["label"] = f'reading: {args.get("path", "")}'
                     elif name == "calculate":
                         event_payload["label"] = f'calculating: {args.get("expression", "")}'
+                    elif name == "recent_events":
+                        event_payload["label"] = f'getting recent info for: {args.get("infoType", "")}, for/about {args.get("details","")}'
                     else:
                         event_payload["label"] = f'{name}: {json.dumps(args)}'
 
