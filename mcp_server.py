@@ -19,6 +19,8 @@ from dotenv import load_dotenv
 import logging
 from datetime import datetime
 import httpx
+import ast
+import operator as op
 
 logging.basicConfig(
     filename="logs.txt",
@@ -313,15 +315,76 @@ async def _read_file(path: str) -> list[types.TextContent]:
 
     return [types.TextContent(type="text", text=f"Contents of {path}:\n\n{content}")]
 #calculate 
-async def _calculate(expression: str) -> list[types.TextContent]:
-    log.info("calculate | expr=%s", expression)
+SAFE_OPS = {
+    ast.Add: op.add,
+    ast.Sub: op.sub,
+    ast.Mult: op.mul,
+    ast.Div: op.truediv,
+    ast.Pow: op.pow,
+    ast.Mod: op.mod,
+    ast.USub: op.neg,
+    ast.UAdd: op.add
+}
+
+async def _calculate(expression: str):
     try:
-        # restrict to safe math only — no builtins, no imports
-        allowed_names = {k: v for k, v in vars(__import__("math")).items() if not k.startswith("_")}
-        result = eval(expression, {"__builtins__": {}}, allowed_names)
+        tree = ast.parse(expression, mode="eval")
+        result = _eval(tree.body)
         return [types.TextContent(type="text", text=f"{expression} = {result}")]
     except Exception as e:
-        return [types.TextContent(type="text", text=f"Could not evaluate '{expression}': {e}")]
+        return [types.TextContent(type="text", text=f"Error: {e}")]
+
+def _eval(node):
+    if isinstance(node, ast.Constant):
+        if isinstance(node.value, (int, float)) and not isinstance(node.value, bool):
+            return node.value
+        raise ValueError("Invalid constant")
+
+    if isinstance(node, ast.BinOp):
+        left = _eval(node.left)
+        right = _eval(node.right)
+
+        if isinstance(node.op, ast.Add):
+            return left + right
+        if isinstance(node.op, ast.Sub):
+            return left - right
+        if isinstance(node.op, ast.Mult):
+            return left * right
+        if isinstance(node.op, ast.Div):
+            if right == 0:
+                raise ValueError("Division by zero")
+            return left / right
+        if isinstance(node.op, ast.Mod):
+            if right == 0:
+                raise ValueError("Modulo by zero")
+            return left % right
+        if isinstance(node.op, ast.Pow):
+            if abs(right) > 1000:
+                raise ValueError("Exponent too large")
+            result = left ** right
+            if abs(result) > 1e100:
+                raise ValueError("Result too large")
+            return result
+
+        raise ValueError("Unsupported operation")
+
+    if isinstance(node, ast.UnaryOp):
+        if isinstance(node.op, ast.UAdd):
+            return _eval(node.operand)
+        if isinstance(node.op, ast.USub):
+            return -_eval(node.operand)
+        raise ValueError("Unsupported unary operation")
+
+    raise ValueError("Unsupported expression")  
+# async def _calculate(expression: str) -> list[types.TextContent]:
+#     log.info("calculate | expr=%s", expression)
+#     try:
+#         # restrict to safe math only — no builtins, no imports
+#         allowed_names = {k: v for k, v in vars(__import__("math")).items() if not k.startswith("_")}
+#         result = eval(expression, {"__builtins__": {}}, allowed_names)
+#         return [types.TextContent(type="text", text=f"{expression} = {result}")]
+#     except Exception as e:
+#         return [types.TextContent(type="text", text=f"Could not evaluate '{expression}': {e}")]
 
 # recent events getter
 async def _recent_events(infoType: str, details: str):
