@@ -159,7 +159,13 @@ async def agent_loop(user_message: str, mcp) -> AsyncGenerator[str, None]:
                             raise
                         msg = response.choices[0].message
                         tool_calls = msg.tool_calls or []
-                        content = msg.content or ""
+
+                        content = msg.content
+                        if tool_calls:
+                            content = None
+                        else:
+                            content = content or ""                        
+                        
                         log.info("groq response | content=%s | tool_calls=%s", content, tool_calls)
                         yield _sse("status", "groq responded")
                     else:
@@ -188,6 +194,9 @@ async def agent_loop(user_message: str, mcp) -> AsyncGenerator[str, None]:
                         tool_calls = msg.get("tool_calls", [])
                         content = msg.get("content", "")
 
+                    if tool_calls and content:
+                        # drop the content, keep tool call
+                        content = ""
                     if not tool_calls:
                         conversation_history.append({"role": "assistant", "content": content})
                         for word in content.split(" "):
@@ -214,7 +223,7 @@ async def agent_loop(user_message: str, mcp) -> AsyncGenerator[str, None]:
                     else:
                         tool_calls_for_history = tool_calls
 
-                    conversation_history.append({"role": "assistant", "content": "", "tool_calls": tool_calls_for_history})
+                    conversation_history.append({"role": "assistant", "content": None, "tool_calls": tool_calls_for_history})
 
                     for tc in tool_calls:
                         if CONFIG["use_groq"]:
@@ -246,9 +255,9 @@ async def agent_loop(user_message: str, mcp) -> AsyncGenerator[str, None]:
                         elif name == "fetch_webpage":
                             event_payload["label"] = f'fetching: {args.get("url", "")}'
                         elif name == "list_files":
-                            event_payload["label"] = "listing workspace files"
+                            event_payload["label"] = f'listing workspace files, with option {args.get("topic", "all")}'
                         elif name == "read_file":
-                            event_payload["label"] = f'reading: {args.get("path", "")}'
+                            event_payload["label"] = f'reading: {args.get("path", "")}, with {args.get("count")} lines from lines {args.get("start")}'
                         elif name == "calculate":
                             event_payload["label"] = f'calculating: {args.get("expression", "")}'
                         elif name == "recent_events":

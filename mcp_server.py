@@ -40,8 +40,32 @@ FETCH_TIMEOUT   = 8           # seconds before page fetch gives up
 MAX_TEXT_CHARS  = 2000        # truncate extracted page text to this length
 
 # WORKSPACE_ROOT = (Path(__file__).parent / "aiWorkspace").resolve()
-MAX_FILE_LINES = 500
-SKIP_DIRS = {".git", "__pycache__", "node_modules", ".venv", "dist", "build"}
+MAX_FILE_LINES = 75
+MAX_SCAN_BYTES = 1_000_000
+
+SKIP_DIRS = {
+    "node_modules", ".git", "venv", ".venv", "__pycache__",
+    "dist", "build", ".mypy_cache", ".pytest_cache",
+}
+
+SCANNABLE_EXTENSIONS = {
+    ".py", ".txt", ".md", ".json", ".yaml", ".yml", ".toml",
+    ".ts", ".tsx", ".js", ".jsx", ".html", ".css", ".sh",
+    ".env.example", ".java",
+}
+
+# define raw → normalize → assign once
+_RAW_SENSITIVE_FILENAMES = {
+    ".env", ".env.local", ".env.production", ".env.development",
+    "id_rsa", "id_ed25519", ".netrc", ".htpasswd",
+}
+
+_RAW_SENSITIVE_PATTERNS = {
+    "key", "secret", "token", "password", "credential",
+}
+
+SENSITIVE_FILENAMES = {s.lower() for s in _RAW_SENSITIVE_FILENAMES}
+SENSITIVE_PATTERNS = {s.lower() for s in _RAW_SENSITIVE_PATTERNS}
 
 app = Server("local-search-mcp")
 
@@ -95,9 +119,15 @@ async def list_tools() -> list[types.Tool]:
             ),
             inputSchema={
                 "type": "object",
-                "properties": {}
+                "properties": {
+                    "topic": {
+                        "type": "string",
+                        "description": "Filters files by name relevance and content relevance."
+                    }
+                }
             }
         ),
+
         types.Tool(
             name="read_file",
             description=(
@@ -108,7 +138,20 @@ async def list_tools() -> list[types.Tool]:
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "path": {"type": "string", "description": "Path to the file, relative to workspace root."}
+                    "path": {
+                        "type": "string",
+                        "description": "Path to the file, relative to workspace root."
+                    },
+                    "start": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "description": "1-based line number to start reading from (inclusive). Defaults to 1."
+                    },
+                    "count": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "description": "Number of lines to read starting from 'start'."
+                    }
                 },
                 "required": ["path"]
             }
@@ -179,9 +222,10 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
     elif name == "fetch_webpage":
         return await _fetch_webpage(arguments["url"])
     elif name == "list_files":
-        return await _list_files()
+        topic = arguments.get("topic") or None  # "" and missing both become None
+        return await _list_files(topic)
     elif name == "read_file":
-        return await _read_file(arguments["path"])
+        return await _read_file(arguments["path"], arguments.get("start", 1), arguments.get("count", None))
     elif name == "calculate":
         return await _calculate(arguments["expression"])
     elif name == "recent_events":
@@ -295,23 +339,138 @@ async def _fetch_webpage(url: str) -> list[types.TextContent]:
         log.error("fetch_webpage error: %s", e)
         return [types.TextContent(type="text", text="Failed to fetch webpage.")]
 
-async def _list_files() -> list[types.TextContent]:
-    log.info("list_files | listing workspace root")
-    target = WORKSPACE_ROOT
+# async def _list_files(topic: str) -> list[types.TextContent]: #make it handle a topic to filter by name of file/ contents. also note if by content, what sections are relevant (if file name, we should tell the ai what sections are relevant and maybe some context around the line too)
+#     log.info("list_files | listing workspace root")
+#     target = WORKSPACE_ROOT
+#     lines = []
+#     for root, dirs, files in os.walk(target):
+#         dirs[:] = [d for d in dirs if d not in SKIP_DIRS]
+#         level = Path(root).relative_to(WORKSPACE_ROOT)
+#         prefix = str(level) if str(level) != "." else ""
+#         lines.append(f"{prefix}/" if prefix else "/")
+#         for f in files:
+#             lines.append(f"  {f if not prefix else prefix + '/' + f}")
+#     return [types.TextContent(type="text", text="\n".join(lines) or "No files found.")]
+
+# ── File tools ────────────────────────────────────────────────────────────────
+def _is_sensitive(filename: str, full_path: str | None = None) -> bool:
+    name = filename.lower()
+    if name in SENSITIVE_FILENAMES or any(p in name for p in SENSITIVE_PATTERNS):
+        return True
+    if full_path:
+        norm = full_path.replace("\\", "/").lower()
+        parts = norm.split("/")
+        if any(part in SENSITIVE_FILENAMES for part in parts):
+            return True
+        if any(p in norm for p in SENSITIVE_PATTERNS):
+            return True
+    return False
+
+def _is_scannable(path: Path, rel_path: str = "") -> bool:
+    if path.is_symlink():
+        return False
+    name = path.name.lower()
+    if name != ".env.example" and path.suffix.lower() not in SCANNABLE_EXTENSIONS:
+        return False
+    if _is_sensitive(path.name, rel_path):
+        return False
+    return True
+
+def _find_topic_ranges(
+    file_lines: list[str], topic: str, context: int = 2
+) -> list[tuple[int, int]]:
+    """Return merged 1-based [start, end] line ranges where topic appears."""
+    n = len(file_lines)
+    # hit_indices from enumerate are always ascending — merge is safe
+    hit_indices = [i for i, line in enumerate(file_lines) if topic in line.lower()]
+    if not hit_indices:
+        return []
+
+    ranges: list[tuple[int, int]] = []
+    for i in hit_indices:
+        lo = max(0, i - context)
+        hi = min(n - 1, i + context)
+        if ranges and lo <= ranges[-1][1] + 1:
+            ranges[-1] = (ranges[-1][0], max(ranges[-1][1], hi))
+        else:
+            ranges.append((lo, hi))
+
+    return [(s + 1, e + 1) for s, e in ranges]
+
+def _read_scannable(path: Path, max_bytes: int = MAX_SCAN_BYTES) -> list[str] | None:
+    """One open(): size cap, null-byte detection, line streaming. Returns lines or None."""
+    try:
+        with path.open("rb") as f:
+            chunk = f.read(max_bytes + 1)
+    except OSError:
+        return None
+    if len(chunk) > max_bytes or b"\x00" in chunk[:8192]:
+        return None
+    return chunk.decode(errors="replace").splitlines()
+
+def _has_symlink_component(path: Path) -> bool:
+    for parent in reversed(path.parents):
+        if parent.is_symlink():
+            return True
+    return path.is_symlink()
+
+async def _list_files(topic: str | None = None) -> list[types.TextContent]:
+    log.info("list_files | listing workspace root | topic=%s", topic)
+    topic_lower = topic.lower() if topic else None
     lines = []
-    for root, dirs, files in os.walk(target):
+
+    for root, dirs, files in os.walk(WORKSPACE_ROOT):
         dirs[:] = [d for d in dirs if d not in SKIP_DIRS]
         level = Path(root).relative_to(WORKSPACE_ROOT)
         prefix = str(level) if str(level) != "." else ""
-        lines.append(f"{prefix}/" if prefix else "/")
+        section_header = f"{prefix}/" if prefix else "/"
+        section_lines = []
+
         for f in files:
-            lines.append(f"  {f if not prefix else prefix + '/' + f}")
+            abs_path = Path(root) / f
+            rel_path = f if not prefix else f"{prefix}/{f}"
+
+            # symlink guard (files — dirs are handled by dirs[:] filter above)
+            if abs_path.is_symlink():
+                continue
+
+            # no topic filter — just list everything (skip sensitives still)
+            if topic_lower is None:
+                if not _is_sensitive(f, rel_path):
+                    section_lines.append(f"  {rel_path}")
+                continue
+
+            # topic set: filename match
+            if topic_lower in f.lower():
+                section_lines.append(f"  {rel_path}  [match: filename]")
+                continue
+
+            # topic set: content match (only for scannable files)
+            if not _is_scannable(abs_path, rel_path):
+                continue
+            file_lines = _read_scannable(abs_path)
+            if file_lines is None:
+                continue
+            hit_ranges = _find_topic_ranges(file_lines, topic_lower, context=2)
+
+            if hit_ranges:
+                range_strs = ", ".join(f"{s}-{e}" for s, e in hit_ranges)
+                section_lines.append(f"  {rel_path}  [match: lines {range_strs}]")
+
+        if section_lines:
+            lines.append(section_header)
+            lines.extend(section_lines)
+
     return [types.TextContent(type="text", text="\n".join(lines) or "No files found.")]
 
-# ── File tools ────────────────────────────────────────────────────────────────
-async def _read_file(path: str) -> list[types.TextContent]:
-    log.info("read_file | path=%s", path)
-    target = (WORKSPACE_ROOT / path).resolve()
+
+async def _read_file(path: str, start: int = 1, count: int | None = None) -> list[types.TextContent]:
+    log.info("read_file | path=%s start=%s count=%s", path, start, count)
+    raw = WORKSPACE_ROOT / path
+    if _has_symlink_component(raw):
+        return [types.TextContent(type="text", text="Access denied: symlinks not allowed.")]
+    target = raw.resolve()
+
     try:
         target.relative_to(WORKSPACE_ROOT)
     except ValueError:
@@ -320,18 +479,69 @@ async def _read_file(path: str) -> list[types.TextContent]:
     if target.is_symlink():
         return [types.TextContent(type="text", text="Access denied: symlinks not allowed.")]
 
+    if _is_sensitive(target.name, path):
+        return [types.TextContent(type="text", text="Access denied: sensitive file.")]
+
     try:
-        target.resolve(strict=True)
+        size = target.stat().st_size
     except FileNotFoundError:
         return [types.TextContent(type="text", text=f"File not found: {path}")]
 
-    lines = target.read_text(errors="replace").splitlines()
-    truncated = len(lines) > MAX_FILE_LINES
-    content = "\n".join(lines[:MAX_FILE_LINES])
-    if truncated:
-        content += f"\n\n[... truncated at {MAX_FILE_LINES} lines]"
+    with target.open("rb") as f:
+        raw = f.read(MAX_SCAN_BYTES)
+    truncated_by_size = size > MAX_SCAN_BYTES
+    all_lines = raw.decode(errors="replace").splitlines()
+    total = len(all_lines)
 
-    return [types.TextContent(type="text", text=f"Contents of {path}:\n\n{content}")]
+    if total == 0:
+        return [types.TextContent(type="text", text=f"{path}: empty file.")]
+    if count is not None and count <= 0:
+        return [types.TextContent(type="text", text="count must be > 0.")]
+
+    start = max(1, min(start, total))
+    end = (start + count - 1) if count is not None else total
+    end = min(end, start + MAX_FILE_LINES - 1, total)
+
+    selected = all_lines[start - 1 : end]
+    was_clamped = end < total and (count is None or start + count - 1 > end)
+
+    if truncated_by_size:
+        header = f"Contents of {path} (lines {start}-{end}, file exceeds size limit — prefix only):\n\n"
+    else:
+        header = f"Contents of {path} (lines {start}-{end} of {total}):\n\n"    
+    
+    content = "\n".join(selected)
+
+    if was_clamped or truncated_by_size:
+        content += f"\n\n[... truncated at line {end} of {total}{'+ (file exceeds size limit)' if truncated_by_size else ''}]"
+
+    return [types.TextContent(type="text", text=header + content)]
+
+#  "start": {"type": "string", "description": "The first line of the section to read from (inclusive)."}
+#  "count": {"type": "string", "description": "How many lines to read from the starting line (includes starting line)."}
+# async def _read_file(path: str, start: int, count: int) -> list[types.TextContent]: 
+#     log.info("read_file | path=%s", path)
+#     target = (WORKSPACE_ROOT / path).resolve()
+#     try:
+#         target.relative_to(WORKSPACE_ROOT)
+#     except ValueError:
+#         return [types.TextContent(type="text", text="Access denied.")]
+
+#     if target.is_symlink():
+#         return [types.TextContent(type="text", text="Access denied: symlinks not allowed.")]
+
+#     try:
+#         target.resolve(strict=True)
+#     except FileNotFoundError:
+#         return [types.TextContent(type="text", text=f"File not found: {path}")]
+
+#     lines = target.read_text(errors="replace").splitlines()
+#     truncated = len(lines) > MAX_FILE_LINES
+#     content = "\n".join(lines[:MAX_FILE_LINES])
+#     if truncated:
+#         content += f"\n\n[... truncated at {MAX_FILE_LINES} lines]"
+
+#     return [types.TextContent(type="text", text=f"Contents of {path}:\n\n{content}")]
 #calculate 
 SAFE_OPS = {
     ast.Add: op.add,
@@ -409,17 +619,17 @@ async def _recent_events(infoType: str, details: str):
     log.info(f"{infoType}, for {details}")
     try:
         if infoType == "news":
-            return _gnews(details)
+            return await _gnews(details)
         elif infoType == "weather":
             # return _weather(details)
-            return _weather_simple(details)
+            return await _weather_simple(details)
 
     except Exception as e:
         return [types.TextContent(type="text", text=f"failed getting info on {infoType}': {e}")]
 
 async def _weather_simple(city: str) -> str:
     try:
-        url = f"https://wttr.in{city}"
+        url = f"https://wttr.in/{city}"
         params = {"format": "j1"}
         headers = {"User-Agent": "curl/7.68.0"}
         
@@ -447,17 +657,23 @@ async def _weather_simple(city: str) -> str:
             day_data = data["weather"][day_offset]
             hour_data = day_data["hourly"][slot_idx]
             return f"{hour_data['tempF']}°F & {hour_data['weatherDesc'][0]['value']}"
-        return (
-            f"Weather for {city}:\n"
-            f"NOW: {curr['temp_F']}°F, {curr['weatherDesc'][0]['value']}\n"
-            f"+6H:  {get_hourly_data(curr_hour + 6)}\n"
-            f"+12H: {get_hourly_data(curr_hour + 12)}\n"
-            f"+18H: {get_hourly_data(curr_hour + 18)}\n"
-            f"+24H: {get_hourly_data(curr_hour + 24)}"
-        )
+        return [
+            types.TextContent(
+                type="text",
+                text=(
+                    f"Weather for {city}:\n"
+                    f"NOW: {curr['temp_F']}°F, {curr['weatherDesc'][0]['value']}\n"
+                    f"+6H:  {get_hourly_data(curr_hour + 6)}\n"
+                    f"+12H: {get_hourly_data(curr_hour + 12)}\n"
+                    f"+18H: {get_hourly_data(curr_hour + 18)}\n"
+                    f"+24H: {get_hourly_data(curr_hour + 24)}"
+                )
+            )
+        ]   
     except Exception as e:
-        return f"Error: {e}"
-        
+        return [
+            types.TextContent(type="text", text=f"Error: {e}")
+        ]        
 async def _weather(lat: float, lon: float):
     url = "https://api.open-meteo.com/v1/forecast"
     params = {
@@ -508,13 +724,13 @@ async def _gnews(query: str):
 
     articles = data.get("articles", [])
 
-    return [
-        {
-            "title": a.get("title", ""),
-            "url": a.get("url", ""),
-            "snippet": a.get("description", "")
-        }
+    text = "\n\n".join(
+        f"{a.get('title','')}\n{a.get('url','')}\n{a.get('description','')}"
         for a in articles
+    )
+
+    return [
+        types.TextContent(type="text", text=text)
     ]
 
 # ── Entry point ───────────────────────────────────────────────────────────────

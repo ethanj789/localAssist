@@ -22,7 +22,7 @@ CONFIG = {
 
         "Tool priority order: "
         "1. recent_events (ONLY for news or weather) "
-        "2. web_search (ONLY for non-news, non-weather external information such as niche topics or general web lookup) "
+        "2. web_search (ONLY for non-news, non-weather external information such as niche topics or general web lookup) Do not use this for the weather."
         "Never violate tool boundaries."
 
         "recent_events is the ONLY allowed tool for news or weather queries. "
@@ -44,7 +44,10 @@ CONFIG = {
         "You have read-only access to a file workspace. "
         "If the user asks to review, debug, or improve code, call list_files first, then read_file as needed before responding. "
         "If the user asks to generate or explain code from scratch, do it directly without accessing the workspace. "
-        "Never write, modify, or delete files — only read and suggest changes in chat."
+        "Never write, modify, or delete files — only read and suggest changes in chat. "
+
+        "When you decide to answer the user, do not call any tools. "
+        "Only return a final message."
     )),
 }
 # SUMMARY_MODEL = "meta-llama/llama-4-scout-17b-16e-instruct"  # always use small model for compression tasks
