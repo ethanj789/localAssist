@@ -19,8 +19,10 @@ class MCPClient:
             stdout=subprocess.PIPE,
             stderr=sys.stderr,
         )
+        init_id = self._next_id()
+
         self._send({
-            "jsonrpc": "2.0", "id": self._next_id(),
+            "jsonrpc": "2.0", "id": init_id,
             "method": "initialize",
             "params": {
                 "protocolVersion": "2024-11-05",
@@ -28,7 +30,7 @@ class MCPClient:
                 "clientInfo": {"name": "local-agent", "version": "0.1"}
             }
         })
-        self._recv()
+        self._recv_response(init_id)
         self._send({"jsonrpc": "2.0", "method": "notifications/initialized", "params": {}})
 
     def stop(self):
@@ -45,9 +47,18 @@ class MCPClient:
         self._proc.stdin.write(line.encode())
         self._proc.stdin.flush()
 
-    def _recv(self) -> dict:
-        line = self._proc.stdout.readline()
-        return json.loads(line)
+    # def _recv(self) -> dict:
+    #     line = self._proc.stdout.readline()
+    #     return json.loads(line)
+    def _recv_response(self, expected_id: int) -> dict:
+        while True:
+            line = self._proc.stdout.readline()
+            if not line:
+                raise EOFError("MCP server closed stdout")
+            msg = json.loads(line)
+            if "id" in msg and msg["id"] == expected_id:
+                return msg
+            # else it's a notification — just discard and keep reading
 
     async def call_tool(self, name: str, arguments: dict) -> str:
         def _call():
@@ -58,7 +69,7 @@ class MCPClient:
                     "method": "tools/call",
                     "params": {"name": name, "arguments": arguments}
                 })
-                return self._recv()
+                return self._recv_response(msg_id)
 
         resp = await asyncio.get_event_loop().run_in_executor(None, _call)
         if "error" in resp:
@@ -74,7 +85,7 @@ class MCPClient:
                     "jsonrpc": "2.0", "id": msg_id,
                     "method": "tools/list", "params": {}
                 })
-                return self._recv()
+                return self._recv_response(msg_id)  
 
         resp = await asyncio.get_event_loop().run_in_executor(None, _list)
         return resp.get("result", {}).get("tools", [])

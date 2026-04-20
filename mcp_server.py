@@ -131,27 +131,45 @@ async def list_tools() -> list[types.Tool]:
         types.Tool(
             name="recent_events",
             description=(
-                "Fetch recent information such as news or weather. "
-                "Use this when the user asks about current events, latest updates, or weather conditions. "
-                "For news, provide a topic or keyword (e.g. 'AI', 'Ukraine'). "
-                "For weather, provide a city name (e.g. 'Miami', 'London')."
+                "Fetch recent news or weather information. "
+
+                "This tool returns a unified, up-to-date overview of current events "
+                "(not raw articles or search results). It is optimized for big-picture summaries. "
+
+                "For NEWS, you may provide either a general category or a specific topic. "
+                "Supported categories include: technology, sports, business, health, science, "
+                "entertainment, world, nation, general. "
+
+                "If the query matches one of these categories, prefer using it directly. "
+                "If the query is a specific entity (person, company, event), use a keyword instead. "
+
+                "For WEATHER, provide a city name (e.g. Miami, London). "
+                "Always prefer this tool over web_search for current events or weather."
             ),
             inputSchema={
                 "type": "object",
                 "properties": {
                     "infoType": {
                         "type": "string",
-                        "description": "Type of information to retrieve. Must be either 'news' or 'weather'."
+                        "enum": ["news", "weather"],
+                        "description": "Type of request: news or weather."
                     },
                     "details": {
                         "type": "string",
-                        "description": "Search query for news or city name for weather."
+                        "description": (
+                            "For news: a topic, keyword, entity, or optional category. "
+                            "You may use broad categories like technology, sports, business, health, science, "
+                            "entertainment, world, nation, general if applicable, but they are NOT required. "
+                            "You can also pass specific names (e.g. 'Olivia Rodrigo', 'Tesla', 'AI regulation'), "
+
+                            "For weather: a city name (e.g. Miami, London)."
+                        )
                     }
                 },
                 "required": ["infoType", "details"]
             }
         ),
-    ]
+]
 
 
 @app.call_tool()
@@ -167,7 +185,7 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
     elif name == "calculate":
         return await _calculate(arguments["expression"])
     elif name == "recent_events":
-        return await _recent_events(arguments["type"], arguments["details"]) #type = news/weather, details = location/news topic
+        return await _recent_events(arguments["infoType"], arguments["details"]) #type = news/weather, details = location/news topic
 
     else:
         raise ValueError(f"Unknown tool: {name}")
@@ -454,27 +472,50 @@ async def _weather(lat: float, lon: float):
 
 
 async def _gnews(query: str):
-    url = "https://gnews.io/api/v4/search"
-    params = {
-        "q": query,
-        "lang": "en",
-        "max": 5,
-        "token": GNEWS_API_KEY
+    query_clean = query.strip().lower()
+
+    general_categories = {
+        "technology", "sports", "business", "health",
+        "science", "entertainment", "world", "nation",
+        "general"
     }
+
+    use_headlines = (
+        query_clean in general_categories
+        or len(query_clean.split()) <= 2
+    )
+
+    if use_headlines:
+        url = "https://gnews.io/api/v4/top-headlines"
+        params = {
+            "category": query_clean if query_clean in general_categories else "general",
+            "lang": "en",
+            "max": 5,
+            "token": GNEWS_API_KEY
+        }
+    else:
+        url = "https://gnews.io/api/v4/search"
+        params = {
+            "q": query,
+            "lang": "en",
+            "max": 5,
+            "token": GNEWS_API_KEY
+        }
 
     async with httpx.AsyncClient(timeout=10) as client:
         r = await client.get(url, params=params)
-        data = r.json()    
+        data = r.json()
+
+    articles = data.get("articles", [])
 
     return [
         {
-            "title": a["title"],
-            "url": a["url"],
-            "snippet": a["description"]
+            "title": a.get("title", ""),
+            "url": a.get("url", ""),
+            "snippet": a.get("description", "")
         }
-        for a in data.get("articles", [])
+        for a in articles
     ]
-
 
 # ── Entry point ───────────────────────────────────────────────────────────────
 async def main():
