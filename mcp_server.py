@@ -656,13 +656,13 @@ async def _weather_simple(city: str) -> str:
             
             day_data = data["weather"][day_offset]
             hour_data = day_data["hourly"][slot_idx]
-            return f"{hour_data['tempF']}°F & {hour_data['weatherDesc'][0]['value']}"
+            return f"{hour_data['tempC']}°C & {hour_data['weatherDesc'][0]['value']}"
         return [
             types.TextContent(
                 type="text",
                 text=(
                     f"Weather for {city}:\n"
-                    f"NOW: {curr['temp_F']}°F, {curr['weatherDesc'][0]['value']}\n"
+                    f"NOW: {curr['temp_C']}°C, {curr['weatherDesc'][0]['value']}\n"
                     f"+6H:  {get_hourly_data(curr_hour + 6)}\n"
                     f"+12H: {get_hourly_data(curr_hour + 12)}\n"
                     f"+18H: {get_hourly_data(curr_hour + 18)}\n"
