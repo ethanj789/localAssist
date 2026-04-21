@@ -77,7 +77,7 @@ async def list_tools() -> list[types.Tool]:
         types.Tool(
             name="web_search",
             description=(
-                "Search the web using DuckDuckGo (Tavily fallback). "
+                "Search the web using Tavily. "
                 "Returns a list of results with title, URL, and snippet."
             ),
             inputSchema={
