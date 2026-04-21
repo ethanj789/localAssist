@@ -10,7 +10,7 @@ import json
 import asyncio
 import trafilatura
 import requests
-from duckduckgo_search import DDGS
+from ddgs import DDGS
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
 from mcp import types
@@ -77,7 +77,7 @@ async def list_tools() -> list[types.Tool]:
         types.Tool(
             name="web_search",
             description=(
-                "Search the web using DuckDuckGo (Brave fallback if configured). "
+                "Search the web using DuckDuckGo (Tavily fallback). "
                 "Returns a list of results with title, URL, and snippet."
             ),
             inputSchema={
@@ -236,16 +236,27 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
 
 
 # ── Search implementation ─────────────────────────────────────────────────────
-async def _web_search(query: str) -> list[types.TextContent]:
-    results = _ddg_search(query)
-    from_where = "ddg"
-    # Tavily fallback if DDG failed
-    if not results and TAVILY_API_KEY:
-        results = _tavily_search(query)
-        from_where = "tav"
+# async def _web_search(query: str) -> list[types.TextContent]:
+#     results = _ddg_search(query)
+#     from_where = "ddg"
+#     # Tavily fallback if DDG failed
+#     if not results and TAVILY_API_KEY:
+#         results = _tavily_search(query)
+#         from_where = "tav"
     
-    log.info("web_search | source=%s | results=%s", from_where, results)
+#     log.info("web_search | source=%s | results=%s", from_where, results)
 
+#     if not results:
+#         return [types.TextContent(type="text", text="No results found.")]
+
+#     lines = []
+#     for i, r in enumerate(results, 1):
+#         lines.append(f"{i}. {r['title']}\n   URL: {r['url']}\n   {r['snippet']}\n")
+
+#     return [types.TextContent(type="text", text="\n".join(lines))]
+async def _web_search(query: str) -> list[types.TextContent]:
+    results = _tavily_search(query)
+    
     if not results:
         return [types.TextContent(type="text", text="No results found.")]
 
@@ -254,7 +265,6 @@ async def _web_search(query: str) -> list[types.TextContent]:
         lines.append(f"{i}. {r['title']}\n   URL: {r['url']}\n   {r['snippet']}\n")
 
     return [types.TextContent(type="text", text="\n".join(lines))]
-
 
 def _tavily_search(query: str) -> list[dict]:
     try:
@@ -268,6 +278,7 @@ def _tavily_search(query: str) -> list[dict]:
         log.error("Tavily error: %s", e)
         return []
 
+#unused duck duck go search
 def _ddg_search(query: str) -> list[dict]:
     try:
         with DDGS(timeout=5) as ddgs:

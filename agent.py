@@ -8,7 +8,7 @@ import httpx
 
 from config import (
     CONFIG, MAX_HISTORY, SUMMARIZE_THRESHOLD, SUMMARIZE_KEEP_LAST,
-    CODING_MODEL, SUMMARY_MODEL, load_memory, select_groq_model
+    CODING_MODEL, SUMMARY_MODEL, THINKING_MODEL, load_memory, select_groq_model
 )
 
 log = logging.getLogger(__name__)
@@ -91,13 +91,13 @@ async def _summarize_tool_result(groq_client, tool_name: str, result: str) -> st
 async def agent_loop(user_message: str, mcp) -> AsyncGenerator[str, None]:
     try:
         yield _sse("status", "loop started")
-
-        conversation_history.append({"role": "user", "content": user_message})
+        clean_message = user_message.replace("<thinking>", "").replace("<coding>", "").strip()
+        conversation_history.append({"role": "user", "content": clean_message})
         yield _sse("status", "history appended")
 
         tool_model, answer_model = select_groq_model(user_message)
-        if answer_model == CODING_MODEL:
-            yield _sse("model_upgrade", CODING_MODEL)
+        if answer_model != CONFIG["groq_model"]:
+            yield _sse("model_upgrade", answer_model)
 
         mcp_tools = await mcp.list_tools()
         yield _sse("status", f"got {len(mcp_tools)} tools")
@@ -123,7 +123,8 @@ async def agent_loop(user_message: str, mcp) -> AsyncGenerator[str, None]:
                 try:
                     trimmed_history = _prune_history(conversation_history[-MAX_HISTORY:])
                     is_final_call = len(trimmed_history) > 0 and trimmed_history[-1]["role"] == "tool"
-                    current_model = answer_model if is_final_call else tool_model
+                    # current_model = answer_model if is_final_call else tool_model
+                    current_model = answer_model # i give up trying to optimize this single call.
 
                     groq_client = None
                     if CONFIG["use_groq"]:
@@ -198,7 +199,8 @@ async def agent_loop(user_message: str, mcp) -> AsyncGenerator[str, None]:
                         # drop the content, keep tool call
                         content = ""
                     if not tool_calls:
-                        conversation_history.append({"role": "assistant", "content": content})
+                        clean_message = user_message.replace("<thinking>", "").replace("<coding>", "").strip()
+                        conversation_history.append({"role": "assistant", "content": clean_message})
                         for word in content.split(" "):
                             yield _sse("token", word + " ")
                             await asyncio.sleep(0.01)
@@ -300,7 +302,9 @@ async def agent_loop(user_message: str, mcp) -> AsyncGenerator[str, None]:
                         )
                         msg = response.choices[0].message
                         content = msg.content or ""
-                        conversation_history.append({"role": "assistant", "content": content})
+                        clean_message = user_message.replace("<thinking>", "").replace("<coding>", "").strip()
+
+                        conversation_history.append({"role": "assistant", "content": clean_message})
                         for word in content.split(" "):
                             yield _sse("token", word + " ")
                             await asyncio.sleep(0.01)

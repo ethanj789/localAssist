@@ -1,5 +1,7 @@
 import os
 from pathlib import Path
+import re
+
 from dotenv import load_dotenv
 load_dotenv()
 
@@ -50,11 +52,12 @@ CONFIG = {
         "Only return a final message."
     )),
 }
-# SUMMARY_MODEL = "meta-llama/llama-4-scout-17b-16e-instruct"  # always use small model for compression tasks
+# SUMMARY_MODEL = "meta-llama/llama-4-scout-17b-16e-instruct"  # using small model for compression tasks
 SUMMARY_MODEL = "llama-3.1-8b-instant"
 SMALL_MODEL = "llama-3.1-8b-instant"
 RESPONSE_MODEL = "meta-llama/llama-4-scout-17b-16e-instruct"
 CODING_MODEL = "llama-3.3-70b-versatile"
+THINKING_MODEL = "openai/gpt-oss-120b"
 
 # history options
 MAX_HISTORY = 10
@@ -91,10 +94,43 @@ def load_memory() -> str:
         pass
     return ""
 
+# def select_groq_model(message: str) -> tuple[str, str]:
+#     lower = message.lower()
+#     words = set(lower.split())
+#     is_coding = bool(words & CODING_KEYWORDS) or any(p in lower for p in CODING_PHRASES)
+#     tool_model = CONFIG["groq_model"]
+#     answer_model = CODING_MODEL if is_coding else CONFIG["groq_model"]
+#     return tool_model, answer_model
+
 def select_groq_model(message: str) -> tuple[str, str]:
     lower = message.lower()
-    words = set(lower.split())
-    is_coding = bool(words & CODING_KEYWORDS) or any(p in lower for p in CODING_PHRASES)
+
+    # --- HARD OVERRIDES ---
+    if "<coding>" in lower:
+        return CONFIG["groq_model"], CODING_MODEL
+
+    if "<thinking>" in lower:
+        return CONFIG["groq_model"], THINKING_MODEL
+
+    # --- NORMAL HEURISTIC FLOW ---
+    words = set(re.findall(r"\b\w+\b", lower))
+
+    coding_keywords = {k.lower() for k in CODING_KEYWORDS}
+    coding_phrases = [p.lower() for p in CODING_PHRASES]
+
+    score = 0
+    score += len(words & coding_keywords) * 2
+    score += sum(1 for p in coding_phrases if p in lower) * 3
+
+    if re.search(r"\b(def|class|import|#include|public\s+static\s+void|function\s*\()", lower):
+        score += 4
+
+    if re.search(r"\b(python|java|c\+\+|javascript|typescript|go|rust)\b", lower):
+        score += 2
+
+    is_coding = score >= 3
+
     tool_model = CONFIG["groq_model"]
     answer_model = CODING_MODEL if is_coding else CONFIG["groq_model"]
+
     return tool_model, answer_model
