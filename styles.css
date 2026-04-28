@@ -15,7 +15,7 @@
     --accent2: #7fb7ff;
     --warn: #ff8c56;
     --mono: 'IBM Plex Mono', monospace;
-    --sans: 'IBM Plex Sans', sans-serif
+    --sans: 'DM Sans', sans-serif;
 }
 
 body {
@@ -42,6 +42,7 @@ aside {
     line-height: 1.7;
 }
 
+/* ── Logo: intentionally mono ── */
 .logo {
     font-family: var(--mono);
     font-size: 13px;
@@ -56,6 +57,7 @@ aside {
     color: var(--muted);
 }
 
+/* ── Section labels: intentionally mono ── */
 .section-label {
     font-family: var(--mono);
     font-size: 12px;
@@ -77,21 +79,23 @@ aside {
     gap: 4px
 }
 
+/* ── Config labels: sans ── */
 .config-row label {
-    font-family: var(--mono);
+    font-family: var(--sans);
     font-size: 13px;
     color: var(--text);
-    letter-spacing: .05em;
 }
 
+/* ── Inputs/selects/textareas: sans ── */
 .config-row input,
 .config-row select,
-.config-row textarea {
+.config-row textarea,
+#user-input {
+    font-family: var(--sans);
+    font-size: 13px;
     background: var(--bg);
     border: 1px solid var(--border);
     color: var(--text);
-    font-family: var(--mono);
-    font-size: 13px;
     padding: 8px 10px;
     border-radius: 4px;
 }
@@ -143,6 +147,7 @@ aside {
     cursor: pointer;
 }
 
+/* ── Buttons: intentionally mono ── */
 .btn {
     font-family: var(--mono);
     font-size: 11px;
@@ -253,6 +258,7 @@ main {
     }
 }
 
+/* ── Role label: intentionally mono ── */
 .msg-role {
     font-family: var(--mono);
     font-size: 9px;
@@ -270,10 +276,14 @@ main {
     color: var(--accent2)
 }
 
-.msg-body {
-    font-size: 14px;
-    line-height: 1.7;
-    font-weight: 300
+/* ── Message body: sans, always ── */
+.msg-body,
+.msg-body *:not(code):not(pre):not(pre *) {
+    font-family: var(--sans) !important;
+    font-size: 15px;
+    line-height: 1.9;
+    font-weight: 400;
+    letter-spacing: 0.01em;
 }
 
 .msg.user .msg-body {
@@ -281,13 +291,15 @@ main {
     border: 1px solid #1a3a5e;
     padding: 12px 16px;
     border-radius: 8px 8px 2px 8px;
-    color: #b8d4f0
+    color: #b8d4f0;
+    font-size: 15px;
 }
 
 .msg.assistant .msg-body {
     color: var(--text)
 }
 
+/* ── Search pills: intentionally mono ── */
 .search-pill {
     display: inline-flex;
     align-items: center;
@@ -309,9 +321,10 @@ main {
 }
 
 .search-pill.done {
-    border-color: #1a3a1a;
-    color: #4a8a4a;
-    background: #0a140a
+    border-color: var(--accent);
+    color: var(--accent);
+    background: transparent;
+    opacity: 0.85;
 }
 
 @keyframes pulse {
@@ -409,6 +422,7 @@ main {
     color: var(--muted)
 }
 
+/* ── Send button: intentionally mono ── */
 #send-btn {
     background: var(--accent);
     color: var(--bg);
@@ -471,15 +485,13 @@ main {
     margin-bottom: 6px;
 }
 
-.msg-body {
+/* ── Markdown content: sans for prose, mono for code only ── */
+.md-content {
     font-family: var(--sans);
-    font-size: 16px;
-    line-height: 1.9;
-    font-weight: 400;
-    letter-spacing: 0.01em;
 }
 
 .md-content p {
+    font-family: var(--sans);
     margin-bottom: 10px
 }
 
@@ -489,11 +501,13 @@ main {
 
 .md-content ul,
 .md-content ol {
+    font-family: var(--sans);
     padding-left: 20px;
     margin-bottom: 10px
 }
 
 .md-content li {
+    font-family: var(--sans);
     margin-bottom: 4px
 }
 
@@ -511,6 +525,7 @@ main {
     text-decoration: underline
 }
 
+/* ── Code: keep mono ── */
 .md-content code {
     font-family: var(--mono);
     font-size: 12px;
@@ -529,6 +544,7 @@ main {
 }
 
 .md-content pre code {
+    font-family: var(--mono);
     background: none;
     padding: 0;
     font-size: 12px
@@ -537,6 +553,7 @@ main {
 .md-content h1,
 .md-content h2,
 .md-content h3 {
+    font-family: var(--sans);
     font-weight: 500;
     margin-bottom: 8px;
     color: var(--text)
@@ -547,6 +564,11 @@ main {
     align-items: center;
     justify-content: space-between;
     padding: 4px 0;
+}
+
+.toggle-row label:first-child {
+    font-family: var(--sans);
+    font-size: 13px;
 }
 
 .toggle {
@@ -621,6 +643,7 @@ main {
     background: var(--surface);
     transition: background 0.15s;
     max-width: 380px;
+    font-family: var(--sans);
 }
 
 .link-card:hover {
@@ -640,17 +663,20 @@ main {
 }
 
 .link-card-domain {
+    font-family: var(--mono);
     font-size: 11px;
     color: var(--muted);
 }
 
 .link-card-title {
+    font-family: var(--sans);
     font-size: 13px;
     font-weight: 600;
     margin-bottom: 3px;
 }
 
 .link-card-desc {
+    font-family: var(--sans);
     font-size: 12px;
     color: var(--muted);
     line-height: 1.4;
@@ -678,7 +704,7 @@ pre {
     right: 8px;
     padding: 2px 7px;
     font-size: 11px;
-    font-family: inherit;
+    font-family: var(--mono);
     background: transparent;
     border: 1px solid var(--border);
     border-radius: 4px;
@@ -695,4 +721,49 @@ pre:hover .copy-btn {
 .copy-btn.copied {
     color: #4caf50;
     border-color: #4caf50;
+}
+
+.font-select-wrap,
+.theme-select-wrap {
+    position: relative;
+    width: 100%;
+}
+
+.font-select-wrap::after,
+.theme-select-wrap::after {
+    content: '▾';
+    position: absolute;
+    right: 10px;
+    top: 50%;
+    transform: translateY(-50%);
+    color: var(--accent);
+    font-size: 11px;
+    pointer-events: none;
+}
+
+.theme-select,
+.font-select {
+    width: 100%;
+    appearance: none;
+    -webkit-appearance: none;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    color: var(--text);
+    font-family: var(--sans);
+    font-size: 12px;
+    padding: 8px 28px 8px 10px;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: border-color .15s;
+    outline: none;
+}
+
+.theme-select:hover,
+.font-select:hover {
+    border-color: var(--muted);
+}
+
+.theme-select:focus,
+.font-select:focus {
+    border-color: var(--accent);
 }

@@ -6,10 +6,11 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>my little agent</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link
-    href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:ital,wght@0,400;0,500;1,400&family=IBM+Plex+Sans:wght@300;400;500&display=swap"
-    rel="stylesheet">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet"
+    href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:ital,wght@0,400;0,500;1,400&family=DM+Sans:wght@300;400;500&family=Inter:wght@300;400;500&family=Nunito:wght@300;400;500&family=Outfit:wght@300;400;500&family=Plus+Jakarta+Sans:wght@300;400;500&display=swap">
   <link rel="stylesheet" href="styles.css">
+
 </head>
 
 <body>
@@ -56,6 +57,39 @@
       </div>
     </div>
 
+    <div>
+      <div class="section-label">Theme</div>
+      <div class="theme-select-wrap">
+        <select id="theme-select" class="theme-select">
+          <option value="default">Terminal</option>
+          <option value="light">Paper</option>
+          <option value="solarized">Solarized</option>
+          <option value="rose">Rose Pine</option>
+          <option value="nord">Nord</option>
+          <option value="gruvbox">Gruvbox</option>
+          <option value="dracula">Dracula</option>
+          <option value="monokai">Monokai</option>
+          <option value="oceanic">Oceanic</option>
+          <option value="Nebula">Nebula</option>
+          <option value="lumina">Lumina</option>
+          <option value="aurora">Aurora</option>
+        </select>
+      </div>
+    </div>
+
+    <div>
+      <div class="section-label">Font</div>
+      <div class="font-select-wrap">
+        <select id="font-select" class="font-select">
+          <option value="dm">DM Sans</option>
+          <option value="inter">Inter</option>
+          <option value="nunito">Nunito</option>
+          <option value="outfit">Outfit</option>
+          <option value="jakarta">Plus Jakarta Sans</option>
+        </select>
+      </div>
+    </div>
+
     <button class="btn btn-apply">apply config</button>
     <button class="btn btn-clear">clear history</button>
 
@@ -79,8 +113,8 @@
 
   <div class="toast" id="toast"></div>
 
-  <script src="app.js" defer></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/9.1.6/marked.min.js"></script>
+  <script src="app.js" defer></script>
 </body>
 
 </html>
