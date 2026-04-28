@@ -49,25 +49,26 @@ function setInputDisplay(id, value) {
 }
 
 async function init() {
-    await checkServerRestart()
+    try {
+        if (!window.__historyCleared) {
+            window.__historyCleared = true
+
+            const res = await fetch(`${API}/history`, { method: 'DELETE' })
+            if (res.ok) {
+                showToast('history cleared')
+            } else {
+                console.warn('Failed to clear history:', res.status)
+            }
+        }
+    } catch (e) {
+        console.warn('Error clearing history:', e)
+    }
+
     bindInputEvents()
     bindButtons()
     await loadConfig()
 }
 
-async function checkServerRestart() {
-    try {
-        const r = await fetch(`${API}/startup-token`)
-        const { token } = await r.json()
-        const stored = sessionStorage.getItem('startup-token')
-        if (stored && stored !== token) {
-            // server restarted, clear UI
-            document.getElementById('messages').innerHTML = ''
-            showToast('server restarted — history cleared')
-        }
-        sessionStorage.setItem('startup-token', token)
-    } catch { }
-}
 function bindInputEvents() {
     document.getElementById('cfg-max-searches').addEventListener('input', e => {
         setInputDisplay('max-searches-val', e.target.value)
@@ -371,6 +372,12 @@ function renderLinkCard(container, card) {
 
 function renderMarkdown(mdDiv, text) {
     mdDiv.innerHTML = marked.parse(text)
+
+    mdDiv.querySelectorAll('a').forEach(a => {
+        a.setAttribute('target', '_blank');
+        a.setAttribute('rel', 'noopener noreferrer');
+    });
+
     mdDiv.querySelectorAll('pre').forEach(pre => {
         if (pre.querySelector('.copy-btn')) return
         const btn = document.createElement('button')
