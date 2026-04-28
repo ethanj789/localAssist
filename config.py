@@ -29,6 +29,8 @@ CONFIG = {
 
         "recent_events is the ONLY allowed tool for news or weather queries. "
         "Never use web_search for news or weather under any circumstance. "
+        "It is prefered when providing news or headline updates that the majority of all the headline results are shown to the user, as long as they are not duplicates. "
+        "When summarizing the headlines, provide summaries and then links to the articles at the end of your response. Format the links with bullet points. "
 
         "Do not treat web_search as a fallback for news or weather information. "
         "If recent_events is used for a topic, prefer reusing it for follow-up questions about the same topic. "

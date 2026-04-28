@@ -272,6 +272,20 @@ async def agent_loop(user_message: str, mcp) -> AsyncGenerator[str, None]:
 
                         result = await mcp.call_tool(name, args)
 
+                        # After fetch_webpage, extract metadata for the frontend card
+                        if name == "fetch_webpage":
+                            try:
+                                # Parse the __LINK_METADATA__ sentinel if your MCP tool emits it
+                                lines = result.split("\n")
+                                metadata_line = next((l for l in lines if l.startswith("__LINK_METADATA__:")), None)
+                                if metadata_line:
+                                    metadata = json.loads(metadata_line.split(":", 1)[1])
+                                    yield _sse("link_card", json.dumps(metadata))
+                                    # Strip the metadata line from what the AI sees
+                                    result = "\n".join(l for l in lines if not l.startswith("__LINK_METADATA__:"))
+                            except Exception:
+                                pass  # non-fatal, just skip the card
+
                         if CONFIG["use_groq"] and groq_client and name in ("web_search", "fetch_webpage"):
                             result = await _summarize_tool_result(groq_client, name, result)
                             yield _sse("status", f"summarized {name} result")

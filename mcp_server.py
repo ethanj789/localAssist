@@ -40,7 +40,7 @@ FETCH_TIMEOUT   = 8           # seconds before page fetch gives up
 MAX_TEXT_CHARS  = 2000        # truncate extracted page text to this length
 
 # WORKSPACE_ROOT = (Path(__file__).parent / "aiWorkspace").resolve()
-MAX_FILE_LINES = 75
+MAX_FILE_LINES = 250
 MAX_SCAN_BYTES = 1_000_000
 
 SKIP_DIRS = {
@@ -113,21 +113,27 @@ async def list_tools() -> list[types.Tool]:
         types.Tool(
             name="list_files",
             description=(
-                "List all local files in the workspace. "
-                "Use this to see what files the user has made available locally. "
-                "Never use fetch_webpage for local files — use read_file instead."
+                "List files in the workspace. "
+                "If a `topic` is provided, the tool filters the results to files whose "
+                "filenames or contents are relevant to that term, effectively acting as a "
+                "search-by-keyword utility. "
+                "Use this to discover which files are available before reading any of them. "
+                "Never use `fetch_webpage` for local files — use `read_file` instead."
             ),
             inputSchema={
                 "type": "object",
                 "properties": {
                     "topic": {
                         "type": "string",
-                        "description": "Filters files by name relevance and content relevance."
+                        "description": (
+                            "Optional search term to match against file names and file "
+                            "content. If omitted, all files are returned."
+                        )
                     }
-                }
+                },
+                "required": []
             }
         ),
-
         types.Tool(
             name="read_file",
             description=(
@@ -183,10 +189,26 @@ async def list_tools() -> list[types.Tool]:
                 "Supported categories include: technology, sports, business, health, science, "
                 "entertainment, world, nation, general. "
 
-                "If the query matches one of these categories, prefer using it directly. "
-                "If the query is a specific entity (person, company, event), use a keyword instead. "
+                "Normalize the input before calling this tool: "
 
-                "For WEATHER, provide a city name (e.g. Miami, London). "
+                "- If the request includes phrases like 'news', 'top news', 'latest news', "
+                "'headlines', 'today’s news', or 'current events', map it to 'general'. "
+
+                "- If a supported category word is present, use that exact category. "
+
+                "- Otherwise extract only core keywords (no filler words). "
+
+                "- NEVER pass phrases like 'news about', 'top news', 'latest', or full sentences. "
+                "If nothing remains after cleaning, use 'general'. "
+
+                "Examples: "
+                "'top news for today' -> 'general', "
+                "'latest headlines' -> 'general', "
+                "'tech news' -> 'technology', "
+                "'Tesla news' -> 'Tesla'. "
+
+                "For WEATHER, provide ONLY a city name (e.g. Miami, London). Do not add things like `tommorow`. "
+                "The response will have information for the next twenty four hours"
                 "Always prefer this tool over web_search for current events or weather."
             ),
             inputSchema={
@@ -334,6 +356,7 @@ async def _fetch_webpage(url: str) -> list[types.TextContent]:
         r = results[0]
 
         title = r.get("title", "")
+        url_result = r.get("url", url)
         content = r.get("content", "")
         failed = resp.get("failed_results", [])
         if failed:
@@ -343,8 +366,18 @@ async def _fetch_webpage(url: str) -> list[types.TextContent]:
         if len(content) > MAX_CHARS:
             content = content[:MAX_CHARS] + "\n...[truncated]"
 
-        text = f"Title: {title}\nURL: {url}\n\nContent:\n{content}"        
-        return [types.TextContent(type="text", text=text)]
+        metadata = {
+            "url": url_result,
+            "title": title,
+            "description": content[:200].strip(),
+            "favicon": f"https://www.google.com/s2/favicons?domain={url_result}&sz=32",
+            "image": None,
+        }
+
+        text = f"Title: {title}\nURL: {url}\n\nContent:\n{content}"
+        meta_line = f"\n__LINK_METADATA__:{json.dumps(metadata)}"
+
+        return [types.TextContent(type="text", text=text + meta_line)]
 
     except Exception as e:
         log.error("fetch_webpage error: %s", e)
@@ -707,10 +740,7 @@ async def _gnews(query: str):
         "general"
     }
 
-    use_headlines = (
-        query_clean in general_categories
-        or len(query_clean.split()) <= 2
-    )
+    use_headlines = query_clean in general_categories
 
     if use_headlines:
         url = "https://gnews.io/api/v4/top-headlines"
@@ -725,7 +755,7 @@ async def _gnews(query: str):
         params = {
             "q": query,
             "lang": "en",
-            "max": 5,
+            "max": 10,
             "token": GNEWS_API_KEY
         }
 

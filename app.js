@@ -160,6 +160,8 @@ function appendPill(msgDiv, text, state = 'active') {
 }
 
 async function sendMessage() {
+    let linkCards = []
+
     if (isStreaming) return
     const input = document.getElementById('user-input')
     const text = input.value.trim()
@@ -214,7 +216,7 @@ async function sendMessage() {
 
                 if (event === 'token') {
                     fullText += data
-                    mdDiv.innerHTML = marked.parse(fullText)
+                    renderMarkdown(mdDiv, fullText)
                     document.getElementById('messages').scrollTop = 9999
                 }
 
@@ -253,6 +255,17 @@ async function sendMessage() {
                     appendPill(aDiv, data, 'done')
                 }
 
+                if (event === 'model') {
+                    const info = JSON.parse(data)
+                    appendPill(
+                        aDiv,
+                        `model: ${info.provider}/${info.model}`,
+                        'done'
+                    )
+                }
+                if (event === 'link_card') {
+                    linkCards.push(JSON.parse(data))
+                }
                 if (event === 'done') {
                     const info = JSON.parse(data)
                     cursor.remove()
@@ -262,14 +275,13 @@ async function sendMessage() {
                         meta.textContent = `${info.searches_used} search${info.searches_used !== 1 ? 'es' : ''} used`
                         aBody.appendChild(meta)
                     }
-                }
-                if (event === 'model') {
-                    const info = JSON.parse(data)
-                    appendPill(
-                        aDiv,
-                        `model: ${info.provider}/${info.model}`,
-                        'done'
-                    )
+                    if (linkCards.length > 0) {
+                        const tray = document.createElement('div')
+                        tray.className = 'link-card-tray'
+                        linkCards.forEach(card => renderLinkCard(tray, card))
+                        aBody.appendChild(tray)
+                        linkCards = []
+                    }
                 }
             }
         }
@@ -293,6 +305,50 @@ function showToast(msg) {
     t.textContent = msg
     t.classList.add('show')
     setTimeout(() => t.classList.remove('show'), 2000)
+}
+
+function renderLinkCard(container, card) {
+    const el = document.createElement('a')
+    el.className = 'link-card'
+    el.href = card.url
+    el.target = '_blank'
+    el.rel = 'noopener noreferrer'
+
+    const domain = new URL(card.url).hostname
+    el.innerHTML = `
+        <div class="link-card-header">
+            <img class="link-card-favicon" src="${card.favicon || `https://www.google.com/s2/favicons?domain=${domain}`}" 
+                 onerror="this.style.display='none'" />
+            <span class="link-card-domain">${domain}</span>
+        </div>
+        <div class="link-card-title">${escHtml(card.title || domain)}</div>
+        ${card.description ? `<div class="link-card-desc">${escHtml(card.description)}</div>` : ''}
+        ${card.image ? `<img class="link-card-img" src="${card.image}" onerror="this.style.display='none'" />` : ''}
+    `
+    container.appendChild(el)
+}
+
+function renderMarkdown(mdDiv, text) {
+    mdDiv.innerHTML = marked.parse(text)
+    mdDiv.querySelectorAll('pre').forEach(pre => {
+        if (pre.querySelector('.copy-btn')) return
+        const btn = document.createElement('button')
+        btn.className = 'copy-btn'
+        btn.textContent = 'copy'
+        btn.addEventListener('click', () => {
+            const code = pre.querySelector('code')?.innerText ?? ''
+            navigator.clipboard.writeText(code).then(() => {
+                btn.textContent = '✓'
+                btn.classList.add('copied')
+                setTimeout(() => {
+                    btn.textContent = 'copy'
+                    btn.classList.remove('copied')
+                }, 1500)
+            })
+        })
+        pre.style.position = 'relative'
+        pre.appendChild(btn)
+    })
 }
 
 init()
