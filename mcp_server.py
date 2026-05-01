@@ -192,7 +192,7 @@ async def list_tools() -> list[types.Tool]:
                 "Normalize the input before calling this tool: "
 
                 "- If the request includes phrases like 'news', 'top news', 'latest news', "
-                "'headlines', 'today’s news', or 'current events', map it to 'general'. "
+                "'headlines', 'today's news', or 'current events', map it to 'general'. "
 
                 "- If a supported category word is present, use that exact category. "
 
