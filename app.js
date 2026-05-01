@@ -63,7 +63,8 @@ async function init() {
     } catch (e) {
         console.warn('Error clearing history:', e)
     }
-
+    initVoiceRecorder();
+    bindVoiceButton();
     bindInputEvents()
     bindButtons()
     await loadConfig()
@@ -202,139 +203,75 @@ function appendPill(msgDiv, text, state = 'active') {
 }
 
 async function sendMessage() {
-    let linkCards = []
+    if (isStreaming) return;
+    const input = document.getElementById('user-input');
+    const text = input.value.trim();
+    if (!text) return;
 
-    if (isStreaming) return
-    const input = document.getElementById('user-input')
-    const text = input.value.trim()
-    if (!text) return
+    input.value = '';
+    input.style.height = 'auto';
+    isStreaming = true;
+    document.getElementById('send-btn').disabled = true;
+    setStatus(true, 'thinking...');
 
-    input.value = ''
-    input.style.height = 'auto'
-    isStreaming = true
-    document.getElementById('send-btn').disabled = true
-    setStatus(true, 'thinking...')
+    appendMsg('user', escHtml(text));
 
-    appendMsg('user', escHtml(text))
+    const aId = 'msg-' + Date.now();
+    const aDiv = appendMsg('assistant', '', aId);
+    const aBody = aDiv.querySelector('.msg-body');
+    const mdDiv = document.createElement('div');
+    mdDiv.className = 'md-content';
+    let cursor = document.createElement('span');
+    cursor.className = 'cursor';
+    aBody.appendChild(mdDiv);
+    aBody.appendChild(cursor);
 
-    const aId = 'msg-' + Date.now()
-    const aDiv = appendMsg('assistant', '', aId)
-    const aBody = aDiv.querySelector('.msg-body')
-    const mdDiv = document.createElement('div')
-    mdDiv.className = 'md-content'
-    let cursor = document.createElement('span')
-    cursor.className = 'cursor'
-    aBody.appendChild(mdDiv)
-    aBody.appendChild(cursor)
-
-    let currentPill = null
-    let fullText = ''
+    // State object for the event handler
+    const state = {
+        aDiv,
+        mdDiv,
+        fullText: '',
+        currentPill: null,
+        cursor,
+        linkCards: [],
+    };
 
     try {
         const resp = await fetch(`${API}/chat`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ message: text }),
-        })
+        });
 
-        const reader = resp.body.getReader()
-        const decoder = new TextDecoder()
-        let buf = ''
+        const reader = resp.body.getReader();
+        const decoder = new TextDecoder();
+        let buf = '';
 
         while (true) {
-            const { done, value } = await reader.read()
-            if (done) break
-            buf += decoder.decode(value, { stream: true })
+            const { done, value } = await reader.read();
+            if (done) break;
+            buf += decoder.decode(value, { stream: true });
 
-            const lines = buf.split('\n\n')
-            buf = lines.pop()
+            const lines = buf.split('\n\n');
+            buf = lines.pop();
 
             for (const line of lines) {
-                if (!line.startsWith('data: ')) continue
-                let parsed
+                if (!line.startsWith('data: ')) continue;
+                let parsed;
                 try { parsed = JSON.parse(line.slice(6)) } catch { continue }
 
-                const { event, data } = parsed
-
-                if (event === 'token') {
-                    fullText += data
-                    renderMarkdown(mdDiv, fullText)
-                    document.getElementById('messages').scrollTop = 9999
-                }
-
-                if (event === 'tool_requested') {
-                    const info = JSON.parse(data)
-                    let label
-                    if (info.tool === 'web_search') {
-                        label = `tool requested: web_search "${info.args?.query || ''}"`
-                    } else if (info.tool === 'fetch_webpage') {
-                        label = `tool requested: fetch_webpage ${info.args?.url || ''}`
-                    } else if (info.tool === 'list_files') {
-                        label = `tool requested: list_files ${info.args?.subdir || '/'}`
-                    } else if (info.tool === 'read_file') {
-                        label = `tool requested: read_file ${info.args?.path || ''}`
-                    } else {
-                        label = `tool requested: ${info.tool}`
-                    }
-                    appendPill(aDiv, label, 'done')
-                }
-                if (event === 'searching') {
-                    const info = JSON.parse(data)
-                    const label = info.label || (info.tool === 'web_search'
-                        ? `searching: "${info.args?.query}" (${info.count}/${info.max})`
-                        : `fetching: ${info.args?.url?.slice(0, 40)}...`)
-                    currentPill = appendPill(aDiv, label, 'active')
-                }
-
-                if (event === 'search_result') {
-                    if (currentPill) {
-                        currentPill.className = 'search-pill done'
-                        currentPill.innerHTML = `✓ ${currentPill.textContent.trim()}`
-                    }
-                }
-
-                if (event === 'status') {
-                    appendPill(aDiv, data, 'done')
-                }
-
-                if (event === 'model') {
-                    const info = JSON.parse(data)
-                    appendPill(
-                        aDiv,
-                        `model: ${info.provider}/${info.model}`,
-                        'done'
-                    )
-                }
-                if (event === 'link_card') {
-                    linkCards.push(JSON.parse(data))
-                }
-                if (event === 'done') {
-                    const info = JSON.parse(data)
-                    cursor.remove()
-                    if (info.searches_used > 0) {
-                        const meta = document.createElement('div')
-                        meta.className = 'meta'
-                        meta.textContent = `${info.searches_used} search${info.searches_used !== 1 ? 'es' : ''} used`
-                        aBody.appendChild(meta)
-                    }
-                    if (linkCards.length > 0) {
-                        const tray = document.createElement('div')
-                        tray.className = 'link-card-tray'
-                        linkCards.forEach(card => renderLinkCard(tray, card))
-                        aBody.appendChild(tray)
-                        linkCards = []
-                    }
-                }
+                const { event, data } = parsed;
+                handleStreamEvent(event, data, state);
             }
         }
     } catch (e) {
-        aBody.innerHTML = `<span style="color:var(--warn)">error: ${e.message}</span>`
-        setStatus(false, 'error')
+        aBody.innerHTML = `<span style="color:var(--warn)">error: ${e.message}</span>`;
+        setStatus(false, 'error');
     } finally {
-        cursor.remove()
-        isStreaming = false
-        document.getElementById('send-btn').disabled = false
-        setStatus(true, 'ready')
+        cursor.remove();
+        isStreaming = false;
+        document.getElementById('send-btn').disabled = false;
+        setStatus(true, 'ready');
     }
 }
 
@@ -425,5 +362,258 @@ document.getElementById('font-select').addEventListener('change', e => applyFont
 
 // restore on load
 applyFont(lsGet('font') ?? 'dm');
+
+
+// ============ VOICE CHAT ADDITIONS ============
+// Add these to your existing app.js
+
+let voiceRecorder = null;
+let isRecording = false;
+
+function initVoiceRecorder() {
+    voiceRecorder = new VoiceRecorder({
+        silenceThreshold: -20,
+        silenceDuration: 1000, // Stop after 1.5s of silence
+        onVolumeChange: (db) => {
+            // Update volume indicator if you want visual feedback
+            const btn = document.getElementById('voice-btn');
+            if (btn) {
+                const normalized = Math.max(0, Math.min(1, (db + 50) / 50)); // Scale dB to 0-1
+                btn.style.setProperty('--volume', normalized);
+            }
+        },
+        onSilenceDetected: () => {
+            console.log('Silence detected, stopping recording...');
+            stopVoiceRecording();
+        },
+    });
+}
+
+async function startVoiceRecording() {
+    if (isStreaming || isRecording) return;
+
+    try {
+        isRecording = true;
+        const btn = document.getElementById('voice-btn');
+        if (btn) {
+            btn.classList.add('recording');
+            btn.textContent = '● stop';
+        }
+
+        await voiceRecorder.start();
+    } catch (err) {
+        console.error('Failed to start recording:', err);
+        showToast('microphone access denied');
+        isRecording = false;
+        const btn = document.getElementById('voice-btn');
+        if (btn) btn.classList.remove('recording');
+    }
+}
+
+async function stopVoiceRecording() {
+    if (!isRecording) return;
+
+    isRecording = false;
+    const btn = document.getElementById('voice-btn');
+    if (btn) {
+        btn.classList.remove('recording');
+        btn.textContent = '🎤 voice';
+        btn.disabled = true;
+    }
+
+    try {
+        const audioBlob = await voiceRecorder.stop();
+        await sendVoiceMessage(audioBlob);
+    } catch (err) {
+        console.error('Error stopping recording:', err);
+        showToast('error processing audio');
+    } finally {
+        if (btn) btn.disabled = false;
+    }
+}
+
+async function sendVoiceMessage(audioBlob) {
+    if (isStreaming) return;
+
+    isStreaming = true;
+    setStatus(true, 'transcribing...');
+    document.getElementById('send-btn').disabled = true;
+
+    // Create user message placeholder first
+    const userDiv = appendMsg('user', '(transcribing...)');
+
+    // Create form data with audio
+    const formData = new FormData();
+    formData.append('audio', audioBlob, 'audio.webm');
+
+    // Create assistant message div
+    const aId = 'msg-' + Date.now();
+    const aDiv = appendMsg('assistant', '', aId);
+    const aBody = aDiv.querySelector('.msg-body');
+    const mdDiv = document.createElement('div');
+    mdDiv.className = 'md-content';
+    let cursor = document.createElement('span');
+    cursor.className = 'cursor';
+    aBody.appendChild(mdDiv);
+    aBody.appendChild(cursor);
+
+    // State object for the event handler
+    const state = {
+        aDiv,
+        mdDiv,
+        fullText: '',
+        currentPill: null,
+        cursor,
+        linkCards: [],
+    };
+
+    try {
+        const resp = await fetch(`${API}/voice-chat`, {
+            method: 'POST',
+            body: formData,
+        });
+
+        if (!resp.ok) {
+            throw new Error(`HTTP ${resp.status}`);
+        }
+
+        const reader = resp.body.getReader();
+        const decoder = new TextDecoder();
+        let buf = '';
+
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            buf += decoder.decode(value, { stream: true });
+
+            const lines = buf.split('\n\n');
+            buf = lines.pop();
+
+            for (const line of lines) {
+                if (!line.startsWith('data: ')) continue;
+
+                let parsed;
+                try {
+                    parsed = JSON.parse(line.slice(6));
+                } catch {
+                    continue;
+                }
+
+                const { event, data } = parsed;
+
+                // Handle transcription event (voice-chat specific)
+                if (event === 'transcription') {
+                    const userBody = userDiv.querySelector('.msg-body');
+                    userBody.textContent = escHtml(data);
+                    setStatus(true, 'thinking...');
+                    continue;
+                }
+
+                // Use shared handler for all other events
+                handleStreamEvent(event, data, state);
+            }
+        }
+    } catch (e) {
+        aBody.innerHTML = `<span style="color:var(--warn)">error: ${e.message}</span>`;
+        setStatus(false, 'error');
+    } finally {
+        cursor.remove();
+        isStreaming = false;
+        document.getElementById('send-btn').disabled = false;
+        setStatus(true, 'ready');
+    }
+}
+
+// Wire up the voice button
+function bindVoiceButton() {
+    const voiceBtn = document.getElementById('voice-btn');
+    if (!voiceBtn) return; // Skip if button doesn't exist yet
+
+    voiceBtn.addEventListener('click', (e) => {
+        e.preventDefault();
+        if (isRecording) {
+            stopVoiceRecording();
+        } else {
+            startVoiceRecording();
+        }
+    });
+}
+
+
+
+function handleStreamEvent(event, data, state) {
+    const { aDiv, mdDiv } = state;
+
+    if (event === 'token') {
+        state.fullText += data;
+        renderMarkdown(mdDiv, state.fullText);
+        document.getElementById('messages').scrollTop = 9999;
+    }
+
+    if (event === 'tool_requested') {
+        const info = JSON.parse(data);
+        let label;
+        if (info.tool === 'web_search') {
+            label = `tool requested: web_search "${info.args?.query || ''}"`;
+        } else if (info.tool === 'fetch_webpage') {
+            label = `tool requested: fetch_webpage ${info.args?.url || ''}`;
+        } else if (info.tool === 'list_files') {
+            label = `tool requested: list_files ${info.args?.subdir || '/'}`;
+        } else if (info.tool === 'read_file') {
+            label = `tool requested: read_file ${info.args?.path || ''}`;
+        } else {
+            label = `tool requested: ${info.tool}`;
+        }
+        appendPill(aDiv, label, 'done');
+    }
+
+    if (event === 'searching') {
+        const info = JSON.parse(data);
+        const label = info.label || (info.tool === 'web_search'
+            ? `searching: "${info.args?.query}" (${info.count}/${info.max})`
+            : `fetching: ${info.args?.url?.slice(0, 40)}...`);
+        state.currentPill = appendPill(aDiv, label, 'active');
+    }
+
+    if (event === 'search_result') {
+        if (state.currentPill) {
+            state.currentPill.className = 'search-pill done';
+            state.currentPill.innerHTML = `✓ ${state.currentPill.textContent.trim()}`;
+        }
+    }
+
+    if (event === 'status') {
+        appendPill(aDiv, data, 'done');
+    }
+
+    if (event === 'model') {
+        const info = JSON.parse(data);
+        appendPill(aDiv, `model: ${info.provider}/${info.model}`, 'done');
+    }
+
+    if (event === 'link_card') {
+        state.linkCards.push(JSON.parse(data));
+    }
+
+    if (event === 'done') {
+        const info = JSON.parse(data);
+        state.cursor.remove();
+        const aBody = aDiv.querySelector('.msg-body');
+        if (info.searches_used > 0) {
+            const meta = document.createElement('div');
+            meta.className = 'meta';
+            meta.textContent = `${info.searches_used} search${info.searches_used !== 1 ? 'es' : ''} used`;
+            aBody.appendChild(meta);
+        }
+        if (state.linkCards.length > 0) {
+            const tray = document.createElement('div');
+            tray.className = 'link-card-tray';
+            state.linkCards.forEach(card => renderLinkCard(tray, card));
+            aBody.appendChild(tray);
+        }
+    }
+}
+
+
 
 init()

@@ -12,7 +12,7 @@ CONFIG = {
     "ollama_base_url":  os.getenv("OLLAMA_URL", "http://localhost:11434"),
     "model":            os.getenv("MODEL", "gemma4:e2b"),
     "max_searches":     int(os.getenv("MAX_SEARCHES", "2")),
-    "max_tokens":       int(os.getenv("MAX_TOKENS", "1024")),
+    "max_tokens":       int(os.getenv("MAX_TOKENS", "2048")),
     "temperature":      float(os.getenv("TEMPERATURE", "0.7")),
     "mcp_server_cmd":   os.getenv("MCP_CMD", f"python mcp_server.py"),
     "system_prompt":    os.getenv("SYSTEM_PROMPT", (

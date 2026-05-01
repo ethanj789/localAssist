@@ -105,15 +105,17 @@
     <div class="input-area">
       <div class="input-wrap">
         <textarea id="user-input" placeholder="ask something..." rows="1"></textarea>
+        <button id="voice-btn" class="voice-btn" title="click to record, stops on silence">🎤 voice</button>
         <button id="send-btn">send</button>
       </div>
-      <div class="hint">enter to send · shift+enter for newline</div>
+      <div class="hint">enter to send · shift+enter for newline · 🎤 auto-stops on silence</div>
     </div>
   </main>
 
   <div class="toast" id="toast"></div>
 
   <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/9.1.6/marked.min.js"></script>
+  <script src="voiceUtils.js" defer></script>
   <script src="app.js" defer></script>
 </body>
 
