@@ -1,0 +1,12 @@
+:root {
+    --bg: #0b0b0b;
+    --surface: #181818;
+    --border: #2d2d2d;
+    --text: #f8f8f8;
+    --muted: #d0d0d0;
+    --accent: #7cffb6;
+    --accent2: #7fb7ff;
+    --warn: #ff8c56;
+    --mono: 'IBM Plex Mono', monospace;
+    --sans: 'DM Sans', sans-serif;
+}

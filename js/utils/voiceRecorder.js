@@ -8,7 +8,7 @@
  * - Real-time volume feedback
  */
 
-class VoiceRecorder {
+export class VoiceRecorder {
     constructor(options = {}) {
         this.silenceThreshold = options.silenceThreshold ?? -40; // dB
         this.silenceDuration = options.silenceDuration ?? 1500; // ms

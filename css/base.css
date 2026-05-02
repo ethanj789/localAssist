@@ -1,0 +1,24 @@
+*,
+:where(*::before, *::after) {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0
+}
+
+body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    font-weight: 400;
+    height: 100vh;
+    display: grid;
+    grid-template-columns: 260px 1fr;
+    grid-template-rows: 100vh;
+    overflow: hidden
+}
+
+main {
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}

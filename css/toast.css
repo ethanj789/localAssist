@@ -1,0 +1,20 @@
+.toast {
+    position: fixed;
+    bottom: 24px;
+    right: 24px;
+    background: var(--surface);
+    border: 1px solid var(--accent);
+    color: var(--accent);
+    font-family: var(--mono);
+    font-size: 11px;
+    padding: 10px 16px;
+    border-radius: 4px;
+    opacity: 0;
+    transition: opacity .2s;
+    pointer-events: none;
+    z-index: 99
+}
+
+.toast.show {
+    opacity: 1
+}
