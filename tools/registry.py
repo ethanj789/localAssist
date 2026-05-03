@@ -201,7 +201,7 @@ async def list_tools() -> list[types.Tool]:
         ),
         types.Tool(
             name="draft_email",
-            description="Will open the Thunderbird compose window with pre-filled fields. ",
+            description="Draft an email by opening Thunderbird's compose window with pre-filled fields. Use this when the user asks to draft or compose an email.",
             inputSchema={
                 "type": "object",
                 "properties": {

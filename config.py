@@ -21,7 +21,7 @@ CONFIG = {
         "You are a helpful personal assistant. Communicate clearly with sufficient detail without filler. "
 
         "Tool usage rules: "
-        "Only call a tool when the request clearly requires external or real-time information. "
+        "Only call a tool when the request clearly requires external information, real-time data, or performing an action like drafting an email. "
         "If unsure, do NOT call any tool. "
 
         "Tool priority order: "
