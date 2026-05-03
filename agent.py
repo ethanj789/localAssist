@@ -116,7 +116,11 @@ async def agent_loop(user_message: str, mcp) -> AsyncGenerator[str, None]:
         yield _sse("status", f"calling {'groq' if CONFIG['use_groq'] else 'ollama'}")
 
         search_count = 0
+        email_count = 0
+        tool_count = 0
         max_searches = CONFIG["max_searches"]
+        max_emails = CONFIG["max_emails"]
+        max_tools = CONFIG["max_tools"]
 
         async with httpx.AsyncClient(timeout=240) as client:
             while True:
@@ -144,13 +148,24 @@ async def agent_loop(user_message: str, mcp) -> AsyncGenerator[str, None]:
                                 "model": current_model
                             }))
 
+                            # Filter tools based on budget
+                            available_tools = []
+                            for t in ollama_tools:
+                                if tool_count >= max_tools:
+                                    break
+                                if t["function"]["name"] in ("web_search", "fetch_webpage") and search_count >= max_searches:
+                                    continue
+                                if t["function"]["name"] == "draft_email" and email_count >= max_emails:
+                                    continue
+                                available_tools.append(t)
+
                             response = await groq_client.chat.completions.create(
                                 model=current_model,
                                 messages=[
                                     {"role": "system", "content": system},
                                     *trimmed_history,
                                 ],
-                                tools=ollama_tools if search_count < max_searches else [],
+                                tools=available_tools if available_tools else [],
                                 temperature=CONFIG["temperature"],
                                 max_completion_tokens=CONFIG["max_tokens"],
                             )
@@ -174,13 +189,24 @@ async def agent_loop(user_message: str, mcp) -> AsyncGenerator[str, None]:
                             "provider": "ollama",
                             "model": CONFIG["model"]
                         }))
+                        # Filter tools based on budget for Ollama as well
+                        available_tools = []
+                        for t in ollama_tools:
+                            if tool_count >= max_tools:
+                                break
+                            if t["type"] == "function" and t["function"]["name"] in ("web_search", "fetch_webpage") and search_count >= max_searches:
+                                continue
+                            if t["type"] == "function" and t["function"]["name"] == "draft_email" and email_count >= max_emails:
+                                continue
+                            available_tools.append(t)
+
                         payload = {
                             "model": CONFIG["model"],
                             "messages": [
                                 {"role": "system", "content": system},
                                 *trimmed_history,
                             ],
-                            "tools": ollama_tools if search_count < max_searches else [],
+                            "tools": available_tools if available_tools else [],
                             "options": {
                                 "temperature": CONFIG["temperature"],
                                 "num_predict": CONFIG["max_tokens"],
@@ -206,7 +232,11 @@ async def agent_loop(user_message: str, mcp) -> AsyncGenerator[str, None]:
                             await asyncio.sleep(0.01)
                         yield _sse("done", json.dumps({
                             "searches_used": search_count,
-                            "max_searches": max_searches
+                            "emails_used": email_count,
+                            "tools_used": tool_count,
+                            "max_searches": max_searches,
+                            "max_emails": max_emails,
+                            "max_tools": max_tools
                         }))
                         return
 
@@ -249,6 +279,26 @@ async def agent_loop(user_message: str, mcp) -> AsyncGenerator[str, None]:
                             })
                             continue
 
+                        if email_count >= max_emails and name == "draft_email":
+                            yield _sse("status", f"Email cap ({max_emails}) reached...")
+                            tool_call_id = tc.id if CONFIG["use_groq"] else f"call_{name}"
+                            conversation_history.append({
+                                "role": "tool",
+                                "tool_call_id": tool_call_id,
+                                "content": f"Email drafting limit of {max_emails} reached. You cannot draft any more emails in this turn. Please proceed to answer the user based on the drafts already opened."
+                            })
+                            continue
+
+                        if tool_count >= max_tools:
+                            yield _sse("status", f"Total tool cap ({max_tools}) reached...")
+                            tool_call_id = tc.id if CONFIG["use_groq"] else f"call_{name}"
+                            conversation_history.append({
+                                "role": "tool",
+                                "tool_call_id": tool_call_id,
+                                "content": f"Total tool limit of {max_tools} reached. No more tools can be called. Please proceed to answer the user with the information you already have."
+                            })
+                            continue
+
                         event_payload = {"tool": name, "args": args}
                         if name == "web_search":
                             event_payload["count"] = search_count + 1
@@ -264,6 +314,10 @@ async def agent_loop(user_message: str, mcp) -> AsyncGenerator[str, None]:
                             event_payload["label"] = f'calculating: {args.get("expression", "")}'
                         elif name == "recent_events":
                             event_payload["label"] = f'getting recent info for: {args.get("infoType", "")}, for/about {args.get("details","")}'
+                        elif name == "draft_email":
+                            event_payload["count"] = email_count + 1
+                            event_payload["max"] = max_emails
+                            event_payload["label"] = f'drafting email to {args.get("to","NA")}, about {args.get("subject","NA")} ({email_count + 1}/{max_emails})'
                         else:
                             event_payload["label"] = f'{name}: {json.dumps(args)}'
 
@@ -292,8 +346,12 @@ async def agent_loop(user_message: str, mcp) -> AsyncGenerator[str, None]:
 
                         if name in ("web_search", "fetch_webpage"):
                             search_count += 1
+                        if name == "draft_email":
+                            email_count += 1
+                        
+                        tool_count += 1
 
-                        yield _sse("search_result", json.dumps({"tool": name, "count": search_count}))
+                        yield _sse("search_result", json.dumps({"tool": name, "count": tool_count}))
                         tool_call_id = tc.id if CONFIG["use_groq"] else f"call_{name}"
                         conversation_history.append({
                             "role": "tool",
@@ -324,7 +382,11 @@ async def agent_loop(user_message: str, mcp) -> AsyncGenerator[str, None]:
                             await asyncio.sleep(0.01)
                         yield _sse("done", json.dumps({
                             "searches_used": search_count,
-                            "max_searches": max_searches
+                            "emails_used": email_count,
+                            "tools_used": tool_count,
+                            "max_searches": max_searches,
+                            "max_emails": max_emails,
+                            "max_tools": max_tools
                         }))
                         return
                     raise

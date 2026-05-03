@@ -148,12 +148,19 @@ export function handleStreamEvent(event, data, state) {
         const info = JSON.parse(data);
         if (state.cursor && state.cursor.parentNode) state.cursor.remove();
         const aBody = aDiv.querySelector('.msg-body');
-        if (info.searches_used > 0) {
+
+        const stats = [];
+        if (info.searches_used > 0) stats.push(`${info.searches_used} search${info.searches_used !== 1 ? 'es' : ''}`);
+        if (info.emails_used > 0) stats.push(`${info.emails_used} email${info.emails_used !== 1 ? 's' : ''}`);
+        if (info.tools_used > 0) stats.push(`${info.tools_used} total tool call${info.tools_used !== 1 ? 's' : ''}`);
+
+        if (stats.length > 0) {
             const meta = document.createElement('div');
             meta.className = 'meta';
-            meta.textContent = `${info.searches_used} search${info.searches_used !== 1 ? 'es' : ''} used`;
+            meta.textContent = stats.join(', ') + ' used';
             aBody.appendChild(meta);
         }
+
         if (state.linkCards.length > 0) {
             const tray = document.createElement('div');
             tray.className = 'link-card-tray';

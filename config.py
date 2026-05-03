@@ -12,6 +12,8 @@ CONFIG = {
     "ollama_base_url":  os.getenv("OLLAMA_URL", "http://localhost:11434"),
     "model":            os.getenv("MODEL", "gemma4:e2b"),
     "max_searches":     int(os.getenv("MAX_SEARCHES", "2")),
+    "max_emails":       int(os.getenv("MAX_EMAILS", "1")),
+    "max_tools":        int(os.getenv("MAX_TOOLS", "10")),
     "max_tokens":       int(os.getenv("MAX_TOKENS", "2048")),
     "temperature":      float(os.getenv("TEMPERATURE", "0.7")),
     "mcp_server_cmd":   os.getenv("MCP_CMD", f"python mcp_server.py"),
@@ -50,6 +52,8 @@ CONFIG = {
         "If the user asks to generate or explain code from scratch, do it directly without accessing the workspace. "
         "Never write, modify, or delete files — only read and suggest changes in chat. "
 
+        "For email drafting, once you have successfully called the draft_email tool, do not call it again for the same email. "
+        "The tool opens a composer window for the user; your task for that specific email is complete once the tool returns success. "
         "When you decide to answer the user, do not call any tools. "
         "Only return a final message."
     )),
