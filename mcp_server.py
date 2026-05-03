@@ -21,6 +21,7 @@ from datetime import datetime
 import httpx
 import ast
 import operator as op
+import re
 
 logging.basicConfig(
     filename="logs.txt",
@@ -178,6 +179,24 @@ async def list_tools() -> list[types.Tool]:
             },
         ),
         types.Tool(
+            name="read_code_skeleton",
+            description=(
+                "Read the structural outline of a file (imports, classes, and function signatures). "
+                "Use this FIRST on files to understand the architecture and find the exact "
+                "functions you need before using `read_file` to read the specific lines."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "Path to the file, relative to workspace root."
+                    }
+                },
+                "required": ["path"]
+            }
+        ),
+        types.Tool(
             name="recent_events",
             description=(
                 "Fetch recent news or weather information. "
@@ -248,6 +267,8 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
         return await _list_files(topic)
     elif name == "read_file":
         return await _read_file(arguments["path"], arguments.get("start", 1), arguments.get("count", None))
+    elif name == "read_code_skeleton":
+        return await _read_code_skeleton(arguments["path"])
     elif name == "calculate":
         return await _calculate(arguments["expression"])
     elif name == "recent_events":
@@ -507,6 +528,137 @@ async def _list_files(topic: str | None = None) -> list[types.TextContent]:
 
     return [types.TextContent(type="text", text="\n".join(lines) or "No files found.")]
 
+async def _read_code_skeleton(path: str) -> list[types.TextContent]:
+    log.info("read_code_skeleton | path=%s", path)
+    raw = WORKSPACE_ROOT / path
+    if _has_symlink_component(raw):
+        return [types.TextContent(type="text", text="Access denied: symlinks not allowed.")]
+    target = raw.resolve()
+
+    try:
+        target.relative_to(WORKSPACE_ROOT)
+    except ValueError:
+        return [types.TextContent(type="text", text="Access denied.")]
+
+    if target.is_symlink():
+        return [types.TextContent(type="text", text="Access denied: symlinks not allowed.")]
+
+    if _is_sensitive(target.name, path):
+        return [types.TextContent(type="text", text="Access denied: sensitive file.")]
+
+    try:
+        size = target.stat().st_size
+    except FileNotFoundError:
+        return [types.TextContent(type="text", text=f"File not found: {path}")]
+
+    try:
+        with target.open("r", encoding="utf-8", errors="replace") as f:
+            source = f.read()
+    except Exception as e:
+        return [types.TextContent(type="text", text=f"Error reading file: {e}")]
+        
+    ext = target.suffix.lower()
+    if ext == ".py":
+        skeleton = _get_python_skeleton(source, path)
+    else:
+        skeleton = _get_generic_skeleton(source, path)
+        
+    return [types.TextContent(type="text", text=skeleton)]
+
+def _get_python_skeleton(source_code: str, file_path: str) -> str:
+    try:
+        tree = ast.parse(source_code)
+        skeleton = [f"### Skeleton for: {file_path} ###\n"]
+
+        def format_function(node, indent=0):
+            prefix = " " * indent
+            is_async = isinstance(node, ast.AsyncFunctionDef)
+            
+            stub_kwargs = {
+                "name": node.name, "args": node.args, 
+                "body": [ast.Pass()], "decorator_list": [], "returns": node.returns
+            }
+            stub = ast.AsyncFunctionDef(**stub_kwargs) if is_async else ast.FunctionDef(**stub_kwargs)
+            
+            try:
+                sig = ast.unparse(stub).replace("\n    pass", " ...")
+            except AttributeError:
+                sig = f"{'async def ' if is_async else 'def '}{node.name}(...): ..."
+                
+            skeleton.append(f"{prefix}{sig}")
+            
+            doc = ast.get_docstring(node)
+            if doc:
+                first_line = doc.strip().split("\n")[0]
+                skeleton.append(f"{prefix}    \"\"\"{first_line}...\"\"\"")
+
+        for node in tree.body:
+            if isinstance(node, (ast.Import, ast.ImportFrom)):
+                try:
+                    skeleton.append(ast.unparse(node))
+                except AttributeError:
+                    pass
+            
+            elif isinstance(node, ast.ClassDef):
+                skeleton.append(f"\nclass {node.name}:")
+                doc = ast.get_docstring(node)
+                if doc:
+                    first_line = doc.strip().split("\n")[0]
+                    skeleton.append(f"    \"\"\"{first_line}...\"\"\"")
+                    
+                for item in node.body:
+                    if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                        format_function(item, indent=4)
+                        
+            elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                format_function(node, indent=0)
+
+        return "\n".join(skeleton)
+
+    except SyntaxError:
+        return f"Error: {file_path} contains invalid Python syntax."
+    except Exception as e:
+        return f"Error parsing {file_path}: {e}"
+
+def _get_generic_skeleton(source_code: str, file_path: str) -> str:
+    skeleton = [f"### Skeleton for: {file_path} ###\n"]
+    lines = source_code.splitlines()
+    
+    for i, line in enumerate(lines):
+        line = line.rstrip()
+        if len(line) > 200:
+            continue
+        
+        stripped = line.lstrip()
+        
+        # Skip control flow structures
+        if stripped.startswith(('if ', 'if(', 'for ', 'for(', 'while ', 'while(', 
+                               'switch ', 'switch(', 'else', 'catch ', 'catch(', 'try')):
+            continue
+        
+        # Skip pure closing braces
+        if stripped == '}' or stripped == '};':
+            continue
+        
+        # Imports/requires
+        if any(stripped.startswith(kw) for kw in ['import ', 'require(', 'using ', 'include ', 'from ']):
+            skeleton.append(f"{i+1}: {line}")
+            continue
+        
+        # Class/interface/struct/enum declarations
+        if any(f' {kw} ' in line for kw in ['class ', 'interface ', 'struct ', 'enum ', 'trait ']):
+            skeleton.append(f"{i+1}: {line}")
+            continue
+        
+        # Function/method declarations: has parens AND ends with brace
+        if '(' in line and ')' in line and '{' in line:
+            skeleton.append(f"{i+1}: {line}")
+            continue
+    
+    if len(skeleton) == 1:
+        return f"### Skeleton for: {file_path} ###\n(No classes or functions detected)"
+        
+    return "\n".join(skeleton)
 
 async def _read_file(path: str, start: int = 1, count: int | None = None) -> list[types.TextContent]:
     log.info("read_file | path=%s start=%s count=%s", path, start, count)
