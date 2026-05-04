@@ -9,7 +9,8 @@ if sys.platform == "win32":
 import logging
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, FileResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from config import CONFIG
@@ -53,6 +54,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.mount("/static", StaticFiles(directory="static", html=True), name="static")
+@app.get("/")
+def root():
+    return FileResponse("static/index.html")
 
 class ChatRequest(BaseModel):
     message: str
