@@ -110,6 +110,8 @@ export function handleStreamEvent(event, data, state) {
             label = `tool requested: read_file ${info.args?.path || ''}`;
         } else if (info.tool === 'read_code_skeleton') {
             label = `tool requested: read_code_skeleton for file: ${info.args?.path || ''}`;
+        } else if (info.tool === 'search_semantic') {
+            label = `tool requested: conceptual search: "${info.args?.query || ''}"`;
         } else {
             label = `tool requested: ${info.tool}`;
         }

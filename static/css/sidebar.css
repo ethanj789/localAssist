@@ -176,6 +176,11 @@ aside {
     box-shadow: 0 0 6px var(--accent);
 }
 
+.dot.orange {
+    background: var(--warn);
+    box-shadow: 0 0 6px var(--warn);
+}
+
 .toggle-row {
     display: flex;
     align-items: center;

@@ -318,6 +318,8 @@ async def agent_loop(user_message: str, mcp) -> AsyncGenerator[str, None]:
                             event_payload["count"] = email_count + 1
                             event_payload["max"] = max_emails
                             event_payload["label"] = f'drafting email to {args.get("to","NA")}, about {args.get("subject","NA")} ({email_count + 1}/{max_emails})'
+                        elif name == "search_semantic":
+                            event_payload["label"] = f'conceptual search: "{args.get("query", "")}"'
                         else:
                             event_payload["label"] = f'{name}: {json.dumps(args)}'
 

@@ -19,14 +19,56 @@ async function init() {
     } catch (e) {
         console.warn('Error clearing history:', e);
     }
-    
+
     initThemes();
     initVoiceRecorder();
     bindVoiceButton();
     bindInputEvents();
     bindButtons();
     await loadConfig();
+    startStatusPolling();
 }
+
+// function startStatusPolling() {
+//     const statusDiv = document.getElementById('embedding-status');
+//     setInterval(async () => {
+//         try {
+//             const res = await fetch(`${API}/status`);
+//             if (res.ok) {
+//                 const data = await res.json();
+//                 statusDiv.style.display = data.busy ? 'flex' : 'none';
+//             }
+//         } catch (e) {
+//             console.warn('Status poll failed:', e);
+//         }
+//     }, 2000);
+// }
+function startStatusPolling() {
+    const statusDiv = document.getElementById('embedding-status');
+    const evtSource = new EventSource(`${API}/status/stream`);
+    let lastBusy = false;
+
+    evtSource.onmessage = (e) => {
+        const payload = JSON.parse(e.data);
+        if (payload.event === 'status') {
+            const isBusy = payload.data === true;
+            statusDiv.style.display = isBusy ? 'flex' : 'none';
+
+            if (isBusy && !lastBusy) {
+                showToast('Updating embeddings...');
+            } else if (!isBusy && lastBusy) {
+                showToast('Embeddings updated');
+            }
+            lastBusy = isBusy;
+        }
+    };
+
+    evtSource.onerror = () => {
+        console.warn('SSE connection lost');
+        evtSource.close();
+    };
+}
+
 
 function bindInputEvents() {
     const maxSearches = document.getElementById('cfg-max-searches');
@@ -45,10 +87,10 @@ function bindInputEvents() {
 function bindButtons() {
     const applyBtn = document.querySelector('.btn-apply');
     if (applyBtn) applyBtn.addEventListener('click', applyConfig);
-    
+
     const clearBtn = document.querySelector('.btn-clear');
     if (clearBtn) clearBtn.addEventListener('click', clearHistory);
-    
+
     const userInput = document.getElementById('user-input');
     if (userInput) {
         userInput.addEventListener('input', function () {

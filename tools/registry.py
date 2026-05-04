@@ -12,6 +12,7 @@ from tools.files import _list_files, _read_file, _read_code_skeleton
 from tools.calculate import _calculate
 from tools.events import _recent_events
 from tools.emails import _draft_email
+from tools.search import _search_semantic
 
 log = logging.getLogger(__name__)
 
@@ -221,6 +222,30 @@ async def list_tools() -> list[types.Tool]:
                 "required": ["body"]
             }
         ),
+        types.Tool(
+            name="search_semantic",
+            description=(
+                "Search the workspace using conceptual/semantic embeddings. "
+                "Use this for high-level conceptual searches, like 'how does the auth system work' "
+                "or 'where is the database connection initialized'. "
+                "Returns a list of matching code locations. "
+                "Always use this when keyword-based `list_files(topic='...')` is too specific or fails."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "The conceptual search query."
+                    },
+                    "k": {
+                        "type": "integer",
+                        "description": "Number of results to return. Defaults to 5."
+                    }
+                },
+                "required": ["query"]
+            }
+        ),
     ]
 
 
@@ -243,5 +268,7 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
         return await _recent_events(arguments["infoType"], arguments["details"])
     elif name == "draft_email":
         return await _draft_email(arguments.get("to", ""), arguments.get("subject", ""), arguments.get("body", ""))
+    elif name == "search_semantic":
+        return await _search_semantic(arguments["query"], arguments.get("k", 5))
     else:
         raise ValueError(f"Unknown tool: {name}")

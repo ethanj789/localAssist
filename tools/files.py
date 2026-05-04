@@ -21,7 +21,7 @@ MAX_SCAN_BYTES = 1_000_000
 
 SKIP_DIRS = {
     "node_modules", ".git", "venv", ".venv", "__pycache__",
-    "dist", "build", ".mypy_cache", ".pytest_cache",
+    "dist", "build", ".mypy_cache", ".pytest_cache", ".index",
 }
 
 SCANNABLE_EXTENSIONS = {
@@ -257,98 +257,235 @@ async def _read_code_skeleton(path: str) -> list[types.TextContent]:
     return [types.TextContent(type="text", text=skeleton)]
 
 
-def _get_python_skeleton(source_code: str, file_path: str) -> str:
+def _get_python_symbols(source_code: str):
+    """Extract classes and functions with their metadata."""
     try:
         tree = ast.parse(source_code)
-        skeleton = [f"### Skeleton for: {file_path} ###\n"]
+        symbols = []
 
-        def format_function(node, indent=0):
-            prefix = " " * indent
+        def get_func_info(node):
             is_async = isinstance(node, ast.AsyncFunctionDef)
-
             stub_kwargs = {
                 "name": node.name, "args": node.args,
                 "body": [ast.Pass()], "decorator_list": [], "returns": node.returns
             }
             stub = ast.AsyncFunctionDef(**stub_kwargs) if is_async else ast.FunctionDef(**stub_kwargs)
-
             try:
                 sig = ast.unparse(stub).replace("\n    pass", " ...")
             except AttributeError:
                 sig = f"{'async def ' if is_async else 'def '}{node.name}(...): ..."
-
-            skeleton.append(f"{prefix}{sig}")
-
+            
             doc = ast.get_docstring(node)
-            if doc:
-                first_line = doc.strip().split("\n")[0]
-                skeleton.append(f'{prefix}    """{first_line}..."""')
+            first_doc = doc.strip().split("\n")[0] if doc else None
+            
+            return {
+                "name": node.name,
+                "type": "function",
+                "start_line": node.lineno,
+                "end_line": getattr(node, "end_lineno", node.lineno),
+                "signature": sig,
+                "docstring": first_doc
+            }
 
         for node in tree.body:
-            if isinstance(node, (ast.Import, ast.ImportFrom)):
-                try:
-                    skeleton.append(ast.unparse(node))
-                except AttributeError:
-                    pass
-
-            elif isinstance(node, ast.ClassDef):
-                skeleton.append(f"\nclass {node.name}:")
+            if isinstance(node, ast.ClassDef):
                 doc = ast.get_docstring(node)
-                if doc:
-                    first_line = doc.strip().split("\n")[0]
-                    skeleton.append(f'    """{first_line}..."""')
-
+                first_doc = doc.strip().split("\n")[0] if doc else None
+                cls_symbol = {
+                    "name": node.name,
+                    "type": "class",
+                    "start_line": node.lineno,
+                    "end_line": getattr(node, "end_lineno", node.lineno),
+                    "docstring": first_doc,
+                    "children": []
+                }
                 for item in node.body:
                     if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                        format_function(item, indent=4)
-
+                        cls_symbol["children"].append(get_func_info(item))
+                symbols.append(cls_symbol)
             elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                format_function(node, indent=0)
+                symbols.append(get_func_info(node))
+        
+        return symbols
+    except (SyntaxError, Exception):
+        return None
 
-        return "\n".join(skeleton)
+def _get_generic_symbols(source_code: str):
+    """Extract symbol-like lines using heuristics and brace-counting for blocks."""
+    lines = source_code.splitlines()
+    symbols = []
+    
+    for i, line in enumerate(lines):
+        stripped = line.lstrip()
+        if not stripped or len(line) > 200:
+            continue
+            
+        # Skip control flow structures
+        if stripped.startswith(("if ", "if(", "for ", "for(", "while ", "while(",
+                                "switch ", "switch(", "else", "catch ", "catch(", "try")):
+            continue
+        if stripped == "}" or stripped == "};":
+            continue
 
+        symbol_type = None
+        if any(stripped.startswith(kw) for kw in ["import ", "require(", "using ", "include ", "from "]):
+            symbol_type = "import"
+        elif any(f" {kw} " in line for kw in ["class ", "interface ", "struct ", "enum ", "trait "]):
+            symbol_type = "class"
+        elif "(" in line and ")" in line and "{" in line:
+            symbol_type = "function"
+            
+        if symbol_type:
+            # Find end line by brace counting if it's a block
+            end_line = i + 1
+            if "{" in line:
+                braces = 0
+                for j in range(i, len(lines)):
+                    braces += lines[j].count("{")
+                    braces -= lines[j].count("}")
+                    if braces <= 0:
+                        end_line = j + 1
+                        break
+            
+            symbols.append({
+                "name": line.strip().split("(")[0].split()[-1] if symbol_type != "import" else "import",
+                "type": symbol_type,
+                "start_line": i + 1,
+                "end_line": end_line,
+                "content": line
+            })
+            
+    return symbols
+
+def _get_python_skeleton(source_code: str, file_path: str) -> str:
+    try:
+        tree = ast.parse(source_code)
     except SyntaxError:
         return f"Error: {file_path} contains invalid Python syntax."
     except Exception as e:
         return f"Error parsing {file_path}: {e}"
 
+    symbols = _get_python_symbols(source_code)
+    skeleton = [f"### Skeleton for: {file_path} ###\n"]
+    
+    # Handle imports separately to preserve skeleton output as requested
+    for node in tree.body:
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
+            try:
+                skeleton.append(ast.unparse(node))
+            except AttributeError:
+                pass
+
+    if symbols:
+        for s in symbols:
+            if s["type"] == "class":
+                skeleton.append(f"\nclass {s['name']}:")
+                if s["docstring"]:
+                    skeleton.append(f'    """{s["docstring"]}..."""')
+                for child in s["children"]:
+                    skeleton.append(f"    {child['signature']}")
+                    if child["docstring"]:
+                        skeleton.append(f'        """{child["docstring"]}..."""')
+            elif s["type"] == "function":
+                skeleton.append(s["signature"])
+                if s["docstring"]:
+                    skeleton.append(f'    """{s["docstring"]}..."""')
+    
+    return "\n".join(skeleton)
 
 def _get_generic_skeleton(source_code: str, file_path: str) -> str:
+    symbols = _get_generic_symbols(source_code)
     skeleton = [f"### Skeleton for: {file_path} ###\n"]
-    lines = source_code.splitlines()
-
-    for i, line in enumerate(lines):
-        line = line.rstrip()
-        if len(line) > 200:
-            continue
-
-        stripped = line.lstrip()
-
-        # Skip control flow structures
-        if stripped.startswith(("if ", "if(", "for ", "for(", "while ", "while(",
-                                "switch ", "switch(", "else", "catch ", "catch(", "try")):
-            continue
-
-        # Skip pure closing braces
-        if stripped == "}" or stripped == "};":
-            continue
-
-        # Imports/requires
-        if any(stripped.startswith(kw) for kw in ["import ", "require(", "using ", "include ", "from "]):
-            skeleton.append(f"{i+1}: {line}")
-            continue
-
-        # Class/interface/struct/enum declarations
-        if any(f" {kw} " in line for kw in ["class ", "interface ", "struct ", "enum ", "trait "]):
-            skeleton.append(f"{i+1}: {line}")
-            continue
-
-        # Function/method declarations: has parens AND ends with brace
-        if "(" in line and ")" in line and "{" in line:
-            skeleton.append(f"{i+1}: {line}")
-            continue
-
+    
+    for s in symbols:
+        skeleton.append(f"{s['start_line']}: {s['content']}")
+        
     if len(skeleton) == 1:
         return f"### Skeleton for: {file_path} ###\n(No classes or functions detected)"
 
     return "\n".join(skeleton)
+
+def get_file_chunks(path: str) -> list[dict]:
+    """Extract chunks for a file, applying all security and filtering guards."""
+    raw = WORKSPACE_ROOT / path
+    if _has_symlink_component(raw):
+        return []
+    target = raw.resolve()
+    
+    try:
+        target.relative_to(WORKSPACE_ROOT)
+    except ValueError:
+        return []
+        
+    if target.is_symlink() or not target.is_file():
+        return []
+
+    # Check SKIP_DIRS for all parent components
+    rel_path = target.relative_to(WORKSPACE_ROOT)
+    for part in rel_path.parts[:-1]:
+        if part in SKIP_DIRS:
+            return []
+
+    if _is_sensitive(target.name, str(rel_path)):
+        return []
+
+    ext = target.suffix.lower()
+    code_exts = (".js", ".ts", ".jsx", ".tsx", ".java", ".cpp", ".c", ".cs")
+    
+    if ext not in SCANNABLE_EXTENSIONS and ext not in code_exts:
+        return []
+
+    try:
+        with target.open("r", encoding="utf-8", errors="replace") as f:
+            source = f.read()
+    except Exception:
+        return []
+
+    ext = target.suffix.lower()
+    chunks = []
+    
+    if ext == ".py":
+        symbols = _get_python_symbols(source)
+        if symbols:
+            for s in symbols:
+                if s["type"] in ("function", "class"):
+                    # For class, we want the whole block
+                    lines = source.splitlines()
+                    code = "\n".join(lines[s["start_line"]-1 : s["end_line"]])
+                    chunks.append({
+                        "id": f"{path}::{s['name']}",
+                        "file": path,
+                        "type": s["type"],
+                        "start_line": s["start_line"],
+                        "count": s["end_line"] - s["start_line"] + 1,
+                        "code": code
+                    })
+        else:
+            log.warning(f"Failed to parse {path}, skipping.")
+    elif ext in (".js", ".ts", ".jsx", ".tsx", ".java", ".cpp", ".c", ".cs"):
+        symbols = _get_generic_symbols(source)
+        lines = source.splitlines()
+        for s in symbols:
+            if s["type"] in ("function", "class"):
+                code = "\n".join(lines[s["start_line"]-1 : s["end_line"]])
+                chunks.append({
+                    "id": f"{path}::{s['name']}",
+                    "file": path,
+                    "type": s["type"],
+                    "start_line": s["start_line"],
+                    "count": s["end_line"] - s["start_line"] + 1,
+                    "code": code
+                })
+    else:
+        # Non-code or other files: single chunk
+        lines = source.splitlines()
+        chunks.append({
+            "id": f"{path}",
+            "file": path,
+            "type": "file",
+            "start_line": 1,
+            "count": len(lines),
+            "code": source
+        })
+        
+    return chunks

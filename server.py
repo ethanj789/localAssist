@@ -4,8 +4,9 @@ import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-if sys.platform == "win32":
-    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+# if sys.platform == "win32":
+#     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+
 import logging
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -16,10 +17,11 @@ from pydantic import BaseModel
 from config import CONFIG
 from mcp_client import MCPClient
 from agent import agent_loop, conversation_history
+from tools.index import BUSY_LOCK_FILE
 
 # Voice transcription
 from faster_whisper import WhisperModel
-
+import json
 logging.basicConfig(
     filename="logs.txt",
     level=logging.DEBUG,
@@ -102,6 +104,35 @@ async def chat(req: ChatRequest):
 @app.get("/startup-token")
 async def startup_token():
     return {"token": STARTUP_TOKEN}
+
+
+# @app.get("/status")
+# async def get_status():
+#     is_busy = BUSY_LOCK_FILE.exists()
+#     return {"busy": is_busy}
+
+import asyncio
+from fastapi.responses import StreamingResponse
+
+@app.get("/status/stream")
+async def status_stream():
+    async def event_generator():
+        last_state = None
+        while True:
+            is_busy = BUSY_LOCK_FILE.exists()
+            if is_busy != last_state:          # only push on change
+                last_state = is_busy
+                yield f"data: {json.dumps({'event': 'status', 'data': is_busy})}\n\n"
+            await asyncio.sleep(1)             # check file every 1s (server-side only)
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",         # important if behind nginx
+        }
+    )
 
 
 # ============ VOICE ENDPOINTS ============
