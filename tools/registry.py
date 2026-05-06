@@ -115,6 +115,8 @@ async def list_tools() -> list[types.Tool]:
             description=(
                 "Evaluate a mathematical expression and return the result. "
                 "Use this for any arithmetic, algebra, or numeric calculation instead of computing mentally. "
+                "The available operations are: addition, subtraction, multiplication, division, modulo, and power. "
+                "Remember you can use fractional powers to perform roots. "
                 "Pass a valid Python math expression as a string."
             ),
             inputSchema={
