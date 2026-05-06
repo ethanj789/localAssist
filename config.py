@@ -7,7 +7,7 @@ load_dotenv()
 
 CONFIG = {
     "use_groq":         os.getenv("USE_GROQ", "false").lower() == "true",
-    "groq_api_key":     os.getenv("GROQ_API_KEY", ""),
+    # "groq_api_key":     os.getenv("GROQ_API_KEY", ""),
     "groq_model":       os.getenv("GROQ_MODEL", "llama-3.1-8b-instant"),
     "ollama_base_url":  os.getenv("OLLAMA_URL", "http://localhost:11434"),
     "model":            os.getenv("MODEL", "gemma4:e2b"),

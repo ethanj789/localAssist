@@ -15,10 +15,11 @@
   <link rel="stylesheet" href="/static/css/chat.css">
   <link rel="stylesheet" href="/static/css/input.css">
   <link rel="stylesheet" href="/static/css/toast.css">
-
+  <link rel="stylesheet" href="/static/css/mobile.css">
 </head>
 
 <body>
+  <div id="sidebar-overlay" class="sidebar-overlay"></div>
 
   <aside>
     <div class="logo">yay yippie learning<br><span>// mcp agent</span></div>
@@ -102,13 +103,15 @@
       <div class="dot" id="status-dot"></div>
       <span id="status-text">connecting...</span>
     </div>
-    <div class="status-dot" id="embedding-status" style="display:none; margin-top: 8px; border-top: none; padding-top: 0;">
+    <div class="status-dot" id="embedding-status"
+      style="display:none; margin-top: 8px; border-top: none; padding-top: 0;">
       <div class="dot orange"></div>
       <span style="color: var(--warn)">Regenerating embeddings...</span>
     </div>
   </aside>
 
   <main>
+    <button class="menu-toggle">☰</button>
     <div id="messages"></div>
 
     <div class="input-area">

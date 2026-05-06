@@ -1,4 +1,5 @@
-export const API = 'http://localhost:8000';
+// export const API = 'http://localhost:8000';
+export const API = ''
 export const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
 
 export const THEMES = {

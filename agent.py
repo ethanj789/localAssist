@@ -5,7 +5,7 @@ import logging
 from typing import AsyncGenerator
 import groq
 import httpx
-
+import os
 from config import (
     CONFIG, MAX_HISTORY, SUMMARIZE_THRESHOLD, SUMMARIZE_KEEP_LAST,
     CODING_MODEL, SUMMARY_MODEL, THINKING_MODEL, load_memory, select_groq_model
@@ -133,7 +133,8 @@ async def agent_loop(user_message: str, mcp) -> AsyncGenerator[str, None]:
                     groq_client = None
                     if CONFIG["use_groq"]:
                         from groq import AsyncGroq
-                        groq_client = AsyncGroq(api_key=CONFIG["groq_api_key"])
+                        # groq_client = AsyncGroq(api_key=CONFIG["groq_api_key"])
+                        groq_client = AsyncGroq(api_key=os.getenv("GROQ_API_KEY", ""))
                         await _maybe_summarize_history(groq_client)
 
                     memory = load_memory()

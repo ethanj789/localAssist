@@ -91,6 +91,22 @@ function bindButtons() {
     const clearBtn = document.querySelector('.btn-clear');
     if (clearBtn) clearBtn.addEventListener('click', clearHistory);
 
+    const menuToggle = document.querySelector('.menu-toggle');
+    const aside = document.querySelector('aside');
+    const overlay = document.getElementById('sidebar-overlay');
+
+    if (menuToggle && aside && overlay) {
+        menuToggle.addEventListener('click', () => {
+            aside.classList.toggle('open');
+            overlay.classList.toggle('active');
+        });
+
+        overlay.addEventListener('click', () => {
+            aside.classList.remove('open');
+            overlay.classList.remove('active');
+        });
+    }
+
     const userInput = document.getElementById('user-input');
     if (userInput) {
         userInput.addEventListener('input', function () {

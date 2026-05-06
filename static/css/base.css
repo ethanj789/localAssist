@@ -10,10 +10,10 @@ body {
     color: var(--text);
     font-family: var(--sans);
     font-weight: 400;
-    height: 100vh;
+    height: 100dvh;
     display: grid;
     grid-template-columns: 260px 1fr;
-    grid-template-rows: 100vh;
+    grid-template-rows: 100dvh;
     overflow: hidden
 }
 
