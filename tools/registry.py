@@ -13,6 +13,7 @@ from tools.calculate import _calculate
 from tools.events import _recent_events
 from tools.emails import _draft_email
 from tools.search import _search_semantic
+from tools.memory import _manage_memory
 
 log = logging.getLogger(__name__)
 
@@ -248,6 +249,35 @@ async def list_tools() -> list[types.Tool]:
                 "required": ["query"]
             }
         ),
+        types.Tool(
+            name="manage_memory",
+            description=(
+                "Write, delete, or edit agent-managed memories. "
+                "Use 'write' to save new long-term info (max 10 slots). "
+                "Use 'delete' to remove a memory by its meaning or content. "
+                "Use 'edit' to replace a memory with new content. "
+                "Semantic search is used to find the best match for 'delete' and 'edit'."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "enum": ["write", "delete", "edit", "clear_all"],
+                        "description": "The action to perform."
+                    },
+                    "content": {
+                        "type": "string",
+                        "description": "The content to remember (for 'write') or the search target (for 'delete' or 'edit')."
+                    },
+                    "new_content": {
+                        "type": "string",
+                        "description": "The new content to replace the matched memory (required for 'edit')."
+                    }
+                },
+                "required": ["action"]
+            }
+        ),
     ]
 
 
@@ -272,5 +302,8 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
         return await _draft_email(arguments.get("to", ""), arguments.get("subject", ""), arguments.get("body", ""))
     elif name == "search_semantic":
         return await _search_semantic(arguments["query"], arguments.get("k", 5))
+    elif name == "manage_memory":
+        result = await _manage_memory(arguments["action"], arguments.get("content"), arguments.get("new_content"))
+        return [types.TextContent(type="text", text=result)]
     else:
         raise ValueError(f"Unknown tool: {name}")

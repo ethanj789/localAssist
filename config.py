@@ -57,6 +57,17 @@ CONFIG = {
         "When you decide to answer the user, do not call any tools. "
         "Only return a final message."
     )),
+    "memory_management_prompt": (
+        "You have 10 memory slots. Write memories that are long-term useful: "
+        "user preferences, project facts, recurring corrections. Do NOT memorize "
+        "things already in the system prompt or current conversation. When full, "
+        "delete the least useful memory first, then write. "
+        "Manage memories using semantic search — you can edit or delete by providing "
+        "a string that matches the memory's meaning. "
+        "CRITICAL: Once you have successfully called the manage_memory tool and received a success response, "
+        "DO NOT call it again for the same request. Your task for that memory is complete. "
+        "Simply respond to the user in a final message confirming that the memory was updated."
+    )
 }
 # SUMMARY_MODEL = "meta-llama/llama-4-scout-17b-16e-instruct"  # using small model for compression tasks
 SUMMARY_MODEL = "llama-3.1-8b-instant"
@@ -85,7 +96,7 @@ CODING_KEYWORDS = {
 }
 
 # memory
-MEMORY_FILE = Path(__file__).parent / "aiNotes/memory.json"
+MEMORY_FILE = Path(__file__).parent / "aiWorkspace/aiNotes/memory.json"
 
 def load_memory() -> str:
     try:
@@ -94,11 +105,41 @@ def load_memory() -> str:
             data = json.loads(MEMORY_FILE.read_text())
             if not data:
                 return ""
-            lines = [f"- {k}: {v}" for k, v in data.items()]
-            return "User memory:\n" + "\n".join(lines)
+            
+            output = []
+            
+            # Manual memories
+            manual = data.get("manual", {})
+            if manual:
+                output.append("User context (manual):")
+                for k, v in manual.items():
+                    output.append(f"- {k}: {v}")
+            
+            # Agent-managed memories
+            agent_managed = data.get("agent_managed", [])
+            if agent_managed:
+                if output: output.append("") # spacer
+                output.append("Memories:")
+                for slot in agent_managed:
+                    output.append(f"- {slot['content']}")
+            
+            return "\n".join(output)
     except Exception:
         pass
     return ""
+
+def get_raw_memory() -> dict:
+    try:
+        import json
+        if MEMORY_FILE.exists():
+            return json.loads(MEMORY_FILE.read_text())
+    except Exception:
+        pass
+    return {"manual": {}, "agent_managed": []}
+
+def save_memory(data: dict):
+    import json
+    MEMORY_FILE.write_text(json.dumps(data, indent=4))
 
 # def select_groq_model(message: str) -> tuple[str, str]:
 #     lower = message.lower()

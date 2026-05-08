@@ -1,3 +1,4 @@
+from groq.types.chat import chat_completion_system_message_param
 import asyncio
 import json
 import traceback
@@ -29,6 +30,11 @@ def _prune_history(history: list[dict], keep_last_n_tool_results: int = 2) -> li
             tool_result_count += 1
             if tool_result_count > keep_last_n_tool_results:
                 pruned.append({**msg, "content": "[pruned]"})
+                continue
+        elif msg["role"] == "assistant" and msg.get("content"):
+            content_str = msg["content"]
+            if len(content_str) > 2000:
+                pruned.append({**msg, "content": content_str[:2000] + "\n... [truncated for token limits]"})
                 continue
         pruned.append(msg)
     return list(reversed(pruned))
@@ -117,10 +123,12 @@ async def agent_loop(user_message: str, mcp) -> AsyncGenerator[str, None]:
 
         search_count = 0
         email_count = 0
+        memory_count = 0
         tool_count = 0
         max_searches = CONFIG["max_searches"]
         max_emails = CONFIG["max_emails"]
         max_tools = CONFIG["max_tools"]
+        max_memory = 3
 
         async with httpx.AsyncClient(timeout=240) as client:
             while True:
@@ -138,7 +146,7 @@ async def agent_loop(user_message: str, mcp) -> AsyncGenerator[str, None]:
                         await _maybe_summarize_history(groq_client)
 
                     memory = load_memory()
-                    system = CONFIG["system_prompt"]
+                    system = CONFIG["system_prompt"] + "\n\n" + CONFIG["memory_management_prompt"]
                     if memory:
                         system = system + "\n\n" + memory
 
@@ -157,6 +165,8 @@ async def agent_loop(user_message: str, mcp) -> AsyncGenerator[str, None]:
                                 if t["function"]["name"] in ("web_search", "fetch_webpage") and search_count >= max_searches:
                                     continue
                                 if t["function"]["name"] == "draft_email" and email_count >= max_emails:
+                                    continue
+                                if t["function"]["name"] == "manage_memory" and memory_count >= max_memory:
                                     continue
                                 available_tools.append(t)
 
@@ -199,6 +209,8 @@ async def agent_loop(user_message: str, mcp) -> AsyncGenerator[str, None]:
                                 continue
                             if t["type"] == "function" and t["function"]["name"] == "draft_email" and email_count >= max_emails:
                                 continue
+                            if t["type"] == "function" and t["function"]["name"] == "manage_memory" and memory_count >= max_memory:
+                                continue
                             available_tools.append(t)
 
                         payload = {
@@ -226,8 +238,7 @@ async def agent_loop(user_message: str, mcp) -> AsyncGenerator[str, None]:
                         # drop the content, keep tool call
                         content = ""
                     if not tool_calls:
-                        clean_message = user_message.replace("<thinking>", "").replace("<coding>", "").strip()
-                        conversation_history.append({"role": "assistant", "content": clean_message})
+                        conversation_history.append({"role": "assistant", "content": content})
                         for word in content.split(" "):
                             yield _sse("token", word + " ")
                             await asyncio.sleep(0.01)
@@ -287,6 +298,16 @@ async def agent_loop(user_message: str, mcp) -> AsyncGenerator[str, None]:
                                 "role": "tool",
                                 "tool_call_id": tool_call_id,
                                 "content": f"Email drafting limit of {max_emails} reached. You cannot draft any more emails in this turn. Please proceed to answer the user based on the drafts already opened."
+                            })
+                            continue
+
+                        if memory_count >= max_memory and name == "manage_memory":
+                            yield _sse("status", f"Memory cap ({max_memory}) reached...")
+                            tool_call_id = tc.id if CONFIG["use_groq"] else f"call_{name}"
+                            conversation_history.append({
+                                "role": "tool",
+                                "tool_call_id": tool_call_id,
+                                "content": f"Memory management limit of {max_memory} reached. No more memory edits allowed this turn. Please proceed to answer the user."
                             })
                             continue
 
@@ -364,6 +385,8 @@ async def agent_loop(user_message: str, mcp) -> AsyncGenerator[str, None]:
                             search_count += 1
                         if name == "draft_email":
                             email_count += 1
+                        if name == "manage_memory":
+                            memory_count += 1
                         
                         tool_count += 1
 
@@ -390,9 +413,8 @@ async def agent_loop(user_message: str, mcp) -> AsyncGenerator[str, None]:
                         )
                         msg = response.choices[0].message
                         content = msg.content or ""
-                        clean_message = user_message.replace("<thinking>", "").replace("<coding>", "").strip()
 
-                        conversation_history.append({"role": "assistant", "content": clean_message})
+                        conversation_history.append({"role": "assistant", "content": content})
                         for word in content.split(" "):
                             yield _sse("token", word + " ")
                             await asyncio.sleep(0.01)

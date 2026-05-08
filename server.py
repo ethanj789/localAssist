@@ -14,7 +14,7 @@ from fastapi.responses import StreamingResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from config import CONFIG
+from config import CONFIG, get_raw_memory, save_memory
 from mcp_client import MCPClient
 from agent import agent_loop, conversation_history
 from tools.index import BUSY_LOCK_FILE
@@ -90,6 +90,23 @@ async def update_config(updates: dict):
 async def clear_history():
     conversation_history.clear()
     return {"status": "cleared"}
+
+
+@app.get("/memory")
+async def get_memory():
+    return get_raw_memory()
+
+
+@app.delete("/memory/{index}")
+async def delete_memory_slot(index: int):
+    data = get_raw_memory()
+    agent_managed = data.get("agent_managed", [])
+    new_list = [s for s in agent_managed if s["index"] != index]
+    if len(new_list) == len(agent_managed):
+        raise HTTPException(status_code=404, detail=f"Slot {index} not found")
+    data["agent_managed"] = new_list
+    save_memory(data)
+    return {"status": "ok"}
 
 
 @app.post("/chat")

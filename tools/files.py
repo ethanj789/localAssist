@@ -21,7 +21,7 @@ MAX_SCAN_BYTES = 1_000_000
 
 SKIP_DIRS = {
     "node_modules", ".git", "venv", ".venv", "__pycache__",
-    "dist", "build", ".mypy_cache", ".pytest_cache", ".index", ".stfolder"
+    "dist", "build", ".mypy_cache", ".pytest_cache", ".index", ".stfolder", "aiNotes"
 }
 
 SCANNABLE_EXTENSIONS = {

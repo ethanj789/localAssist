@@ -15,6 +15,7 @@
   <link rel="stylesheet" href="/static/css/chat.css">
   <link rel="stylesheet" href="/static/css/input.css">
   <link rel="stylesheet" href="/static/css/toast.css">
+  <link rel="stylesheet" href="/static/css/memory.css">
   <link rel="stylesheet" href="/static/css/mobile.css">
 </head>
 
@@ -112,6 +113,10 @@
 
   <main>
     <button class="menu-toggle">☰</button>
+    <button id="memory-btn" class="memory-btn" title="View agent memory">
+      <span class="icon">🧠</span>
+      <span class="label">Memory</span>
+    </button>
     <div id="messages"></div>
 
     <div class="input-area">
@@ -125,6 +130,20 @@
   </main>
 
   <div class="toast" id="toast"></div>
+
+  <div id="memory-modal" class="modal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2>Agent Memory</h2>
+        <button id="close-memory-modal" class="close-modal">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div id="memory-slots">
+          <!-- Slots rendered here -->
+        </div>
+      </div>
+    </div>
+  </div>
 
   <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/9.1.6/marked.min.js"></script>
   <script type="module" src="/static/js/main.js"></script>

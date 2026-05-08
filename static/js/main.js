@@ -4,6 +4,7 @@ import { initThemes } from './ui/theme.js';
 import { loadConfig, applyConfig } from './api/config.js';
 import { sendMessage, clearHistory } from './api/chat.js';
 import { initVoiceRecorder, bindVoiceButton } from './api/voice.js';
+import { initMemoryUI } from './ui/memory.js';
 
 async function init() {
     try {
@@ -25,6 +26,7 @@ async function init() {
     bindVoiceButton();
     bindInputEvents();
     bindButtons();
+    initMemoryUI();
     await loadConfig();
     startStatusPolling();
 }
