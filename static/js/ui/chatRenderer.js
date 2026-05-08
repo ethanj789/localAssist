@@ -47,6 +47,36 @@ export function renderLinkCard(container, card) {
     container.appendChild(el);
 }
 
+export function renderActionButton(container, action) {
+    const btn = document.createElement('button');
+    btn.className = 'action-button';
+    
+    if (action.type === 'mail') {
+        const { to, subject, body, cc, bcc } = action.data;
+        btn.innerHTML = `
+            <svg class="action-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"></path>
+                <polyline points="22,6 12,13 2,6"></polyline>
+            </svg>
+            <span>Draft Email</span>
+        `;
+        btn.addEventListener('click', () => {
+            const params = new URLSearchParams();
+            if (subject) params.append('subject', subject);
+            if (body) params.append('body', body);
+            if (cc && cc.length) params.append('cc', cc.join(','));
+            if (bcc && bcc.length) params.append('bcc', bcc.join(','));
+            
+            const url = `mailto:${encodeURIComponent(to)}?${params.toString().replace(/\+/g, '%20')}`;
+            window.open(url, '_blank');
+        });
+    } else {
+        btn.textContent = action.label || 'Action';
+    }
+
+    container.appendChild(btn);
+}
+
 export function renderMarkdown(mdDiv, text) {
     mdDiv.innerHTML = marked.parse(text);
 

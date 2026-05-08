@@ -343,6 +343,19 @@ async def agent_loop(user_message: str, mcp) -> AsyncGenerator[str, None]:
                             except Exception:
                                 pass  # non-fatal, just skip the card
 
+                        # Handle action buttons
+                        try:
+                            lines = result.split("\n")
+                            action_line = next((l for l in lines if l.strip().startswith("__ACTION_BUTTON__:")), None)
+                            if action_line:
+                                log.debug(f"Found action button line: {action_line}")
+                                action_data = json.loads(action_line.split(":", 1)[1])
+                                yield _sse("action_button", json.dumps(action_data))
+                                # Strip the action line from what the AI sees
+                                result = "\n".join(l for l in lines if not l.strip().startswith("__ACTION_BUTTON__:"))
+                        except Exception as e:
+                            log.error(f"Error processing action button: {e}")
+
                         if CONFIG["use_groq"] and groq_client and name in ("web_search", "fetch_webpage"):
                             result = await _summarize_tool_result(groq_client, name, result)
                             yield _sse("status", f"summarized {name} result")

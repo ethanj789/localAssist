@@ -1,6 +1,6 @@
 import { API } from '../constants.js';
 import { escHtml, setStatus, showToast } from '../utils/dom.js';
-import { appendMsg, appendPill, renderLinkCard, renderMarkdown } from '../ui/chatRenderer.js';
+import { appendMsg, appendPill, renderLinkCard, renderMarkdown, renderActionButton } from '../ui/chatRenderer.js';
 
 export let isStreaming = false;
 
@@ -46,6 +46,7 @@ export async function sendMessage() {
         currentPill: null,
         cursor,
         linkCards: [],
+        actionButtons: [],
     };
 
     try {
@@ -146,6 +147,11 @@ export function handleStreamEvent(event, data, state) {
         state.linkCards.push(JSON.parse(data));
     }
 
+    if (event === 'action_button') {
+        console.log(data)
+        state.actionButtons.push(JSON.parse(data));
+    }
+
     if (event === 'done') {
         const info = JSON.parse(data);
         if (state.cursor && state.cursor.parentNode) state.cursor.remove();
@@ -167,6 +173,13 @@ export function handleStreamEvent(event, data, state) {
             const tray = document.createElement('div');
             tray.className = 'link-card-tray';
             state.linkCards.forEach(card => renderLinkCard(tray, card));
+            aBody.appendChild(tray);
+        }
+
+        if (state.actionButtons.length > 0) {
+            const tray = document.createElement('div');
+            tray.className = 'action-button-tray';
+            state.actionButtons.forEach(action => renderActionButton(tray, action));
             aBody.appendChild(tray);
         }
     }
