@@ -1,4 +1,3 @@
-#testing auto pull thing
 import asyncio
 import sys
 import uuid
