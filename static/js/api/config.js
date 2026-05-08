@@ -8,26 +8,26 @@ export async function loadConfig() {
         const r = await fetch(`${API}/config`);
         if (!r.ok) throw new Error('failed to load config');
         const cfg = await r.json();
-        
+
         const modelEl = document.getElementById('cfg-model');
-        if (modelEl) modelEl.value = cfg.model || 'gemma4:2b';
-        
+        if (modelEl) modelEl.value = cfg.model || 'gemma4:e2b';
+
         const maxSearchesEl = document.getElementById('cfg-max-searches');
         if (maxSearchesEl) maxSearchesEl.value = cfg.max_searches || 5;
-        
+
         setInputDisplay('max-searches-val', cfg.max_searches || 5);
-        
+
         const sysPromptEl = document.getElementById('cfg-system-prompt');
         if (cfg.system_prompt && sysPromptEl) sysPromptEl.value = cfg.system_prompt;
-        
+
         setStatus(true, 'connected');
-        
+
         const groqModelEl = document.getElementById('cfg-groq-model');
         if (cfg.groq_model && groqModelEl) groqModelEl.value = cfg.groq_model;
-        
+
         const useGroqEl = document.getElementById('cfg-use-groq');
         if (useGroqEl) useGroqEl.checked = cfg.use_groq || false;
-        
+
         currentUseGroq = cfg.use_groq || false;
     } catch (err) {
         setStatus(false, 'server offline');

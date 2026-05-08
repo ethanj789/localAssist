@@ -17,7 +17,7 @@ answers back to a browser UI.
 pip install -r requirements.txt
 
 # 2. Pull model
-ollama pull gemma4:2b
+ollama pull gemma4:e2b
 
 # 3. Start MCP + API server
 python server.py
