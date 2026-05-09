@@ -1,5 +1,5 @@
 import { API } from './constants.js';
-import { showToast, setInputDisplay } from './utils/dom.js';
+import { showToast, setInputDisplay, scrollToBottom } from './utils/dom.js';
 import { initThemes } from './ui/theme.js';
 import { loadConfig, applyConfig } from './api/config.js';
 import { sendMessage, clearHistory } from './api/chat.js';
@@ -28,9 +28,22 @@ async function init() {
     bindButtons();
     initMemoryUI();
     initCustomSelect();
+    initAutoScroll();
     await loadConfig();
     startStatusPolling();
 }
+
+function initAutoScroll() {
+    const msgs = document.getElementById('messages');
+    if (!msgs) return;
+
+    const observer = new MutationObserver(() => {
+        scrollToBottom(msgs);
+    });
+
+    observer.observe(msgs, { childList: true, subtree: true, characterData: true });
+}
+
 
 // function startStatusPolling() {
 //     const statusDiv = document.getElementById('embedding-status');

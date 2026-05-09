@@ -8,7 +8,8 @@
     display: flex;
     gap: 12px;
     align-items: flex-end;
-    max-width: 860px; /* Increased to accommodate new controls */
+    max-width: 860px;
+    /* Increased to accommodate new controls */
 }
 
 .input-controls {

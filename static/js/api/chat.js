@@ -1,5 +1,5 @@
 import { API } from '../constants.js';
-import { escHtml, setStatus, showToast } from '../utils/dom.js';
+import { escHtml, setStatus, showToast, scrollToBottom } from '../utils/dom.js';
 import { appendMsg, appendPill, renderLinkCard, renderMarkdown, renderActionButton } from '../ui/chatRenderer.js';
 
 export let isStreaming = false;
@@ -28,9 +28,12 @@ export async function sendMessage() {
     setStatus(true, 'thinking...');
 
     appendMsg('user', escHtml(text));
+    scrollToBottom(document.getElementById('messages'), true);
 
     const aId = 'msg-' + Date.now();
     const aDiv = appendMsg('assistant', '', aId);
+    scrollToBottom(document.getElementById('messages'), true);
+
     const aBody = aDiv.querySelector('.msg-body');
     const mdDiv = document.createElement('div');
     mdDiv.className = 'md-content';
@@ -100,9 +103,9 @@ export function handleStreamEvent(event, data, state) {
     if (event === 'token') {
         state.fullText += data;
         renderMarkdown(mdDiv, state.fullText);
-        const msgs = document.getElementById('messages');
-        if (msgs) msgs.scrollTop = 9999;
     }
+
+
 
     if (event === 'tool_requested') {
         const info = JSON.parse(data);

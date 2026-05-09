@@ -26,3 +26,19 @@ export function showToast(msg) {
         setTimeout(() => t.classList.remove('show'), 2000);
     }
 }
+
+/**
+ * Robust scroll to bottom with a check to see if the user was already at the bottom.
+ */
+export function scrollToBottom(container, force = false) {
+    if (!container) return;
+
+    const threshold = 30; // pixels from bottom to be considered "at bottom"
+    const isAtBottom = container.scrollHeight - container.scrollTop - container.clientHeight <= threshold;
+
+    if (force || isAtBottom) {
+        requestAnimationFrame(() => {
+            container.scrollTop = container.scrollHeight;
+        });
+    }
+}

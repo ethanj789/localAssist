@@ -11,9 +11,9 @@ export function appendMsg(role, content, id) {
         <div class="msg-body">${content}</div>
     `;
     msgs.appendChild(div);
-    msgs.scrollTop = msgs.scrollHeight;
     return div;
 }
+
 
 export function appendPill(msgDiv, text, state = 'active') {
     const pills = msgDiv.querySelector('.msg-pills');
