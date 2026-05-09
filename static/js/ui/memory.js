@@ -64,15 +64,15 @@ function renderMemories(slots) {
             </div>
             <div class="slot-content">${slot.content}</div>
         `;
-        
+
         div.querySelector('.btn-delete-slot').addEventListener('click', () => deleteSlot(slot.index));
         slotsContainer.appendChild(div);
     });
 }
 
 async function deleteSlot(index) {
-    if (!confirm(`Delete memory slot #${index}?`)) return;
-    
+    // if (!confirm(`Delete memory slot #${index}?`)) return;
+
     try {
         const res = await fetch(`${API}/memory/${index}`, { method: 'DELETE' });
         if (res.ok) {
