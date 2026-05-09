@@ -94,14 +94,20 @@ async def _summarize_tool_result(groq_client, tool_name: str, result: str) -> st
         return result
 
 
-async def agent_loop(user_message: str, mcp) -> AsyncGenerator[str, None]:
+async def agent_loop(user_message: str, mcp, model_override: str = "default") -> AsyncGenerator[str, None]:
     try:
         yield _sse("status", "loop started")
         clean_message = user_message.replace("<thinking>", "").replace("<coding>", "").strip()
         conversation_history.append({"role": "user", "content": clean_message})
         yield _sse("status", "history appended")
 
-        tool_model, answer_model = select_groq_model(user_message)
+        if model_override == "coding":
+            tool_model, answer_model = CONFIG["groq_model"], CODING_MODEL
+        elif model_override == "thinking":
+            tool_model, answer_model = CONFIG["groq_model"], THINKING_MODEL
+        else:
+            tool_model, answer_model = select_groq_model(user_message)
+
         if answer_model != CONFIG["groq_model"]:
             yield _sse("model_upgrade", answer_model)
 

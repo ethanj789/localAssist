@@ -49,11 +49,17 @@ export async function sendMessage() {
         actionButtons: [],
     };
 
+    const modelSelector = document.getElementById('model-selector');
+    const model = modelSelector ? modelSelector.value : 'default';
+
     try {
         const resp = await fetch(`${API}/chat`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ message: text }),
+            body: JSON.stringify({ 
+                message: text,
+                model: model
+            }),
         });
 
         const reader = resp.body.getReader();

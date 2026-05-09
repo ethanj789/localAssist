@@ -63,6 +63,7 @@ def root():
 
 class ChatRequest(BaseModel):
     message: str
+    model: str = "default"
 
 
 class VoiceChatResponse(BaseModel):
@@ -112,7 +113,7 @@ async def delete_memory_slot(index: int):
 @app.post("/chat")
 async def chat(req: ChatRequest):
     return StreamingResponse(
-        agent_loop(req.message, mcp),
+        agent_loop(req.message, mcp, model_override=req.model),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
