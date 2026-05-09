@@ -122,13 +122,19 @@
     <div class="input-area">
       <div class="input-wrap">
         <textarea id="user-input" placeholder="ask something..." rows="1"></textarea>
-        <select id="model-selector" class="model-selector" title="Switch model mode">
-          <option value="default">Default Mode</option>
-          <option value="coding">Coding Mode</option>
-          <option value="thinking">Thinking Mode</option>
-        </select>
-        <button id="voice-btn" class="voice-btn" title="click to record, stops on silence">🎤 voice</button>
-        <button id="send-btn">send</button>
+        <div class="input-controls">
+          <div class="custom-select" id="model-select-wrapper">
+            <div class="select-trigger" id="model-select-trigger">Default Mode</div>
+            <div class="select-options" id="model-select-options">
+              <div class="select-option" data-value="default">Default Mode</div>
+              <div class="select-option" data-value="coding">Coding Mode</div>
+              <div class="select-option" data-value="thinking">Thinking Mode</div>
+            </div>
+            <input type="hidden" id="model-selector" value="default">
+          </div>
+          <button id="voice-btn" class="voice-btn" title="click to record, stops on silence">🎤 voice</button>
+          <button id="send-btn">send</button>
+        </div>
       </div>
       <div class="hint">enter to send · shift+enter for newline · 🎤 auto-stops on silence</div>
     </div>

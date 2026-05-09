@@ -27,6 +27,7 @@ async function init() {
     bindInputEvents();
     bindButtons();
     initMemoryUI();
+    initCustomSelect();
     await loadConfig();
     startStatusPolling();
 }
@@ -122,6 +123,39 @@ function bindButtons() {
             }
         });
     }
+}
+
+function initCustomSelect() {
+    const wrapper = document.getElementById('model-select-wrapper');
+    const trigger = document.getElementById('model-select-trigger');
+    const options = document.querySelectorAll('.select-option');
+    const hiddenInput = document.getElementById('model-selector');
+
+    if (!wrapper || !trigger) return;
+
+    trigger.addEventListener('click', (e) => {
+        e.stopPropagation();
+        wrapper.classList.toggle('open');
+    });
+
+    options.forEach(opt => {
+        opt.addEventListener('click', () => {
+            const val = opt.getAttribute('data-value');
+            const label = opt.textContent;
+
+            hiddenInput.value = val;
+            trigger.textContent = label;
+
+            options.forEach(o => o.classList.remove('active'));
+            opt.classList.add('active');
+
+            wrapper.classList.remove('open');
+        });
+    });
+
+    document.addEventListener('click', () => {
+        wrapper.classList.remove('open');
+    });
 }
 
 // Start application

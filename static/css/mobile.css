@@ -97,6 +97,35 @@
     .input-area {
         padding: 12px 16px;
     }
+
+    .input-wrap {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 10px;
+    }
+
+    .input-controls {
+        display: grid;
+        grid-template-columns: 1fr auto auto;
+        gap: 8px;
+        width: 100%;
+    }
+
+    .select-trigger {
+        height: 48px !important;
+        font-size: 11px !important;
+        padding: 0 10px !important;
+    }
+
+    .voice-btn, #send-btn {
+        height: 48px !important;
+        padding: 0 12px !important;
+        font-size: 11px !important;
+    }
+
+    #send-btn {
+        min-width: 70px;
+    }
 }
 
 /* Hide toggle on desktop */
