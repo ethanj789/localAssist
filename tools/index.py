@@ -46,32 +46,62 @@ def build_index(force=False):
         except FileNotFoundError:
             continue
 
-    # Check if we need rebuild
+    # Check what needs to be updated
+    stored_data = {}
+    stored_files = {}
     if not force and CHUNKS_FILE.exists():
         try:
             with open(CHUNKS_FILE, "r") as f:
                 stored_data = json.load(f)
                 stored_files = stored_data.get("meta", {}).get("files", {})
-                
-                # Check if file sets match exactly and mtimes match
-                if set(stored_files.keys()) == set(current_files.keys()):
-                    if all(stored_files[p]["mtime"] == current_files[p]["mtime"] for p in current_files):
-                        log.info("Index is up to date.")
-                        return stored_data
         except Exception as e:
             log.warning(f"Failed to load existing index: {e}. Rebuilding.")
+
+    unmodified_files = set()
+    if not force:
+        for p in current_files:
+            if p in stored_files and stored_files[p]["mtime"] == current_files[p]["mtime"]:
+                unmodified_files.add(p)
+
+    needs_update = [p for p in all_rel_paths if p not in unmodified_files]
+    deleted_files = [p for p in stored_files if p not in current_files]
+
+    if not force and not needs_update and not deleted_files:
+        log.info("Index is up to date.")
+        return stored_data
 
     # Mark as busy
     with open(BUSY_LOCK_FILE, "w") as f:
         f.write(str(time.time()))
         
     try:
-        log.info("Rebuilding index...")
+        log.info("Rebuilding index incrementally...")
         all_chunks = []
         all_vectors = []
         start_time = time.time()
 
-        for rel_path in all_rel_paths:
+        # Retain chunks and vectors for unmodified files
+        if unmodified_files and CHUNKS_FILE.exists() and VECTORS_FILE.exists():
+            try:
+                stored_chunks = stored_data.get("chunks", [])
+                stored_vectors = np.load(VECTORS_FILE)
+                if len(stored_chunks) == stored_vectors.shape[0]:
+                    for chunk, vec in zip(stored_chunks, stored_vectors):
+                        if chunk.get("file") in unmodified_files:
+                            all_chunks.append(chunk)
+                            all_vectors.append(vec)
+                else:
+                    log.warning("Shape mismatch in stored chunks vs vectors. Rebuilding all.")
+                    needs_update = all_rel_paths
+                    all_chunks = []
+                    all_vectors = []
+            except Exception as e:
+                log.warning(f"Failed to load existing vectors/chunks for incremental build: {e}. Rebuilding all.")
+                needs_update = all_rel_paths
+                all_chunks = []
+                all_vectors = []
+
+        for rel_path in needs_update:
             chunks = get_file_chunks(rel_path)
             if not chunks:
                 continue
