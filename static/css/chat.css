@@ -247,6 +247,59 @@
     color: var(--text)
 }
 
+/* ── Tables ── */
+.md-content table {
+    width: 100%;
+    border-collapse: separate;
+    border-spacing: 0;
+    margin: 16px 0;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+    font-size: 14px;
+    line-height: 1.5;
+}
+
+.md-content th,
+.md-content td {
+    padding: 12px 14px;
+    text-align: left;
+    border-bottom: 1px solid var(--border);
+    border-right: 1px solid var(--border);
+}
+
+.md-content th:last-child,
+.md-content td:last-child {
+    border-right: none;
+}
+
+.md-content tr:last-child td {
+    border-bottom: none;
+}
+
+.md-content th {
+    background: var(--surface);
+    font-weight: 600;
+    color: var(--text);
+    font-family: var(--sans);
+    text-transform: uppercase;
+    font-size: 11px;
+    letter-spacing: 0.05em;
+}
+
+.md-content tr:nth-child(even) {
+    background: rgba(255, 255, 255, 0.02);
+}
+
+.md-content tr:hover td {
+    background: rgba(255, 255, 255, 0.04);
+}
+
+.md-content td {
+    color: var(--muted);
+    font-family: var(--sans);
+}
+
 .link-card-tray {
     display: flex;
     gap: 8px;
