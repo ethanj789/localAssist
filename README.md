@@ -6,7 +6,7 @@ answers back to a browser UI.
 
 ```
 [index.html]  →  HTTP/SSE  →  [server.py]  →  MCP stdio  →  [mcp_server.py]
-  browser           API         FastAPI          protocol     DDG + trafilatura
+  browser           API         FastAPI          protocol     tavily
                               + Ollama loop
 ```
 

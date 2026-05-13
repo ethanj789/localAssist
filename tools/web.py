@@ -8,7 +8,7 @@ import logging
 import os
 
 import requests
-from ddgs import DDGS
+# from ddgs import DDGS
 from tavily import TavilyClient
 from mcp import types
 
@@ -65,18 +65,18 @@ def _tavily_search(query: str) -> list[dict]:
         return []
 
 
-def _ddg_search(query: str) -> list[dict]:
-    """DuckDuckGo search (available as an alternative to Tavily)."""
-    try:
-        with DDGS(timeout=5) as ddgs:
-            raw = ddgs.text(query, max_results=DDG_MAX_RESULTS)
-            return [
-                {"title": r.get("title", ""), "url": r.get("href", ""), "snippet": r.get("body", "")}
-                for r in (raw or [])
-            ]
-    except Exception as e:
-        print(f"[DDG error] {e}", file=sys.stderr)
-        return []
+# def _ddg_search(query: str) -> list[dict]:
+#     """DuckDuckGo search (available as an alternative to Tavily)."""
+#     try:
+#         with DDGS(timeout=5) as ddgs:
+#             raw = ddgs.text(query, max_results=DDG_MAX_RESULTS)
+#             return [
+#                 {"title": r.get("title", ""), "url": r.get("href", ""), "snippet": r.get("body", "")}
+#                 for r in (raw or [])
+#             ]
+#     except Exception as e:
+#         print(f"[DDG error] {e}", file=sys.stderr)
+#         return []
 
 
 # ── fetch_webpage ─────────────────────────────────────────────────────────────

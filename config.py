@@ -14,7 +14,7 @@ CONFIG = {
     "max_searches":     int(os.getenv("MAX_SEARCHES", "2")),
     "max_emails":       int(os.getenv("MAX_EMAILS", "1")),
     "max_tools":        int(os.getenv("MAX_TOOLS", "10")),
-    "max_tokens":       int(os.getenv("MAX_TOKENS", "2048")),
+    "max_tokens":       int(os.getenv("MAX_TOKENS", "5000")),
     "temperature":      float(os.getenv("TEMPERATURE", "0.7")),
     "mcp_server_cmd":   os.getenv("MCP_CMD", f"python mcp_server.py"),
     "system_prompt":    os.getenv("SYSTEM_PROMPT", (
