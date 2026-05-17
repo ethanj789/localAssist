@@ -1,6 +1,5 @@
 import logging
 from mcp.server import Server
-import subprocess
 from mcp import types
 import os
 import json

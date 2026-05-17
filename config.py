@@ -1,6 +1,7 @@
 import os
 from pathlib import Path
 import re
+import sys
 
 from dotenv import load_dotenv
 load_dotenv()
@@ -16,7 +17,7 @@ CONFIG = {
     "max_tools":        int(os.getenv("MAX_TOOLS", "10")),
     "max_tokens":       int(os.getenv("MAX_TOKENS", "5000")),
     "temperature":      float(os.getenv("TEMPERATURE", "0.7")),
-    "mcp_server_cmd":   os.getenv("MCP_CMD", f"python mcp_server.py"),
+    "mcp_server_cmd": os.getenv("MCP_CMD", f"{sys.executable} mcp_server.py"),
     "system_prompt":    os.getenv("SYSTEM_PROMPT", (
         "You are a helpful personal assistant. Communicate clearly with sufficient detail without filler. "
 
