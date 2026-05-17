@@ -16,7 +16,8 @@ from pydantic import BaseModel
 
 from config import CONFIG, get_raw_memory, save_memory
 from mcp_client import MCPClient
-from agent import agent_loop, conversation_history
+import agent
+from agent import agent_loop
 from tools.index import BUSY_LOCK_FILE
 
 # Voice transcription
@@ -89,7 +90,9 @@ async def update_config(updates: dict):
 
 @app.delete("/history")
 async def clear_history():
-    conversation_history.clear()
+    agent.conversation_history.clear()
+    agent.global_edit_log.clear()
+    agent.global_pending_edit = None
     return {"status": "cleared"}
 
 
@@ -107,6 +110,43 @@ async def delete_memory_slot(index: int):
         raise HTTPException(status_code=404, detail=f"Slot {index} not found")
     data["agent_managed"] = new_list
     save_memory(data)
+    return {"status": "ok"}
+
+class ResolveEditRequest(BaseModel):
+    toolCallId: str
+    action: str  # "approve" | "reject"
+    reason: str = ""
+
+@app.post("/resolve_edit")
+async def resolve_edit(req: ResolveEditRequest):
+    if not agent.global_pending_edit or agent.global_pending_edit["toolCallId"] != req.toolCallId:
+        raise HTTPException(status_code=400, detail="No matching pending edit.")
+
+    pending = agent.global_pending_edit
+    
+    # Mutate history
+    found = False
+    for msg in agent.conversation_history:
+        if msg.get("role") == "tool" and msg.get("tool_call_id") == req.toolCallId:
+            if req.action == "approve":
+                msg["content"] = "APPROVED"
+                # Write to disk
+                target = Path(pending["target_path"])
+                target.parent.mkdir(parents=True, exist_ok=True)
+                with target.open("w", encoding="utf-8") as f:
+                    f.write(pending["new_content"])
+                agent.global_edit_log.append(f"{pending['path']} — {pending['summary']} — APPROVED")
+            else:
+                reason_str = req.reason.strip() if req.reason else "No reason provided"
+                msg["content"] = f"REJECTED: {reason_str}"
+                agent.global_edit_log.append(f"{pending['path']} — {pending['summary']} — REJECTED")
+            found = True
+            break
+            
+    if not found:
+        raise HTTPException(status_code=404, detail="Tool call not found in history.")
+
+    agent.global_pending_edit = None
     return {"status": "ok"}
 
 

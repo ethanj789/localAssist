@@ -1,6 +1,7 @@
 import { API } from '../constants.js';
 import { escHtml, setStatus, showToast, scrollToBottom } from '../utils/dom.js';
 import { appendMsg, appendPill, renderLinkCard, renderMarkdown, renderActionButton } from '../ui/chatRenderer.js';
+import { handleProposeEdit } from '../ui/editPanel.js';
 
 export let isStreaming = false;
 
@@ -15,14 +16,21 @@ export async function clearHistory() {
     showToast('history cleared');
 }
 
-export async function sendMessage() {
+export async function sendMessage(customText = null) {
     if (isStreaming) return;
-    const input = document.getElementById('user-input');
-    const text = input.value.trim();
+    
+    let text = '';
+    if (customText && typeof customText === 'string') {
+        text = customText.trim();
+    } else {
+        const input = document.getElementById('user-input');
+        if (!input) return;
+        text = input.value.trim();
+        input.value = '';
+        input.style.height = 'auto';
+    }
     if (!text) return;
 
-    input.value = '';
-    input.style.height = 'auto';
     setIsStreaming(true);
     document.getElementById('send-btn').disabled = true;
     setStatus(true, 'thinking...');
@@ -159,6 +167,11 @@ export function handleStreamEvent(event, data, state) {
     if (event === 'action_button') {
         console.log(data)
         state.actionButtons.push(JSON.parse(data));
+    }
+
+    if (event === 'propose_edit') {
+        const editData = JSON.parse(data);
+        handleProposeEdit(editData);
     }
 
     if (event === 'done') {

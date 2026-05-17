@@ -15,6 +15,8 @@ from config import (
 log = logging.getLogger(__name__)
 
 conversation_history: list[dict] = []
+global_pending_edit = None
+global_edit_log: list[str] = []
 
 
 def _sse(event: str, data: str) -> str:
@@ -27,6 +29,11 @@ def _prune_history(history: list[dict], keep_last_n_tool_results: int = 2) -> li
     tool_result_count = 0
     for msg in reversed(history):
         if msg["role"] == "tool":
+            # EXEMPT pending edits from pruning
+            if msg.get("content") == "edit pending approval":
+                pruned.append(msg)
+                continue
+                
             tool_result_count += 1
             if tool_result_count > keep_last_n_tool_results:
                 pruned.append({**msg, "content": "[pruned]"})
@@ -95,6 +102,7 @@ async def _summarize_tool_result(groq_client, tool_name: str, result: str) -> st
 
 
 async def agent_loop(user_message: str, mcp, model_override: str = "default") -> AsyncGenerator[str, None]:
+    global global_pending_edit
     try:
         yield _sse("status", "loop started")
         clean_message = user_message.replace("<thinking>", "").replace("<coding>", "").strip()
@@ -155,6 +163,9 @@ async def agent_loop(user_message: str, mcp, model_override: str = "default") ->
                     system = CONFIG["system_prompt"] + "\n\n" + CONFIG["memory_management_prompt"]
                     if memory:
                         system = system + "\n\n" + memory
+                        
+                    if global_edit_log:
+                        system += "\n\nEdit Log:\n" + "\n".join(global_edit_log)
 
                     if CONFIG["use_groq"]:
                         try: 
@@ -163,18 +174,28 @@ async def agent_loop(user_message: str, mcp, model_override: str = "default") ->
                                 "model": current_model
                             }))
 
-                            # Filter tools based on budget
+                            # Filter tools based on budget and pending state
                             available_tools = []
-                            for t in ollama_tools:
-                                if tool_count >= max_tools:
-                                    break
-                                if t["function"]["name"] in ("web_search", "fetch_webpage") and search_count >= max_searches:
-                                    continue
-                                if t["function"]["name"] == "draft_email" and email_count >= max_emails:
-                                    continue
-                                if t["function"]["name"] == "manage_memory" and memory_count >= max_memory:
-                                    continue
-                                available_tools.append(t)
+                            
+                            # Check if the immediately preceding message is the pending edit
+                            last_was_pending_edit = len(trimmed_history) > 0 and trimmed_history[-1].get("role") == "tool" and trimmed_history[-1].get("content") == "edit pending approval"
+                            
+                            if last_was_pending_edit:
+                                # Force prose response by stripping all tools
+                                available_tools = []
+                            else:
+                                for t in ollama_tools:
+                                    if tool_count >= max_tools:
+                                        break
+                                    if t["function"]["name"] in ("web_search", "fetch_webpage") and search_count >= max_searches:
+                                        continue
+                                    if t["function"]["name"] == "draft_email" and email_count >= max_emails:
+                                        continue
+                                    if t["function"]["name"] == "manage_memory" and memory_count >= max_memory:
+                                        continue
+                                    if global_pending_edit and t["function"]["name"] == "propose_edit":
+                                        continue
+                                    available_tools.append(t)
 
                             response = await groq_client.chat.completions.create(
                                 model=current_model,
@@ -208,16 +229,23 @@ async def agent_loop(user_message: str, mcp, model_override: str = "default") ->
                         }))
                         # Filter tools based on budget for Ollama as well
                         available_tools = []
-                        for t in ollama_tools:
-                            if tool_count >= max_tools:
-                                break
-                            if t["type"] == "function" and t["function"]["name"] in ("web_search", "fetch_webpage") and search_count >= max_searches:
-                                continue
-                            if t["type"] == "function" and t["function"]["name"] == "draft_email" and email_count >= max_emails:
-                                continue
-                            if t["type"] == "function" and t["function"]["name"] == "manage_memory" and memory_count >= max_memory:
-                                continue
-                            available_tools.append(t)
+                        last_was_pending_edit = len(trimmed_history) > 0 and trimmed_history[-1].get("role") == "tool" and trimmed_history[-1].get("content") == "edit pending approval"
+                        
+                        if last_was_pending_edit:
+                            available_tools = []
+                        else:
+                            for t in ollama_tools:
+                                if tool_count >= max_tools:
+                                    break
+                                if t["type"] == "function" and t["function"]["name"] in ("web_search", "fetch_webpage") and search_count >= max_searches:
+                                    continue
+                                if t["type"] == "function" and t["function"]["name"] == "draft_email" and email_count >= max_emails:
+                                    continue
+                                if t["type"] == "function" and t["function"]["name"] == "manage_memory" and memory_count >= max_memory:
+                                    continue
+                                if global_pending_edit and t["type"] == "function" and t["function"]["name"] == "propose_edit":
+                                    continue
+                                available_tools.append(t)
 
                         payload = {
                             "model": CONFIG["model"],
@@ -382,6 +410,30 @@ async def agent_loop(user_message: str, mcp, model_override: str = "default") ->
                                 result = "\n".join(l for l in lines if not l.strip().startswith("__ACTION_BUTTON__:"))
                         except Exception as e:
                             log.error(f"Error processing action button: {e}")
+                            
+                        # Handle propose_edit interception
+                        if name == "propose_edit":
+                            try:
+                                parsed = json.loads(result)
+                                if parsed.get("status") == "pending_approval":
+                                    tool_call_id = tc.id if CONFIG["use_groq"] else f"call_{name}"
+                                    global_pending_edit = {
+                                        "toolCallId": tool_call_id,
+                                        "path": args.get("path"),
+                                        "summary": parsed.get("summary"),
+                                        "old_content": parsed.get("old_content"),
+                                        "new_content": parsed.get("new_content"),
+                                        "target_path": parsed.get("target_path")
+                                    }
+                                    yield _sse("propose_edit", json.dumps(global_pending_edit))
+                                    result = "edit pending approval"
+                                else:
+                                    # Valid JSON but not pending? (Shouldn't happen)
+                                    pass
+                            except Exception:
+                                # It's not JSON, meaning it was REJECTED by validation
+                                yield _sse("status", "Edit proposed but failed validation. Agent will retry.")
+                                pass # Not JSON or rejected immediately
 
                         if CONFIG["use_groq"] and groq_client and name in ("web_search", "fetch_webpage"):
                             result = await _summarize_tool_result(groq_client, name, result)

@@ -14,6 +14,9 @@ from tools.events import _recent_events
 from tools.emails import _draft_email
 from tools.search import _search_semantic
 from tools.memory import _manage_memory
+from tools.edit import validate_and_apply_edit
+from tools.files import WORKSPACE_ROOT
+import json
 
 log = logging.getLogger(__name__)
 
@@ -190,6 +193,50 @@ async def list_tools() -> list[types.Tool]:
                 "required": ["action"]
             }
         ),
+        types.Tool(
+            name="propose_edit",
+            description=(
+                "Propose a file edit or creation. "
+                "Always use read_file first to check the current content. "
+                "Supply one or more search/replace pairs in the 'edits' array. "
+                "Each entry has a 'search' field (exact text to find) and a 'replace' field (replacement text). "
+                "To create a new file, pass a single entry with an empty 'search' and the full file content in 'replace'. "
+                "Matching is case-sensitive; if an exact match fails, a case-insensitive match is attempted automatically."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "Path to the file, relative to the aiWorkspace folder."
+                    },
+                    "edits": {
+                        "type": "array",
+                        "description": "List of search/replace pairs to apply in order.",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "search": {
+                                    "type": "string",
+                                    "description": "The exact text to find in the file. Leave empty to replace the entire file (new file creation)."
+                                },
+                                "replace": {
+                                    "type": "string",
+                                    "description": "The text to substitute in place of 'search'."
+                                }
+                            },
+                            "required": ["search", "replace"]
+                        },
+                        "minItems": 1
+                    },
+                    "summary": {
+                        "type": "string",
+                        "description": "A very short description of the change (max ~15 words)."
+                    }
+                },
+                "required": ["path", "edits", "summary"]
+            }
+        ),
     ]
 
 
@@ -237,5 +284,20 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
     elif name == "manage_memory":
         result = await _manage_memory(arguments["action"], arguments.get("content"), arguments.get("new_content"))
         return [types.TextContent(type="text", text=result)]
+    elif name == "propose_edit":
+        try:
+            edit_data = validate_and_apply_edit(WORKSPACE_ROOT, arguments["path"], arguments["edits"])
+            # Return JSON string so agent.py can intercept it and enter pending state
+            result = {
+                "status": "pending_approval",
+                "old_content": edit_data["old_content"],
+                "new_content": edit_data["new_content"],
+                "target_path": edit_data["target_path"],
+                "summary": arguments["summary"]
+            }
+            return [types.TextContent(type="text", text=json.dumps(result))]
+        except Exception as e:
+            # If validation fails, return REJECTED immediately
+            return [types.TextContent(type="text", text=f"REJECTED: {str(e)}")]
     else:
         raise ValueError(f"Unknown tool: {name}")

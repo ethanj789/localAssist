@@ -16,6 +16,7 @@
   <link rel="stylesheet" href="/static/css/input.css">
   <link rel="stylesheet" href="/static/css/toast.css">
   <link rel="stylesheet" href="/static/css/memory.css">
+  <link rel="stylesheet" href="/static/css/edit.css">
   <link rel="stylesheet" href="/static/css/mobile.css">
 </head>
 
@@ -156,7 +157,40 @@
     </div>
   </div>
 
+  <div id="edit-panel" class="edit-panel">
+    <div id="edit-resizer" class="edit-resizer"></div>
+    <div class="edit-header">
+      <h2><span id="edit-badge" class="badge"></span> <span id="edit-path"></span></h2>
+      <button class="close-edit-panel" id="close-edit-panel">&times;</button>
+    </div>
+    <div class="edit-content">
+      <div class="diff-view">
+        <div class="diff-pane">
+          <div class="diff-pane-header">Original</div>
+          <div class="diff-code" id="diff-old"></div>
+        </div>
+        <div class="diff-pane">
+          <div class="diff-pane-header">Proposed</div>
+          <div class="diff-code" id="diff-new"></div>
+        </div>
+      </div>
+      <div class="diff-controls">
+        <div class="summary" id="edit-summary"></div>
+        <div class="diff-actions">
+          <button class="btn-approve" id="btn-approve">Approve</button>
+          <input type="text" id="reject-reason" placeholder="Reason for rejection (optional)">
+          <button class="btn-reject" id="btn-reject">Reject</button>
+        </div>
+      </div>
+      <div class="edit-history">
+        <div class="edit-history-header">Edit History</div>
+        <div class="edit-history-list" id="edit-history-list"></div>
+      </div>
+    </div>
+  </div>
+
   <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/9.1.6/marked.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jsdiff/7.0.0/diff.min.js"></script>
   <script type="module" src="/static/js/main.js"></script>
 </body>
 

@@ -5,6 +5,7 @@ import { loadConfig, applyConfig } from './api/config.js';
 import { sendMessage, clearHistory } from './api/chat.js';
 import { initVoiceRecorder, bindVoiceButton } from './api/voice.js';
 import { initMemoryUI } from './ui/memory.js';
+import { initEditPanel, handleProposeEdit } from './ui/editPanel.js';
 
 async function init() {
     try {
@@ -27,6 +28,7 @@ async function init() {
     bindInputEvents();
     bindButtons();
     initMemoryUI();
+    initEditPanel();
     initCustomSelect();
     initAutoScroll();
     await loadConfig();
