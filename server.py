@@ -275,4 +275,7 @@ async def voice_chat(audio: UploadFile = File(...)):
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("server:app", host="0.0.0.0", port=8000, reload=True)
+    uvicorn.run("server:app", host="0.0.0.0", port=8000, reload=True,         reload_excludes=[
+            "aiWorkspace/*",     # Matches 'aiWorkspace/simpleHelper.py' 
+            "aiWorkspace/*/*"    # Matches files inside nested subfolders if any
+        ])

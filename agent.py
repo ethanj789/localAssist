@@ -426,7 +426,7 @@ async def agent_loop(user_message: str, mcp, model_override: str = "default") ->
                                         "target_path": parsed.get("target_path")
                                     }
                                     yield _sse("propose_edit", json.dumps(global_pending_edit))
-                                    result = "edit pending approval"
+                                    result = "edit pending approval. provide a short summary of the changes."
                                 else:
                                     # Valid JSON but not pending? (Shouldn't happen)
                                     pass

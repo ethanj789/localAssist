@@ -197,9 +197,13 @@ async def list_tools() -> list[types.Tool]:
             name="propose_edit",
             description=(
                 "Propose a file edit or creation. "
-                "Always use read_file first to check the current content. "
+                "Always use read_file first to check the current content before editing an existing file. "
                 "Supply one or more search/replace pairs in the 'edits' array. "
                 "Each entry has a 'search' field (exact text to find) and a 'replace' field (replacement text). "
+                "IMPORTANT: search for the smallest possible unique snippet that contains your change — "
+                "a single line, a few words, or even a single word if it is unambiguous. "
+                "Never search for large blocks or the entire file content unless you are replacing the whole file. "
+                "Smaller searches are more precise and less likely to fail due to whitespace or formatting differences. "
                 "To create a new file, pass a single entry with an empty 'search' and the full file content in 'replace'. "
                 "Matching is case-sensitive; if an exact match fails, a case-insensitive match is attempted automatically."
             ),
