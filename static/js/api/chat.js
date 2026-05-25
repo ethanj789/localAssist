@@ -4,17 +4,62 @@ import { appendMsg, appendPill, renderLinkCard, renderMarkdown, renderActionButt
 import { handleProposeEdit } from '../ui/editPanel.js';
 
 export let isStreaming = false;
+export let currentConversationId = null;
 
 export function setIsStreaming(value) {
     isStreaming = value;
 }
 
+export function setCurrentConversationId(value) {
+    currentConversationId = value;
+}
+
 export async function clearHistory() {
     await fetch(`${API}/history`, { method: 'DELETE' });
+    currentConversationId = null;
     const messagesEl = document.getElementById('messages');
     if (messagesEl) messagesEl.innerHTML = '';
-    showToast('history cleared');
+    document.dispatchEvent(new CustomEvent('conversations-updated'));
+    document.dispatchEvent(new CustomEvent('conversation-cleared'));
+    showToast('All conversations cleared');
 }
+
+export async function getConversations() {
+    const res = await fetch(`${API}/conversations`);
+    if (!res.ok) throw new Error('Failed to fetch conversations');
+    return await res.json();
+}
+
+export async function getConversationDetails(id) {
+    const res = await fetch(`${API}/conversations/${id}`);
+    if (!res.ok) throw new Error('Failed to fetch conversation details');
+    return await res.json();
+}
+
+export async function renameConversation(id, title) {
+    const res = await fetch(`${API}/conversations/${id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title }),
+    });
+    if (!res.ok) throw new Error('Failed to rename conversation');
+    document.dispatchEvent(new CustomEvent('conversations-updated'));
+    return await res.json();
+}
+
+export async function deleteConversation(id) {
+    const res = await fetch(`${API}/conversations/${id}`, {
+        method: 'DELETE',
+    });
+    if (!res.ok) throw new Error('Failed to delete conversation');
+    if (currentConversationId === id) {
+        currentConversationId = null;
+        document.dispatchEvent(new CustomEvent('conversation-cleared'));
+    }
+    document.dispatchEvent(new CustomEvent('conversations-updated'));
+    return await res.json();
+}
+
 
 export async function sendMessage(customText = null) {
     if (isStreaming) return;
@@ -69,7 +114,8 @@ export async function sendMessage(customText = null) {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ 
                 message: text,
-                model: model
+                model: model,
+                conversation_id: currentConversationId
             }),
         });
 
@@ -107,6 +153,11 @@ export async function sendMessage(customText = null) {
 
 export function handleStreamEvent(event, data, state) {
     const { aDiv, mdDiv } = state;
+
+    if (event === 'conversation_id') {
+        setCurrentConversationId(data);
+        document.dispatchEvent(new CustomEvent('conversation-id-updated', { detail: data }));
+    }
 
     if (event === 'token') {
         state.fullText += data;
@@ -204,5 +255,7 @@ export function handleStreamEvent(event, data, state) {
             state.actionButtons.forEach(action => renderActionButton(tray, action));
             aBody.appendChild(tray);
         }
+
+        document.dispatchEvent(new CustomEvent('conversations-updated'));
     }
 }

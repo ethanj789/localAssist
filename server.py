@@ -19,6 +19,7 @@ from mcp_client import MCPClient
 import agent
 from agent import agent_loop
 from tools.index import BUSY_LOCK_FILE
+import db
 
 # Voice transcription
 from faster_whisper import WhisperModel
@@ -41,6 +42,10 @@ TEMP_DIR.mkdir(exist_ok=True)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    print("[db] Initializing database...")
+    db.init_db()
+    print("[db] Cleaning up old conversations...")
+    db.cleanup_old_conversations()
     print("[server] Loading Whisper model...")
     # Whisper already loaded above
     await asyncio.get_event_loop().run_in_executor(None, mcp.start)
@@ -65,6 +70,7 @@ def root():
 class ChatRequest(BaseModel):
     message: str
     model: str = "default"
+    conversation_id: str | None = None
 
 
 class VoiceChatResponse(BaseModel):
@@ -90,10 +96,11 @@ async def update_config(updates: dict):
 
 @app.delete("/history")
 async def clear_history():
-    agent.conversation_history.clear()
+    db.clear_all_conversations()
     agent.global_edit_log.clear()
     agent.global_pending_edit = None
     return {"status": "cleared"}
+
 
 
 @app.get("/memory")
@@ -123,40 +130,78 @@ async def resolve_edit(req: ResolveEditRequest):
         raise HTTPException(status_code=400, detail="No matching pending edit.")
 
     pending = agent.global_pending_edit
-    
-    # Mutate history
-    found = False
-    for msg in agent.conversation_history:
-        if msg.get("role") == "tool" and msg.get("tool_call_id") == req.toolCallId:
-            if req.action == "approve":
-                msg["content"] = "APPROVED"
-                # Write to disk
-                target = Path(pending["target_path"])
-                target.parent.mkdir(parents=True, exist_ok=True)
-                with target.open("w", encoding="utf-8") as f:
-                    f.write(pending["new_content"])
-                agent.global_edit_log.append(f"{pending['path']} — {pending['summary']} — APPROVED")
-            else:
-                reason_str = req.reason.strip() if req.reason else "No reason provided"
-                msg["content"] = f"REJECTED: {reason_str}"
-                agent.global_edit_log.append(f"{pending['path']} — {pending['summary']} — REJECTED")
-            found = True
-            break
-            
-    if not found:
-        raise HTTPException(status_code=404, detail="Tool call not found in history.")
+    conv_id = pending.get("conversation_id")
+    if not conv_id:
+        raise HTTPException(status_code=400, detail="Pending edit does not have a conversation ID.")
 
+    # Mutate history in DB
+    if req.action == "approve":
+        content = "APPROVED"
+        # Write to disk
+        target = Path(pending["target_path"])
+        target.parent.mkdir(parents=True, exist_ok=True)
+        with target.open("w", encoding="utf-8") as f:
+            f.write(pending["new_content"])
+        agent.global_edit_log.append(f"{pending['path']} — {pending['summary']} — APPROVED")
+    else:
+        reason_str = req.reason.strip() if req.reason else "No reason provided"
+        content = f"REJECTED: {reason_str}"
+        agent.global_edit_log.append(f"{pending['path']} — {pending['summary']} — REJECTED")
+
+    db.update_message_content(conv_id, req.toolCallId, content)
     agent.global_pending_edit = None
     return {"status": "ok"}
 
 
 @app.post("/chat")
 async def chat(req: ChatRequest):
+    current_provider = "groq" if CONFIG["use_groq"] else "ollama"
+    conv_id = req.conversation_id
+    if not conv_id:
+        conv_id = db.create_conversation(provider=current_provider)
     return StreamingResponse(
-        agent_loop(req.message, mcp, model_override=req.model),
+        agent_loop(req.message, mcp, model_override=req.model, conversation_id=conv_id),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
+
+class RenameConversationRequest(BaseModel):
+    title: str
+
+
+@app.get("/conversations")
+async def get_conversations():
+    db.cleanup_old_conversations()
+    return db.get_conversations()
+
+
+@app.get("/conversations/{conversation_id}")
+async def get_conversation_details(conversation_id: str):
+    conv = db.get_conversation(conversation_id)
+    if not conv:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    messages = db.get_messages(conversation_id)
+    return {"conversation": conv, "messages": messages}
+
+
+@app.put("/conversations/{conversation_id}")
+async def rename_conversation(conversation_id: str, req: RenameConversationRequest):
+    conv = db.get_conversation(conversation_id)
+    if not conv:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    db.update_conversation_title(conversation_id, req.title)
+    return {"status": "ok", "title": req.title}
+
+
+@app.delete("/conversations/{conversation_id}")
+async def delete_conversation(conversation_id: str):
+    conv = db.get_conversation(conversation_id)
+    if not conv:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    db.delete_conversation(conversation_id)
+    return {"status": "ok"}
+
 
 
 @app.get("/startup-token")

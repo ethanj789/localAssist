@@ -26,80 +26,99 @@
   <aside>
     <div class="logo">yay yippie learning<br><span>// funny bunny</span></div>
 
-    <div>
-      <div class="section-label">Model</div>
-      <div class="config-group">
-        <div class="config-row">
-          <label>ollama model</label>
-          <input id="cfg-model" type="text" placeholder="gemma4:e2b">
+    <div class="conversations-section">
+      <div class="section-label">Conversations</div>
+      <button id="new-chat-btn" class="btn btn-new-chat">+ New Chat</button>
+      <div id="conversation-list" class="conversation-list">
+        <!-- Rendered conversations go here -->
+      </div>
+    </div>
+
+    <!-- Main Groq Toggle (Quick Access) -->
+    <div class="main-toggle-row">
+      <label class="toggle-row-label">use groq</label>
+      <label class="toggle">
+        <input id="cfg-use-groq" type="checkbox">
+        <span class="toggle-slider"></span>
+      </label>
+    </div>
+
+    <!-- Collapsible Settings Section -->
+    <div class="settings-accordion">
+      <button class="settings-toggle-btn" id="settings-toggle-btn">
+        <span>Settings</span>
+        <span class="arrow-icon" id="settings-arrow">▸</span>
+      </button>
+      <div class="settings-content" id="settings-content" style="display: none;">
+        <div class="settings-group">
+          <div class="section-label">Model</div>
+          <div class="config-group">
+            <div class="config-row">
+              <label>ollama model</label>
+              <input id="cfg-model" type="text" placeholder="gemma4:e2b">
+            </div>
+            <div class="config-row">
+              <label>groq model</label>
+              <input id="cfg-groq-model" type="text" placeholder="llama-3.1-8b-instant">
+            </div>
+          </div>
         </div>
-        <div class="config-row">
-          <label>groq model</label>
-          <input id="cfg-groq-model" type="text" placeholder="llama-3.1-8b-instant">
+
+        <div class="settings-group">
+          <div class="section-label">Search</div>
+          <div class="config-group">
+            <div class="range-row">
+              <label>max searches/turn <span id="max-searches-val">5</span></label>
+              <input id="cfg-max-searches" type="range" min="1" max="10" value="5">
+            </div>
+          </div>
         </div>
-        <div class="toggle-row">
-          <label>use groq</label>
-          <label class="toggle">
-            <input id="cfg-use-groq" type="checkbox">
-            <span class="toggle-slider"></span>
-          </label>
+
+        <div class="settings-group">
+          <div class="section-label">System Prompt</div>
+          <div class="config-row">
+            <textarea id="cfg-system-prompt"
+              rows="4">You are a helpful assistant with access to web search tools. Use web_search to look up current information when needed. Always cite your sources.</textarea>
+          </div>
         </div>
-      </div>
-    </div>
 
-    <div>
-      <div class="section-label">Search</div>
-      <div class="config-group">
-        <div class="range-row">
-          <label>max searches/turn <span id="max-searches-val">5</span></label>
-          <input id="cfg-max-searches" type="range" min="1" max="10" value="5">
+        <div class="settings-group">
+          <div class="section-label">Theme</div>
+          <div class="theme-select-wrap">
+            <select id="theme-select" class="theme-select">
+              <option value="default">Terminal</option>
+              <option value="light">Paper</option>
+              <option value="solarized">Solarized</option>
+              <option value="rose">Rose Pine</option>
+              <option value="nord">Nord</option>
+              <option value="gruvbox">Gruvbox</option>
+              <option value="dracula">Dracula</option>
+              <option value="monokai">Monokai</option>
+              <option value="oceanic">Oceanic</option>
+              <option value="Nebula">Nebula</option>
+              <option value="lumina">Lumina</option>
+              <option value="aurora">Aurora</option>
+            </select>
+          </div>
         </div>
+
+        <div class="settings-group">
+          <div class="section-label">Font</div>
+          <div class="font-select-wrap">
+            <select id="font-select" class="font-select">
+              <option value="dm">DM Sans</option>
+              <option value="inter">Inter</option>
+              <option value="nunito">Nunito</option>
+              <option value="outfit">Outfit</option>
+              <option value="jakarta">Plus Jakarta Sans</option>
+            </select>
+          </div>
+        </div>
+
+        <button class="btn btn-apply">apply config</button>
+        <button class="btn btn-clear">clear all chats</button>
       </div>
     </div>
-
-    <div>
-      <div class="section-label">System Prompt</div>
-      <div class="config-row">
-        <textarea id="cfg-system-prompt"
-          rows="4">You are a helpful assistant with access to web search tools. Use web_search to look up current information when needed. Always cite your sources.</textarea>
-      </div>
-    </div>
-
-    <div>
-      <div class="section-label">Theme</div>
-      <div class="theme-select-wrap">
-        <select id="theme-select" class="theme-select">
-          <option value="default">Terminal</option>
-          <option value="light">Paper</option>
-          <option value="solarized">Solarized</option>
-          <option value="rose">Rose Pine</option>
-          <option value="nord">Nord</option>
-          <option value="gruvbox">Gruvbox</option>
-          <option value="dracula">Dracula</option>
-          <option value="monokai">Monokai</option>
-          <option value="oceanic">Oceanic</option>
-          <option value="Nebula">Nebula</option>
-          <option value="lumina">Lumina</option>
-          <option value="aurora">Aurora</option>
-        </select>
-      </div>
-    </div>
-
-    <div>
-      <div class="section-label">Font</div>
-      <div class="font-select-wrap">
-        <select id="font-select" class="font-select">
-          <option value="dm">DM Sans</option>
-          <option value="inter">Inter</option>
-          <option value="nunito">Nunito</option>
-          <option value="outfit">Outfit</option>
-          <option value="jakarta">Plus Jakarta Sans</option>
-        </select>
-      </div>
-    </div>
-
-    <button class="btn btn-apply">apply config</button>
-    <button class="btn btn-clear">clear history</button>
 
     <div class="status-dot">
       <div class="dot" id="status-dot"></div>

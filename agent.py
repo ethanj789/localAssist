@@ -14,7 +14,6 @@ from config import (
 
 log = logging.getLogger(__name__)
 
-conversation_history: list[dict] = []
 global_pending_edit = None
 global_edit_log: list[str] = []
 
@@ -47,7 +46,7 @@ def _prune_history(history: list[dict], keep_last_n_tool_results: int = 2) -> li
     return list(reversed(pruned))
 
 
-async def _maybe_summarize_history(groq_client) -> None:
+async def _maybe_summarize_history(groq_client, conversation_history: list[dict]) -> None:
     if len(conversation_history) < SUMMARIZE_THRESHOLD:
         return
 
@@ -73,6 +72,7 @@ async def _maybe_summarize_history(groq_client) -> None:
     conversation_history.append({"role": "assistant", "content": f"[Previous conversation summary]: {summary}"})
     conversation_history.extend(keep)
     log.info("history summarized | new length=%d", len(conversation_history))
+
 
 
 async def _summarize_tool_result(groq_client, tool_name: str, result: str) -> str:
@@ -101,23 +101,95 @@ async def _summarize_tool_result(groq_client, tool_name: str, result: str) -> st
         return result
 
 
-async def agent_loop(user_message: str, mcp, model_override: str = "default") -> AsyncGenerator[str, None]:
-    global global_pending_edit
+async def generate_and_save_title(conversation_id: str, first_message: str):
+    import db
     try:
+        title_prompt = (
+            "You are a conversation titler. Generate a short, descriptive 3-5 word title for the conversation that starts with the prompt below. "
+            "Do not include quotes, markdown formatting, or any extra text — just return the plain title text.\n\n"
+            f"Prompt: {first_message}"
+        )
+        title = ""
+        if CONFIG["use_groq"]:
+            from groq import AsyncGroq
+            import os
+            # Note: We use SUMMARY_MODEL which defaults to llama-3.1-8b-instant
+            groq_client = AsyncGroq(api_key=os.getenv("GROQ_API_KEY", ""))
+            response = await groq_client.chat.completions.create(
+                model=SUMMARY_MODEL,
+                messages=[
+                    {"role": "user", "content": title_prompt}
+                ],
+                max_completion_tokens=20,
+                temperature=0.5,
+            )
+            title = response.choices[0].message.content.strip()
+        else:
+            import httpx
+            async with httpx.AsyncClient(timeout=10) as client:
+                payload = {
+                    "model": CONFIG["model"],
+                    "messages": [
+                        {"role": "user", "content": title_prompt}
+                    ],
+                    "options": {
+                        "temperature": 0.5,
+                        "num_predict": 20,
+                    },
+                    "stream": False,
+                }
+                resp = await client.post(f"{CONFIG['ollama_base_url']}/api/chat", json=payload)
+                if resp.status_code == 200:
+                    title = resp.json().get("message", {}).get("content", "").strip()
+        
+        title = title.strip().strip('"').strip("'").strip()
+        if title:
+            title = title[:50]  # truncate to prevent layout issues
+            db.update_conversation_title(conversation_id, title)
+            log.info(f"Generated title for {conversation_id}: {title}")
+    except Exception as e:
+        log.error(f"Failed to generate title for {conversation_id}: {e}")
+
+
+async def agent_loop(user_message: str, mcp, model_override: str = "default", conversation_id: str = None) -> AsyncGenerator[str, None]:
+    global global_pending_edit
+    import db
+    try:
+        if conversation_id:
+            yield _sse("conversation_id", conversation_id)
         yield _sse("status", "loop started")
         clean_message = user_message.replace("<thinking>", "").replace("<coding>", "").strip()
+        
+        # Load history and save new user message
+        conversation_history = db.get_messages(conversation_id)
+        db.add_message(conversation_id, "user", clean_message)
         conversation_history.append({"role": "user", "content": clean_message})
         yield _sse("status", "history appended")
 
-        if model_override == "coding":
-            tool_model, answer_model = CONFIG["groq_model"], CODING_MODEL
-        elif model_override == "thinking":
-            tool_model, answer_model = CONFIG["groq_model"], THINKING_MODEL
-        else:
-            tool_model, answer_model = select_groq_model(user_message)
+        # Background title generation if it's currently a new chat
+        title = db.get_conversation_title(conversation_id)
+        if title == "New Chat" or not title:
+            asyncio.create_task(generate_and_save_title(conversation_id, clean_message))
 
-        if answer_model != CONFIG["groq_model"]:
-            yield _sse("model_upgrade", answer_model)
+        resolved_provider = db.resolve_conversation_provider(
+            conversation_id,
+            "groq" if CONFIG["use_groq"] else "ollama"
+        )
+        use_groq = resolved_provider == "groq"
+
+        if use_groq:
+            if model_override == "coding":
+                tool_model, answer_model = CONFIG["groq_model"], CODING_MODEL
+            elif model_override == "thinking":
+                tool_model, answer_model = CONFIG["groq_model"], THINKING_MODEL
+            else:
+                tool_model, answer_model = select_groq_model(user_message)
+
+            if answer_model != CONFIG["groq_model"]:
+                yield _sse("model_upgrade", answer_model)
+        else:
+            tool_model = CONFIG["model"]
+            answer_model = CONFIG["model"]
 
         mcp_tools = await mcp.list_tools()
         yield _sse("status", f"got {len(mcp_tools)} tools")
@@ -133,7 +205,7 @@ async def agent_loop(user_message: str, mcp, model_override: str = "default") ->
             }
             for t in mcp_tools
         ]
-        yield _sse("status", f"calling {'groq' if CONFIG['use_groq'] else 'ollama'}")
+        yield _sse("status", f"calling {resolved_provider}")
 
         search_count = 0
         email_count = 0
@@ -153,11 +225,10 @@ async def agent_loop(user_message: str, mcp, model_override: str = "default") ->
                     current_model = answer_model # i give up trying to optimize this single call.
 
                     groq_client = None
-                    if CONFIG["use_groq"]:
+                    if use_groq:
                         from groq import AsyncGroq
-                        # groq_client = AsyncGroq(api_key=CONFIG["groq_api_key"])
                         groq_client = AsyncGroq(api_key=os.getenv("GROQ_API_KEY", ""))
-                        await _maybe_summarize_history(groq_client)
+                        await _maybe_summarize_history(groq_client, conversation_history)
 
                     memory = load_memory()
                     system = CONFIG["system_prompt"] + "\n\n" + CONFIG["memory_management_prompt"]
@@ -167,21 +238,17 @@ async def agent_loop(user_message: str, mcp, model_override: str = "default") ->
                     if global_edit_log:
                         system += "\n\nEdit Log:\n" + "\n".join(global_edit_log)
 
-                    if CONFIG["use_groq"]:
+                    if use_groq:
                         try: 
                             yield _sse("model", json.dumps({
                                 "provider": "groq",
                                 "model": current_model
                             }))
 
-                            # Filter tools based on budget and pending state
                             available_tools = []
-                            
-                            # Check if the immediately preceding message is the pending edit
                             last_was_pending_edit = len(trimmed_history) > 0 and trimmed_history[-1].get("role") == "tool" and trimmed_history[-1].get("content") == "edit pending approval"
                             
                             if last_was_pending_edit:
-                                # Force prose response by stripping all tools
                                 available_tools = []
                             else:
                                 for t in ollama_tools:
@@ -227,7 +294,6 @@ async def agent_loop(user_message: str, mcp, model_override: str = "default") ->
                             "provider": "ollama",
                             "model": CONFIG["model"]
                         }))
-                        # Filter tools based on budget for Ollama as well
                         available_tools = []
                         last_was_pending_edit = len(trimmed_history) > 0 and trimmed_history[-1].get("role") == "tool" and trimmed_history[-1].get("content") == "edit pending approval"
                         
@@ -269,10 +335,10 @@ async def agent_loop(user_message: str, mcp, model_override: str = "default") ->
                         content = msg.get("content", "")
 
                     if tool_calls and content:
-                        # drop the content, keep tool call
                         content = ""
                     if not tool_calls:
                         conversation_history.append({"role": "assistant", "content": content})
+                        db.add_message(conversation_id, "assistant", content)
                         for word in content.split(" "):
                             yield _sse("token", word + " ")
                             await asyncio.sleep(0.01)
@@ -286,7 +352,7 @@ async def agent_loop(user_message: str, mcp, model_override: str = "default") ->
                         }))
                         return
 
-                    if CONFIG["use_groq"]:
+                    if use_groq:
                         tool_calls_for_history = [
                             {
                                 "id": tc.id,
@@ -302,9 +368,10 @@ async def agent_loop(user_message: str, mcp, model_override: str = "default") ->
                         tool_calls_for_history = tool_calls
 
                     conversation_history.append({"role": "assistant", "content": None, "tool_calls": tool_calls_for_history})
+                    db.add_message(conversation_id, "assistant", None, tool_calls=tool_calls_for_history)
 
                     for tc in tool_calls:
-                        if CONFIG["use_groq"]:
+                        if use_groq:
                             name = tc.function.name
                             raw_args = tc.function.arguments
                             args = json.loads(raw_args) if raw_args and raw_args != "null" else {}
@@ -317,42 +384,46 @@ async def agent_loop(user_message: str, mcp, model_override: str = "default") ->
 
                         if search_count >= max_searches and name in ("web_search", "fetch_webpage"):
                             yield _sse("status", f"Search cap ({max_searches}) reached, answering from context...")
-                            tool_call_id = tc.id if CONFIG["use_groq"] else f"call_{name}"
+                            tool_call_id = tc.id if use_groq else f"call_{name}"
                             conversation_history.append({
                                 "role": "tool",
                                 "tool_call_id": tool_call_id,
                                 "content": f"Search limit of {max_searches} reached."
                             })
+                            db.add_message(conversation_id, "tool", f"Search limit of {max_searches} reached.", tool_call_id=tool_call_id)
                             continue
 
                         if email_count >= max_emails and name == "draft_email":
                             yield _sse("status", f"Email cap ({max_emails}) reached...")
-                            tool_call_id = tc.id if CONFIG["use_groq"] else f"call_{name}"
+                            tool_call_id = tc.id if use_groq else f"call_{name}"
                             conversation_history.append({
                                 "role": "tool",
                                 "tool_call_id": tool_call_id,
                                 "content": f"Email drafting limit of {max_emails} reached. You cannot draft any more emails in this turn. Please proceed to answer the user based on the drafts already opened."
                             })
+                            db.add_message(conversation_id, "tool", f"Email drafting limit of {max_emails} reached.", tool_call_id=tool_call_id)
                             continue
 
                         if memory_count >= max_memory and name == "save_user_preference":
                             yield _sse("status", f"Memory cap ({max_memory}) reached...")
-                            tool_call_id = tc.id if CONFIG["use_groq"] else f"call_{name}"
+                            tool_call_id = tc.id if use_groq else f"call_{name}"
                             conversation_history.append({
                                 "role": "tool",
                                 "tool_call_id": tool_call_id,
                                 "content": f"Memory management limit of {max_memory} reached. No more memory edits allowed this turn. Please proceed to answer the user."
                             })
+                            db.add_message(conversation_id, "tool", f"Memory management limit of {max_memory} reached.", tool_call_id=tool_call_id)
                             continue
 
                         if tool_count >= max_tools:
                             yield _sse("status", f"Total tool cap ({max_tools}) reached...")
-                            tool_call_id = tc.id if CONFIG["use_groq"] else f"call_{name}"
+                            tool_call_id = tc.id if use_groq else f"call_{name}"
                             conversation_history.append({
                                 "role": "tool",
                                 "tool_call_id": tool_call_id,
                                 "content": f"Total tool limit of {max_tools} reached. No more tools can be called. Please proceed to answer the user with the information you already have."
                             })
+                            db.add_message(conversation_id, "tool", f"Total tool limit of {max_tools} reached.", tool_call_id=tool_call_id)
                             continue
 
                         event_payload = {"tool": name, "args": args}
@@ -384,21 +455,17 @@ async def agent_loop(user_message: str, mcp, model_override: str = "default") ->
 
                         result = await mcp.call_tool(name, args)
 
-                        # After fetch_webpage, extract metadata for the frontend card
                         if name == "fetch_webpage":
                             try:
-                                # Parse the __LINK_METADATA__ sentinel if your MCP tool emits it
                                 lines = result.split("\n")
                                 metadata_line = next((l for l in lines if l.startswith("__LINK_METADATA__:")), None)
                                 if metadata_line:
                                     metadata = json.loads(metadata_line.split(":", 1)[1])
                                     yield _sse("link_card", json.dumps(metadata))
-                                    # Strip the metadata line from what the AI sees
                                     result = "\n".join(l for l in lines if not l.startswith("__LINK_METADATA__:"))
                             except Exception:
-                                pass  # non-fatal, just skip the card
+                                pass
 
-                        # Handle action buttons
                         try:
                             lines = result.split("\n")
                             action_line = next((l for l in lines if l.strip().startswith("__ACTION_BUTTON__:")), None)
@@ -406,36 +473,31 @@ async def agent_loop(user_message: str, mcp, model_override: str = "default") ->
                                 log.debug(f"Found action button line: {action_line}")
                                 action_data = json.loads(action_line.split(":", 1)[1])
                                 yield _sse("action_button", json.dumps(action_data))
-                                # Strip the action line from what the AI sees
                                 result = "\n".join(l for l in lines if not l.strip().startswith("__ACTION_BUTTON__:"))
                         except Exception as e:
                             log.error(f"Error processing action button: {e}")
                             
-                        # Handle propose_edit interception
                         if name == "propose_edit":
                             try:
                                 parsed = json.loads(result)
                                 if parsed.get("status") == "pending_approval":
-                                    tool_call_id = tc.id if CONFIG["use_groq"] else f"call_{name}"
+                                    tool_call_id = tc.id if use_groq else f"call_{name}"
                                     global_pending_edit = {
                                         "toolCallId": tool_call_id,
                                         "path": args.get("path"),
                                         "summary": parsed.get("summary"),
                                         "old_content": parsed.get("old_content"),
                                         "new_content": parsed.get("new_content"),
-                                        "target_path": parsed.get("target_path")
+                                        "target_path": parsed.get("target_path"),
+                                        "conversation_id": conversation_id
                                     }
                                     yield _sse("propose_edit", json.dumps(global_pending_edit))
                                     result = "edit pending approval. provide a short summary of the changes."
-                                else:
-                                    # Valid JSON but not pending? (Shouldn't happen)
-                                    pass
                             except Exception:
-                                # It's not JSON, meaning it was REJECTED by validation
                                 yield _sse("status", "Edit proposed but failed validation. Agent will retry.")
-                                pass # Not JSON or rejected immediately
+                                pass
 
-                        if CONFIG["use_groq"] and groq_client and name in ("web_search", "fetch_webpage"):
+                        if use_groq and groq_client and name in ("web_search", "fetch_webpage"):
                             result = await _summarize_tool_result(groq_client, name, result)
                             yield _sse("status", f"summarized {name} result")
 
@@ -449,12 +511,13 @@ async def agent_loop(user_message: str, mcp, model_override: str = "default") ->
                         tool_count += 1
 
                         yield _sse("search_result", json.dumps({"tool": name, "count": tool_count}))
-                        tool_call_id = tc.id if CONFIG["use_groq"] else f"call_{name}"
+                        tool_call_id = tc.id if use_groq else f"call_{name}"
                         conversation_history.append({
                             "role": "tool",
                             "tool_call_id": tool_call_id,
                             "content": result
                         })
+                        db.add_message(conversation_id, "tool", result, tool_call_id=tool_call_id)
                 except groq.BadRequestError as e:
                     if hasattr(e, 'response'):
                         log.error("Groq 400 body: %s", e.response.text)
@@ -473,6 +536,7 @@ async def agent_loop(user_message: str, mcp, model_override: str = "default") ->
                         content = msg.content or ""
 
                         conversation_history.append({"role": "assistant", "content": content})
+                        db.add_message(conversation_id, "assistant", content)
                         for word in content.split(" "):
                             yield _sse("token", word + " ")
                             await asyncio.sleep(0.01)
