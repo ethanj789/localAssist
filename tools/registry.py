@@ -45,9 +45,9 @@ async def list_tools() -> list[types.Tool]:
         types.Tool(
             name="search_workspace",
             description=(
-                "Search the workspace for files. "
-                "If a query is provided, it returns both exact keyword matches and semantic conceptual matches. "
-                "If no query is provided, it simply lists all files."
+                "Search the local project workspace for code, functions, classes, configs, prompts, APIs, logic, and files. "
+                "Use this as the primary discovery tool for coding and project-related requests before web search. "
+                "Returns exact keyword matches and semantic conceptual matches."
             ),
             inputSchema={
                 "type": "object",
@@ -165,14 +165,13 @@ async def list_tools() -> list[types.Tool]:
             }
         ),
         types.Tool(
-            name="manage_memory",
+            name="save_user_preference",
             description=(
-                "Write, delete, or edit agent-managed memories. "
-                "Use 'write' to save new long-term info (max 10 slots). "
-                "Use 'delete' to remove a memory by its meaning or content. "
-                "Use 'edit' to replace a memory with new content. "
-                "Semantic search is used to find the best match for 'delete' and 'edit'."
-            ),
+                "Persistent personal memory ONLY. "
+                "Use this tool only for long-term user preferences, identity details, habits, or explicitly requested remembered information. "
+                "Examples: favorite editor, preferred coding language, recurring workflows, personal preferences. "
+                "Never use for project code, documentation, implementations, file contents, search results, temporary findings, task outputs, or general knowledge. "
+                "Do not use this tool unless the user clearly wants something remembered across conversations."            ),
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -285,7 +284,7 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
         return await _recent_events(arguments["infoType"], arguments["details"])
     elif name == "draft_email":
         return await _draft_email(arguments.get("to", ""), arguments.get("subject", ""), arguments.get("body", ""))
-    elif name == "manage_memory":
+    elif name == "save_user_preference":
         result = await _manage_memory(arguments["action"], arguments.get("content"), arguments.get("new_content"))
         return [types.TextContent(type="text", text=result)]
     elif name == "propose_edit":

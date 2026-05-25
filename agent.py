@@ -191,7 +191,7 @@ async def agent_loop(user_message: str, mcp, model_override: str = "default") ->
                                         continue
                                     if t["function"]["name"] == "draft_email" and email_count >= max_emails:
                                         continue
-                                    if t["function"]["name"] == "manage_memory" and memory_count >= max_memory:
+                                    if t["function"]["name"] == "save_user_preference" and memory_count >= max_memory:
                                         continue
                                     if global_pending_edit and t["function"]["name"] == "propose_edit":
                                         continue
@@ -241,7 +241,7 @@ async def agent_loop(user_message: str, mcp, model_override: str = "default") ->
                                     continue
                                 if t["type"] == "function" and t["function"]["name"] == "draft_email" and email_count >= max_emails:
                                     continue
-                                if t["type"] == "function" and t["function"]["name"] == "manage_memory" and memory_count >= max_memory:
+                                if t["type"] == "function" and t["function"]["name"] == "save_user_preference" and memory_count >= max_memory:
                                     continue
                                 if global_pending_edit and t["type"] == "function" and t["function"]["name"] == "propose_edit":
                                     continue
@@ -335,7 +335,7 @@ async def agent_loop(user_message: str, mcp, model_override: str = "default") ->
                             })
                             continue
 
-                        if memory_count >= max_memory and name == "manage_memory":
+                        if memory_count >= max_memory and name == "save_user_preference":
                             yield _sse("status", f"Memory cap ({max_memory}) reached...")
                             tool_call_id = tc.id if CONFIG["use_groq"] else f"call_{name}"
                             conversation_history.append({
@@ -443,7 +443,7 @@ async def agent_loop(user_message: str, mcp, model_override: str = "default") ->
                             search_count += 1
                         if name == "draft_email":
                             email_count += 1
-                        if name == "manage_memory":
+                        if name == "save_user_preference":
                             memory_count += 1
                         
                         tool_count += 1
