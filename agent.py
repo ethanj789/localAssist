@@ -365,7 +365,15 @@ async def agent_loop(user_message: str, mcp, model_override: str = "default", co
                             for tc in tool_calls
                         ]
                     else:
-                        tool_calls_for_history = tool_calls
+                        # tool_calls_for_history = tool_calls
+                        tool_calls_for_history = [
+                            {
+                                "id": f"call_{tc.get('function',{}).get('name','tool')}_{i}",
+                                "type": "function",
+                                "function": tc.get("function", {})
+                            }
+                            for i, tc in enumerate(tool_calls)
+                        ]  
 
                     conversation_history.append({"role": "assistant", "content": None, "tool_calls": tool_calls_for_history})
                     db.add_message(conversation_id, "assistant", None, tool_calls=tool_calls_for_history)

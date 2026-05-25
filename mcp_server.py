@@ -19,6 +19,8 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S",
 )
+logging.getLogger("watchfiles").setLevel(logging.WARNING)
+
 
 from mcp.server.stdio import stdio_server  # noqa: E402
 from tools.registry import app             # noqa: E402

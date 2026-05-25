@@ -30,6 +30,8 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S",
 )
+logging.getLogger("watchfiles").setLevel(logging.WARNING)
+
 
 STARTUP_TOKEN = str(uuid.uuid4())
 mcp = MCPClient(CONFIG["mcp_server_cmd"])
@@ -96,7 +98,7 @@ async def update_config(updates: dict):
 
 @app.delete("/history")
 async def clear_history():
-    db.clear_all_conversations()
+    # db.clear_all_conversations()
     agent.global_edit_log.clear()
     agent.global_pending_edit = None
     return {"status": "cleared"}
@@ -322,5 +324,6 @@ if __name__ == "__main__":
     import uvicorn
     uvicorn.run("server:app", host="0.0.0.0", port=8000, reload=True,         reload_excludes=[
             "aiWorkspace/*",     # Matches 'aiWorkspace/simpleHelper.py' 
-            "aiWorkspace/*/*"    # Matches files inside nested subfolders if any
+            "aiWorkspace/*/*",    # Matches files inside nested subfolders if any
+            "**/logs.txt",
         ])

@@ -45,7 +45,8 @@ async def _weather_simple(city: str) -> list[types.TextContent]:
 
         # Get local time to find future slots (0-23)
         # localObsDateTime looks like "2023-10-27 10:15 AM"
-        obs_time = datetime.datetime.strptime(curr["localObsDateTime"], "%Y-%m-%d %I:%M %p")
+        # obs_time = datetime.datetime.strptime(curr["localObsDateTime"], "%Y-%m-%d %I:%M %p")
+        obs_time = datetime.datetime.strptime(curr["observation_time"].strip(), "%I:%M %p")
         curr_hour = obs_time.hour
 
         def get_hourly_data(target_hour):
@@ -72,6 +73,7 @@ async def _weather_simple(city: str) -> list[types.TextContent]:
             )
         ]
     except Exception as e:
+        log.info(e)
         return [types.TextContent(type="text", text=f"Error: {e}")]
 
 
