@@ -1,4 +1,5 @@
 import os
+import gzip
 import json
 import base64
 import shutil
@@ -99,9 +100,9 @@ async def create_page(req: CreatePageRequest):
     with open(page_dir / "meta.json", "w", encoding="utf-8") as f:
         json.dump(meta, f, indent=2)
         
-    strokes = {"strokes": []}
-    with open(page_dir / "strokes.json", "w", encoding="utf-8") as f:
-        json.dump(strokes, f, indent=2)
+    strokes = {"v": 2, "strokes": []}
+    with gzip.open(page_dir / "strokes.json.gz", "wt", encoding="utf-8") as f:
+        json.dump(strokes, f, separators=(',', ':'))
         
     return {"meta": meta, "strokes": strokes}
 
@@ -116,8 +117,16 @@ async def get_page(type: str, page_id: str):
     try:
         with open(page_dir / "meta.json", "r", encoding="utf-8") as f:
             meta = json.load(f)
-        with open(page_dir / "strokes.json", "r", encoding="utf-8") as f:
-            strokes = json.load(f)
+        gz_path   = page_dir / "strokes.json.gz"
+        json_path  = page_dir / "strokes.json"
+        if gz_path.exists():
+            with gzip.open(gz_path, "rt", encoding="utf-8") as f:
+                strokes = json.load(f)
+        elif json_path.exists():
+            with open(json_path, "r", encoding="utf-8") as f:
+                strokes = json.load(f)
+        else:
+            strokes = {"v": 2, "strokes": []}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to read page data: {str(e)}")
         
@@ -139,9 +148,14 @@ async def save_page(type: str, page_id: str, req: SavePageRequest):
     with open(page_dir / "meta.json", "w", encoding="utf-8") as f:
         json.dump(req.meta.model_dump(), f, indent=2)
         
-    with open(page_dir / "strokes.json", "w", encoding="utf-8") as f:
-        json.dump(req.strokes, f, indent=2)
-        
+    with gzip.open(page_dir / "strokes.json.gz", "wt", encoding="utf-8") as f:
+        json.dump(req.strokes, f, separators=(',', ':'))
+
+    # Remove legacy plain-JSON file after successful gz write
+    legacy_json = page_dir / "strokes.json"
+    if legacy_json.exists():
+        legacy_json.unlink()
+
     if req.pageDataUrl and req.pageDataUrl.startswith("data:image/png;base64,"):
         try:
             b64_data = req.pageDataUrl.split(",")[1]

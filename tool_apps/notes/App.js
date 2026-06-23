@@ -118,9 +118,24 @@ class NotesApp {
         // Undo / Redo
         document.getElementById('undo-btn').addEventListener('click', () => this.undo());
         document.getElementById('redo-btn').addEventListener('click', () => this.redo());
+        document.getElementById('fit-content-btn').addEventListener('click', () => {
+            if (!this.currentPageId) return;
+            this.canvasManager.fitContent();
+            this.canvasManager.redraw(this.canvasManager.strokes);
+            this._scheduleSave();
+        });
         
         // Zooming
         const canvasEl = document.getElementById('drawing-canvas');
+
+        // Hijack middle click — prevent browser's autoscroll cursor
+        canvasEl.addEventListener('mousedown', (e) => {
+            if (e.button === 1) e.preventDefault();
+        });
+        canvasEl.addEventListener('auxclick', (e) => {
+            if (e.button === 1) e.preventDefault();
+        });
+
         canvasEl.addEventListener('wheel', (e) => {
             if (!this.currentPageId) return;
             e.preventDefault();
@@ -394,7 +409,20 @@ class NotesApp {
                 this.canvasManager.transform = { x: 0, y: 0, scale: 1 };
             }
             
-            this.canvasManager.redraw(data.strokes.strokes || []);
+            // Decode compact v2 format if present; fall back to v1 object format
+            let rawStrokes = data.strokes.strokes || [];
+            if (data.strokes.v === 2) {
+                rawStrokes = rawStrokes.map(stroke => ({
+                    id:    stroke.id,
+                    color: stroke.color,
+                    width: stroke.width,
+                    points: stroke.points.map(([x, y, pressure, dt]) => ({
+                        x, y, pressure, t: (stroke.t0 || 0) + (dt || 0)
+                    }))
+                }));
+            }
+            this.canvasManager.redraw(rawStrokes);
+
             this.undoStack = [];
             this.redoStack = [];
             
