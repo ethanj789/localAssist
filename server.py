@@ -65,6 +65,39 @@ app.add_middleware(
 )
 
 app.mount("/static", StaticFiles(directory="static", html=True), name="static")
+
+import importlib.util
+import json
+
+# Auto-mount tool_apps
+tool_apps_dir = Path(__file__).parent / "tool_apps"
+if tool_apps_dir.exists():
+    for manifest_file in tool_apps_dir.glob("*/manifest.json"):
+        tool_dir = manifest_file.parent
+        try:
+            with open(manifest_file, "r", encoding="utf-8") as f:
+                manifest = json.load(f)
+            
+            # Mount static directory
+            static_dir = manifest.get("static_dir", ".")
+            mount_path = manifest.get("mount_path", f"/tools/{tool_dir.name}")
+            app.mount(mount_path, StaticFiles(directory=str(tool_dir / static_dir), html=True), name=f"{tool_dir.name}_static")
+            
+            # Include API router
+            api_module_name = manifest.get("api_module")
+            if api_module_name:
+                api_prefix = manifest.get("api_prefix", f"/api/{tool_dir.name}")
+                module_path = tool_dir / f"{api_module_name}.py"
+                if module_path.exists():
+                    spec = importlib.util.spec_from_file_location(f"tool_apps.{tool_dir.name}.{api_module_name}", str(module_path))
+                    module = importlib.util.module_from_spec(spec)
+                    sys.modules[spec.name] = module
+                    spec.loader.exec_module(module)
+                    if hasattr(module, "router"):
+                        app.include_router(module.router, prefix=api_prefix, tags=[tool_dir.name])
+        except Exception as e:
+            logging.error(f"Failed to load tool app {tool_dir.name}: {e}")
+
 @app.get("/")
 def root():
     return FileResponse("static/index.html")

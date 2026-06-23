@@ -4,4 +4,4 @@ __pycache__/
 aiWorkspace/
 update.bat
 *.db
-tool_apps/*
+tool_apps/notes/data/*

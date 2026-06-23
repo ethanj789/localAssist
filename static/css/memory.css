@@ -1,5 +1,5 @@
-/* Floating Memory Button */
-.memory-btn {
+/* Floating Memory Button and App Buttons */
+.memory-btn, .app-btn {
     position: fixed;
     top: 12px;
     right: 12px;
@@ -19,6 +19,27 @@
     transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
     backdrop-filter: blur(12px);
+    text-decoration: none;
+}
+
+.top-left-apps {
+    position: fixed;
+    top: 12px;
+    left: 272px; /* 260px sidebar + 12px padding */
+    z-index: 900;
+    display: flex;
+    gap: 10px;
+}
+
+.top-left-apps .app-btn {
+    position: relative;
+    top: auto;
+    right: auto;
+    left: auto;
+    background: linear-gradient(135deg, rgba(124, 255, 182, 0.1), rgba(0, 180, 255, 0.1));
+    border: 1px solid rgba(124, 255, 182, 0.3);
+    color: var(--text);
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .memory-btn:hover {
@@ -28,7 +49,14 @@
     background: var(--bg);
 }
 
-.memory-btn .icon {
+.top-left-apps .app-btn:hover {
+    background: linear-gradient(135deg, rgba(124, 255, 182, 0.2), rgba(0, 180, 255, 0.2));
+    border-color: rgba(124, 255, 182, 0.6);
+    box-shadow: 0 0 15px rgba(124, 255, 182, 0.2), 0 8px 20px rgba(0, 0, 0, 0.3);
+    transform: translateY(-2px) scale(1.02);
+}
+
+.memory-btn .icon, .app-btn .icon {
     font-size: 18px;
 }
 
@@ -181,13 +209,19 @@
 
 /* Mobile Adjustments */
 @media (max-width: 768px) {
-    .memory-btn .label {
+    .memory-btn .label, .app-btn .label {
         display: none;
     }
-    .memory-btn {
+    .memory-btn, .app-btn {
         padding: 10px;
+    }
+    .memory-btn {
         top: 12px;
         right: 12px;
+    }
+    
+    .top-left-apps {
+        left: 68px; /* 12px padding + 44px menu toggle + 12px gap */
     }
     
     .modal-content {

@@ -1,0 +1,7 @@
+{
+  "name": "notes",
+  "static_dir": ".",
+  "mount_path": "/tools/notes",
+  "api_module": "api",
+  "api_prefix": "/api/notes"
+}

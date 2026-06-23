@@ -1,0 +1,180 @@
+:root {
+    --bg-color: #1e1e1e;
+    --panel-bg: #252526;
+    --text-color: #cccccc;
+    --accent-color: #0e639c;
+    --border-color: #3e3e42;
+    --hover-bg: #2a2d2e;
+}
+
+* {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
+
+body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    background-color: var(--bg-color);
+    color: var(--text-color);
+    height: 100vh;
+    overflow: hidden;
+}
+
+#app-container {
+    display: flex;
+    height: 100%;
+}
+
+/* Sidebar */
+#sidebar {
+    width: 250px;
+    background-color: var(--panel-bg);
+    border-right: 1px solid var(--border-color);
+    display: flex;
+    flex-direction: column;
+}
+
+.sidebar-header {
+    padding: 15px;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.sidebar-header h2 {
+    font-size: 16px;
+    margin-bottom: 10px;
+}
+
+.mode-toggle {
+    margin-bottom: 10px;
+    display: flex;
+    gap: 10px;
+    font-size: 14px;
+}
+
+.primary-btn {
+    width: 100%;
+    padding: 8px;
+    background-color: var(--accent-color);
+    color: white;
+    border: none;
+    border-radius: 3px;
+    cursor: pointer;
+}
+
+.primary-btn:hover {
+    opacity: 0.9;
+}
+
+.page-list {
+    flex: 1;
+    overflow-y: auto;
+    padding: 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.page-item.active {
+    border-color: var(--accent-color);
+}
+
+.page-item img {
+    max-width: 100%;
+    height: auto;
+    background-color: #fff; /* contrast for png */
+    border-radius: 2px;
+}
+
+.page-item .page-title {
+    font-size: 12px;
+    margin-top: 5px;
+    word-break: break-all;
+}
+
+/* Main Content */
+#main-content {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+}
+
+/* Toolbar */
+#toolbar {
+    height: 50px;
+    background-color: var(--panel-bg);
+    border-bottom: 1px solid var(--border-color);
+    display: flex;
+    align-items: center;
+    padding: 0 15px;
+    gap: 20px;
+}
+
+.tool-group {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.tool-btn, .icon-btn {
+    background: transparent;
+    border: 1px solid transparent;
+    color: var(--text-color);
+    padding: 5px 10px;
+    border-radius: 3px;
+    cursor: pointer;
+}
+
+.tool-btn:hover, .icon-btn:hover {
+    background-color: var(--hover-bg);
+}
+
+.tool-btn.active {
+    background-color: var(--hover-bg);
+    border-color: var(--border-color);
+}
+
+.spacer {
+    flex: 1;
+}
+
+#save-status {
+    font-size: 12px;
+    color: #888;
+}
+
+/* Canvas */
+#canvas-container {
+    flex: 1;
+    overflow: auto;
+    position: relative;
+    background-color: #111;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+#drawing-canvas {
+    background-color: #222;
+    box-shadow: 0 0 10px rgba(0,0,0,0.5);
+    cursor: crosshair;
+    touch-action: none;
+}
+
+#drawing-canvas.eraser-active {
+    cursor: none;
+}
+
+.page-item {
+    background-color: var(--bg-color);
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    padding: 5px;
+    cursor: pointer;
+    text-align: center;
+    transition: border-color 0.15s;
+}
+
+.page-item:hover {
+    border-color: #555;
+}

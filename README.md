@@ -47,3 +47,9 @@ You can also set env vars before starting the server:
 > and page extraction tools, with a FastAPI client running an Ollama agentic loop
 > (Gemma 4 2B). Features a streaming browser UI with live search status and
 > runtime config — fully offline, zero cloud APIs.
+
+
+## running
+
+.venv\Scripts\activate
+python server.py
