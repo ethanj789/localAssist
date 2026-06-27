@@ -122,12 +122,16 @@ class CanvasManager {
         };
     }
 
+    getToolWidth() {
+        return this.tool === 'eraser' ? this.baseWidth * 20 : this.baseWidth;
+    }
+
     startStroke(point) {
         const lp = this.getLogicalPoint(point.x, point.y);
         this.currentStroke = {
             id: 's_' + this.generateId(),
             color: this.tool === 'eraser' ? CanvasManager.BG : this.color,
-            width: this.tool === 'eraser' ? this.baseWidth * 5 : this.baseWidth,
+            width: this.getToolWidth(),
             points: [{
                 x: lp.x,
                 y: lp.y,
@@ -226,7 +230,7 @@ class CanvasManager {
                 for (const ink of inkStrokes) {
                     next.push(...CanvasManager._eraseStrokeWithEraser(ink, stroke));
                 }
-                inkStrokes = next.filter(s => s.points.length > 0 && !CanvasManager._isTinyRemnant(s));
+                inkStrokes = next.filter(s => s.points.length > 0);
             } else {
                 inkStrokes.push({
                     id: stroke.id,
@@ -242,7 +246,7 @@ class CanvasManager {
                 ...s,
                 points: CanvasManager._rdpSimplify(s.points, CanvasManager.RDP_TOLERANCE)
             }))
-            .filter(s => s.points.length > 0 && !CanvasManager._isTinyRemnant(s));
+            .filter(s => s.points.length > 0);
     }
 
     static _strokeLength(stroke) {
@@ -264,65 +268,60 @@ class CanvasManager {
     }
 
     static _eraseStrokeWithEraser(ink, eraser) {
-        if (ink.points.length === 0) return [];
+        if (!ink || ink.points.length === 0) return [];
 
         const eraserPts = eraser.points;
         const baseR = eraser.width / 2;
 
         const isErased = (x, y) => {
             for (const ep of eraserPts) {
-                const r = baseR * (ep.pressure || 0.5);
                 const dx = x - ep.x, dy = y - ep.y;
-                if (dx * dx + dy * dy <= r * r) return true;
+                if (dx * dx + dy * dy <= baseR * baseR) return true;
             }
             return false;
         };
 
-        const segmentErased = (p1, p2) => {
-            const dist = Math.hypot(p2.x - p1.x, p2.y - p1.y);
-            const steps = Math.max(1, Math.ceil(dist / 2));
-            for (let i = 0; i <= steps; i++) {
-                const t = i / steps;
-                const x = p1.x + t * (p2.x - p1.x);
-                const y = p1.y + t * (p2.y - p1.y);
-                if (isErased(x, y)) return true;
+        const samplePoints = [];
+        samplePoints.push({ ...ink.points[0] });
+
+        for (let i = 1; i < ink.points.length; i++) {
+            const prev = ink.points[i - 1];
+            const p = ink.points[i];
+            const dist = Math.hypot(p.x - prev.x, p.y - prev.y);
+            const steps = Math.max(1, Math.ceil(dist / 1.5));
+
+            for (let step = 1; step < steps; step++) {
+                const t = step / steps;
+                samplePoints.push({
+                    x: prev.x + (p.x - prev.x) * t,
+                    y: prev.y + (p.y - prev.y) * t,
+                    pressure: prev.pressure + (p.pressure - prev.pressure) * t,
+                    t: prev.t + (p.t - prev.t) * t
+                });
             }
-            return false;
-        };
+
+            samplePoints.push({ ...p });
+        }
 
         const fragments = [];
         let current = [];
 
-        for (let i = 0; i < ink.points.length; i++) {
-            const p = ink.points[i];
-            const prev = i > 0 ? ink.points[i - 1] : null;
-            const pointHit = isErased(p.x, p.y);
-            const segHit = prev && segmentErased(prev, p);
-
-            if (segHit) {
+        for (const p of samplePoints) {
+            if (isErased(p.x, p.y)) {
                 if (current.length >= 1) {
-                    const fragment = CanvasManager._cloneStrokeWithPoints(ink, current);
-                    if (!CanvasManager._isTinyRemnant(fragment)) fragments.push(fragment);
-                }
-                current = pointHit ? [] : [p];
-            } else if (pointHit) {
-                if (current.length >= 1) {
-                    const fragment = CanvasManager._cloneStrokeWithPoints(ink, current);
-                    if (!CanvasManager._isTinyRemnant(fragment)) fragments.push(fragment);
+                    fragments.push(CanvasManager._cloneStrokeWithPoints(ink, current));
                 }
                 current = [];
             } else {
                 current.push(p);
             }
-
         }
 
         if (current.length >= 1) {
-            const fragment = CanvasManager._cloneStrokeWithPoints(ink, current);
-            if (!CanvasManager._isTinyRemnant(fragment)) fragments.push(fragment);
+            fragments.push(CanvasManager._cloneStrokeWithPoints(ink, current));
         }
 
-        return fragments;
+        return fragments.filter(fragment => fragment.points.length > 0);
     }
 
     static _cloneStrokeWithPoints(stroke, points) {

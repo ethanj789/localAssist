@@ -2,14 +2,14 @@ class NotesApp {
     constructor() {
         this.canvasManager = new CanvasManager(document.getElementById('drawing-canvas'));
         this.inputSource = new PointerEventsInputSource(document.getElementById('drawing-canvas'));
-        
+
         this.undoStack = [];
         this.redoStack = [];
-        
+
         this.currentType = 'notes'; // 'notes' or 'art'
         this.currentPageId = null;
         this.currentPageMeta = null;
-        
+
         this.saveTimeout = null;
         this.isSaving = false;
         this._strokesDirty = false;
@@ -24,7 +24,7 @@ class NotesApp {
         this._bindUI();
         this._bindInput();
         this._bindEraserCursor();
-        
+
         // Initial load — try to resume last session
         this._resumeLastSession();
 
@@ -46,7 +46,9 @@ class NotesApp {
         el.style.cssText = `
             position: fixed;
             pointer-events: none;
-            border: 2px solid rgba(255,255,255,0.7);
+            border: none;
+            outline: 2px solid rgba(255,255,255,0.7);
+            outline-offset: -2px;
             border-radius: 50%;
             z-index: 9999;
             display: none;
@@ -57,41 +59,62 @@ class NotesApp {
         return el;
     }
 
+    _showEraserCursor(x, y) {
+        if (this.canvasManager.tool !== 'eraser') return;
+        this.eraserCursor.style.display = 'block';
+        this.eraserCursor.style.left = x + 'px';
+        this.eraserCursor.style.top = y + 'px';
+        const logicalDiameter = this.canvasManager.getToolWidth() * this.canvasManager.transform.scale;
+        this.eraserCursor.style.width = logicalDiameter + 'px';
+        this.eraserCursor.style.height = logicalDiameter + 'px';
+    }
+
+    _hideEraserCursor() {
+        this.eraserCursor.style.display = 'none';
+    }
+
+    _clearActiveStrokePreview() {
+        if (this.canvasManager.currentStroke) {
+            this.canvasManager.currentStroke = null;
+            this.canvasManager.redrawView();
+        }
+    }
+
     _bindEraserCursor() {
         const canvas = document.getElementById('drawing-canvas');
 
-        const updateSize = () => {
-            // Eraser logical width * 5 (matches Canvas.js), then scaled to screen
-            const logicalDiameter = this.canvasManager.baseWidth * 5 * this.canvasManager.transform.scale;
-            this.eraserCursor.style.width  = logicalDiameter + 'px';
-            this.eraserCursor.style.height = logicalDiameter + 'px';
-        };
-
         canvas.addEventListener('pointermove', (e) => {
             if (this.canvasManager.tool === 'eraser') {
-                this.eraserCursor.style.display = 'block';
-                this.eraserCursor.style.left = e.clientX + 'px';
-                this.eraserCursor.style.top  = e.clientY + 'px';
-                updateSize();
+                this._showEraserCursor(e.clientX, e.clientY);
             }
         });
 
         canvas.addEventListener('pointerleave', () => {
-            this.eraserCursor.style.display = 'none';
+            this._hideEraserCursor();
+        });
+
+        document.addEventListener('pointerup', () => {
+            this._hideEraserCursor();
+            this._clearActiveStrokePreview();
+        });
+
+        document.addEventListener('pointercancel', () => {
+            this._hideEraserCursor();
+            this._clearActiveStrokePreview();
         });
 
         // Also hide/show when tool changes
         document.querySelectorAll('.tool-btn').forEach(btn => {
             btn.addEventListener('click', () => {
                 if (btn.dataset.tool !== 'eraser') {
-                    this.eraserCursor.style.display = 'none';
+                    this._hideEraserCursor();
                 }
             });
         });
     }
 
     // ─── UI Binding ───────────────────────────────────────────────────────────
-    
+
     _bindUI() {
         // Mode toggle
         document.querySelectorAll('input[name="mode"]').forEach(radio => {
@@ -100,12 +123,12 @@ class NotesApp {
                 this.loadPagesList();
             });
         });
-        
+
         // New Page — no prompt, instant creation
         document.getElementById('new-page-btn').addEventListener('click', async () => {
             await this.createNewPage('');
         });
-        
+
         // Tool selection
         const canvas = document.getElementById('drawing-canvas');
         document.querySelectorAll('.tool-btn').forEach(btn => {
@@ -116,19 +139,19 @@ class NotesApp {
                 canvas.classList.toggle('eraser-active', btn.dataset.tool === 'eraser');
             });
         });
-        
+
         // Color & Width
         const colorPicker = document.getElementById('color-picker');
         colorPicker.addEventListener('input', (e) => {
             this.canvasManager.color = e.target.value;
             document.querySelector('.tool-btn[data-tool="pen"]').click();
         });
-        
+
         const widthPicker = document.getElementById('width-picker');
         widthPicker.addEventListener('input', (e) => {
             this.canvasManager.baseWidth = parseInt(e.target.value, 10);
         });
-        
+
         // Undo / Redo
         document.getElementById('undo-btn').addEventListener('click', () => this.undo());
         document.getElementById('redo-btn').addEventListener('click', () => this.redo());
@@ -138,7 +161,7 @@ class NotesApp {
             this.canvasManager.redrawView();
             this._scheduleSave(true);
         });
-        
+
         // Zooming
         const canvasEl = document.getElementById('drawing-canvas');
 
@@ -157,13 +180,13 @@ class NotesApp {
             const zoomSpeed = 0.001;
             const delta = -e.deltaY * zoomSpeed;
             const newScale = Math.max(0.1, Math.min(this.canvasManager.transform.scale * (1 + delta), 10));
-            
+
             const rect = canvasEl.getBoundingClientRect();
             const mouseX = e.clientX - rect.left;
             const mouseY = e.clientY - rect.top;
 
             const scaleRatio = newScale / this.canvasManager.transform.scale;
-            
+
             this.canvasManager.transform.x = mouseX - (mouseX - this.canvasManager.transform.x) * scaleRatio;
             this.canvasManager.transform.y = mouseY - (mouseY - this.canvasManager.transform.y) * scaleRatio;
             this.canvasManager.transform.scale = newScale;
@@ -178,16 +201,17 @@ class NotesApp {
             if (e.key === 'Escape') this._dismissContextMenu();
         });
     }
-    
+
     _bindInput() {
         this.inputSource.onStrokeStart((point) => {
             this._preStrokeSnapshot = this._cloneStrokes(this.canvasManager.strokes);
+            this._clearActiveStrokePreview();
             this.canvasManager.startStroke(point);
             this.redoStack = [];
             this._strokesDirty = true;
 
             if (!this.currentPageId) return;
-        
+
             if (point.button === 1) { // Middle click
                 this.isPanning = true;
                 this.lastPanPoint = { x: point.x, y: point.y };
@@ -199,13 +223,14 @@ class NotesApp {
                 this.previousTool = this.canvasManager.tool;
                 this.canvasManager.tool = 'eraser';
                 document.getElementById('drawing-canvas').classList.add('eraser-active');
+                this._showEraserCursor(point.x + this.canvasManager.canvas.getBoundingClientRect().left, point.y + this.canvasManager.canvas.getBoundingClientRect().top);
             }
 
             this.canvasManager.startStroke(point);
             this.redoStack = [];
             this._strokesDirty = true;
         });
-        
+
         this.inputSource.onStrokePoint((point) => {
             if (!this.currentPageId) return;
 
@@ -221,7 +246,7 @@ class NotesApp {
 
             this.canvasManager.addPoint(point);
         });
-        
+
         this.inputSource.onStrokeEnd((point) => {
             if (!this.currentPageId) return;
 
@@ -232,12 +257,15 @@ class NotesApp {
             }
 
             const stroke = this.canvasManager.endStroke(point);
-            
+
             if (point.button === 2) {
                 this.canvasManager.tool = this.previousTool;
                 const isEraser = this.previousTool === 'eraser';
                 document.getElementById('drawing-canvas').classList.toggle('eraser-active', isEraser);
+                this._hideEraserCursor();
             }
+
+            this._clearActiveStrokePreview();
 
             if (stroke) {
                 this.undoStack.push(this._preStrokeSnapshot);
@@ -250,7 +278,7 @@ class NotesApp {
             this._preStrokeSnapshot = null;
         });
     }
-    
+
     // ─── Undo / Redo ─────────────────────────────────────────────────────────
 
     undo() {
@@ -261,7 +289,7 @@ class NotesApp {
         this._strokesDirty = true;
         this._scheduleSave();
     }
-    
+
     redo() {
         if (this.redoStack.length === 0) return;
         const nextSnapshot = this.redoStack.pop();
@@ -270,7 +298,7 @@ class NotesApp {
         this._strokesDirty = true;
         this._scheduleSave();
     }
-    
+
     // ─── Context Menu (rename / delete) ──────────────────────────────────────
 
     _dismissContextMenu() {
@@ -364,9 +392,9 @@ class NotesApp {
             console.error('Failed to delete page', e);
         }
     }
-    
+
     // ─── API Calls ────────────────────────────────────────────────────────────
-    
+
     async loadPagesList() {
         try {
             const res = await fetch(`/api/notes/pages?type=${this.currentType}`);
@@ -376,11 +404,11 @@ class NotesApp {
             console.error("Failed to load pages", e);
         }
     }
-    
+
     renderPageList(pages) {
         const listEl = document.getElementById('page-list');
         listEl.innerHTML = '';
-        
+
         pages.forEach(page => {
             const el = document.createElement('div');
             el.className = `page-item ${this.currentPageId === page.id ? 'active' : ''}`;
@@ -397,7 +425,7 @@ class NotesApp {
             listEl.appendChild(el);
         });
     }
-    
+
     async createNewPage(title) {
         try {
             const res = await fetch(`/api/notes/pages`, {
@@ -413,23 +441,23 @@ class NotesApp {
             console.error("Failed to create page", e);
         }
     }
-    
+
     async loadPage(type, id) {
         try {
             const res = await fetch(`/api/notes/pages/${type}/${id}`);
             if (!res.ok) throw new Error("Not found");
             const data = await res.json();
-            
+
             this.currentPageId = id;
             this.currentType = type;
             this.currentPageMeta = data.meta;
-            
+
             if (data.meta.viewTransform) {
                 this.canvasManager.transform = { ...data.meta.viewTransform };
             } else {
                 this.canvasManager.transform = { x: 0, y: 0, scale: 1 };
             }
-            
+
             // Decode compact v2/v3 format if present; fall back to v1 object format
             const rawStrokes = CanvasManager.decodeStrokesData(data.strokes);
             this.canvasManager.redraw(rawStrokes);
@@ -437,10 +465,10 @@ class NotesApp {
             this.undoStack = [];
             this.redoStack = [];
             this._strokesDirty = false;
-            
+
             // Sync radio button
             document.querySelector(`input[name="mode"][value="${type}"]`).checked = true;
-            
+
             // Persist last opened page
             localStorage.setItem('notes_last_page', JSON.stringify({ type, id }));
 
@@ -472,19 +500,19 @@ class NotesApp {
             console.warn('Could not resume last session:', e);
         }
     }
-    
+
     _scheduleSave(viewOnly = false) {
         if (!this.currentPageId) return;
         document.getElementById('save-status').innerText = 'Saving...';
         if (this.saveTimeout) clearTimeout(this.saveTimeout);
         this.saveTimeout = setTimeout(() => this.saveCurrentPage(viewOnly), viewOnly ? 500 : 1000);
-    
+
         if (!viewOnly) {
             if (this.compactTimeout) clearTimeout(this.compactTimeout);
             this.compactTimeout = setTimeout(() => this._runCompaction(), 2500);
         }
     }
-    
+
     _runCompaction() {
         if (!this.currentPageId || this.canvasManager.currentStroke) return; // mid-stroke, skip for now
         if (this.canvasManager.compactIfNeeded()) {
@@ -492,7 +520,7 @@ class NotesApp {
             this._scheduleSave(); // persist the compacted result
         }
     }
-        
+
     async saveCurrentPage(viewOnly = false) {
         try {
             if (!this.currentPageId) return;
@@ -503,7 +531,7 @@ class NotesApp {
                 return;
             }
             this.isSaving = true;
-            
+
             this.currentPageMeta.viewTransform = { ...this.canvasManager.transform };
 
             if (!viewOnly) {
@@ -511,7 +539,7 @@ class NotesApp {
                 if (compacted) {
                     this.canvasManager.redraw(this.canvasManager.strokes);
                 }
-            }       
+            }
 
             const payload = {
                 meta: this.currentPageMeta,
@@ -521,7 +549,7 @@ class NotesApp {
             if (!viewOnly && this._strokesDirty) {
                 payload.pageDataUrl = this.canvasManager.getDataUrl();
             }
-            
+
             try {
                 const res = await fetch(`/api/notes/pages/${this.currentType}/${this.currentPageId}`, {
                     method: 'PUT',
