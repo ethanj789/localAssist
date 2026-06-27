@@ -12,6 +12,9 @@ class NotesApp {
         this.folders = [];
         this.currentFolderId = null;
         this.collapsedFolders = new Set();
+        this.sidebarWidth = parseInt(localStorage.getItem('notes_sidebar_width') || '250', 10);
+        this._listRequestId = 0;
+        this.isResizingSidebar = false;
 
         this.saveTimeout = null;
         this.isSaving = false;
@@ -121,10 +124,10 @@ class NotesApp {
     _bindUI() {
         // Mode toggle
         document.querySelectorAll('input[name="mode"]').forEach(radio => {
-            radio.addEventListener('change', (e) => {
+            radio.addEventListener('change', async (e) => {
                 this.currentType = e.target.value;
                 this.currentFolderId = null;
-                this.loadPagesList();
+                await this.loadPagesList();
             });
         });
 
@@ -203,11 +206,57 @@ class NotesApp {
             this._scheduleSave(true);
         }, { passive: false });
 
+        this._bindSidebarResize();
+        this._setSidebarWidth(this.sidebarWidth);
+
         // Dismiss context menu on outside click
         document.addEventListener('click', () => this._dismissContextMenu());
         document.addEventListener('keydown', (e) => {
             if (e.key === 'Escape') this._dismissContextMenu();
         });
+        document.addEventListener('dragend', () => this._clearDropHighlights());
+    }
+
+    _bindSidebarResize() {
+        const sidebar = document.getElementById('sidebar');
+        const resizer = document.getElementById('sidebar-resizer');
+        if (!sidebar || !resizer) return;
+
+        resizer.addEventListener('mousedown', (e) => {
+            e.preventDefault();
+            this.isResizingSidebar = true;
+            document.body.style.cursor = 'col-resize';
+            document.body.style.userSelect = 'none';
+
+            const onMove = (moveEvent) => {
+                if (!this.isResizingSidebar) return;
+                const nextWidth = Math.min(Math.max(moveEvent.clientX, 180), 420);
+                this._setSidebarWidth(nextWidth);
+            };
+
+            const stopResize = () => {
+                this.isResizingSidebar = false;
+                document.body.style.cursor = '';
+                document.body.style.userSelect = '';
+                document.removeEventListener('mousemove', onMove);
+                document.removeEventListener('mouseup', stopResize);
+            };
+
+            document.addEventListener('mousemove', onMove);
+            document.addEventListener('mouseup', stopResize);
+        });
+    }
+
+    _setSidebarWidth(width) {
+        const sidebar = document.getElementById('sidebar');
+        if (!sidebar) return;
+        this.sidebarWidth = Math.min(Math.max(width, 180), 420);
+        sidebar.style.width = `${this.sidebarWidth}px`;
+        localStorage.setItem('notes_sidebar_width', String(this.sidebarWidth));
+    }
+
+    _clearDropHighlights() {
+        document.querySelectorAll('.drop-target').forEach((el) => el.classList.remove('drop-target'));
     }
 
     _bindInput() {
@@ -438,14 +487,18 @@ class NotesApp {
     // ─── API Calls ────────────────────────────────────────────────────────────
 
     async loadPagesList() {
+        const requestId = ++this._listRequestId;
         try {
             const res = await fetch(`/api/notes/pages?type=${this.currentType}`);
             const data = await res.json();
+            if (requestId !== this._listRequestId) return;
             this.folders = data.folders || [];
             this.currentPages = data.pages || [];
             this.renderPageList(this.currentPages);
         } catch (e) {
-            console.error("Failed to load pages", e);
+            if (requestId === this._listRequestId) {
+                console.error("Failed to load pages", e);
+            }
         }
     }
 
@@ -593,6 +646,7 @@ class NotesApp {
     }
 
     renderPageList(pages) {
+        this._clearDropHighlights();
         const listEl = document.getElementById('page-list');
         listEl.innerHTML = '';
 

@@ -29,16 +29,36 @@ body {
 /* Sidebar */
 #sidebar {
     width: 250px;
+    min-width: 180px;
+    max-width: 420px;
     background-color: var(--panel-bg);
     border-right: 1px solid var(--border-color);
     display: flex;
     flex-direction: column;
     min-height: 0;
+    position: relative;
+    overflow: hidden;
+    flex-shrink: 0;
+}
+
+#sidebar-resizer {
+    position: absolute;
+    top: 0;
+    right: -3px;
+    width: 8px;
+    height: 100%;
+    cursor: col-resize;
+    z-index: 5;
+}
+
+#sidebar-resizer:hover {
+    background: rgba(14, 99, 156, 0.18);
 }
 
 .sidebar-header {
     padding: 15px;
     border-bottom: 1px solid var(--border-color);
+    flex-shrink: 0;
 }
 
 .sidebar-header h2 {
@@ -83,8 +103,9 @@ body {
 }
 
 .page-list {
-    flex: 1;
+    flex: 1 1 auto;
     overflow-y: auto;
+    overflow-x: hidden;
     min-height: 0;
     padding: 10px;
     display: flex;
