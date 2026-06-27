@@ -51,7 +51,7 @@ async def lifespan(app: FastAPI):
     print("[server] Loading Whisper model...")
     # Whisper already loaded above
     await asyncio.get_event_loop().run_in_executor(None, mcp.start)
-    print(f"[server] MCP client started | model={CONFIG['model']} | use_groq={CONFIG['use_groq']} | groq model={CONFIG["groq_model"]}")
+    print(f"[server] MCP client started | model={CONFIG['model']} | use_groq={CONFIG['use_groq']} | groq model={CONFIG['groq_model']}")
     yield
     await asyncio.get_event_loop().run_in_executor(None, mcp.stop)
 

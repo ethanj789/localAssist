@@ -9,7 +9,8 @@ import httpx
 import os
 from config import (
     CONFIG, MAX_HISTORY, SUMMARIZE_THRESHOLD, SUMMARIZE_KEEP_LAST,
-    CODING_MODEL, SUMMARY_MODEL, THINKING_MODEL, load_memory, select_groq_model
+    CODING_MODEL, SUMMARY_MODEL, THINKING_MODEL, load_memory, select_groq_model,
+    get_model_setting
 )
 
 log = logging.getLogger(__name__)
@@ -50,6 +51,10 @@ async def _maybe_summarize_history(groq_client, conversation_history: list[dict]
     if len(conversation_history) < SUMMARIZE_THRESHOLD:
         return
 
+    summarize_settings = get_model_setting("summarize", "default")
+    if not summarize_settings.get("enabled", True):
+        return
+
     to_summarize = conversation_history[:-SUMMARIZE_KEEP_LAST]
     keep = conversation_history[-SUMMARIZE_KEEP_LAST:]
     summarizable = [m for m in to_summarize if m["role"] in ("user", "assistant") and m.get("content")]
@@ -57,15 +62,20 @@ async def _maybe_summarize_history(groq_client, conversation_history: list[dict]
     if not summarizable:
         return
 
-    summary_response = await groq_client.chat.completions.create(
-        model=SUMMARY_MODEL,
-        messages=[
+    request_kwargs = {
+        "model": summarize_settings.get("model", SUMMARY_MODEL),
+        "messages": [
             {"role": "system", "content": "Summarize the following conversation history concisely in 3-5 sentences, preserving key facts and context."},
             {"role": "user", "content": json.dumps(summarizable)}
         ],
-        max_completion_tokens=300,
-        temperature=0.3,
-    )
+        "max_completion_tokens": summarize_settings.get("max_tokens", 300),
+        "temperature": summarize_settings.get("temperature", 0.3),
+    }
+    reasoning_effort = summarize_settings.get("reasoning_effort")
+    if isinstance(reasoning_effort, str) and reasoning_effort.strip():
+        request_kwargs["reasoning_effort"] = reasoning_effort.strip()
+
+    summary_response = await groq_client.chat.completions.create(**request_kwargs)
 
     summary = summary_response.choices[0].message.content
     conversation_history.clear()
@@ -78,10 +88,15 @@ async def _maybe_summarize_history(groq_client, conversation_history: list[dict]
 async def _summarize_tool_result(groq_client, tool_name: str, result: str) -> str:
     if len(result) < 300 or tool_name not in ("web_search", "fetch_webpage"):
         return result
+
+    compact_settings = get_model_setting("compact", "default")
+    if not compact_settings.get("enabled", True):
+        return result
+
     try:
-        summary = await groq_client.chat.completions.create(
-            model=SUMMARY_MODEL,
-            messages=[
+        request_kwargs = {
+            "model": compact_settings.get("model", SUMMARY_MODEL),
+            "messages": [
                 {"role": "system", "content": (
                     "Summarize this search result in 3-4 sentences. "
                     "Preserve ALL URLs exactly as they appear — never paraphrase or omit them. "
@@ -90,9 +105,14 @@ async def _summarize_tool_result(groq_client, tool_name: str, result: str) -> st
                 )},
                 {"role": "user", "content": result}
             ],
-            max_completion_tokens=200,
-            temperature=0.1,
-        )
+            "max_completion_tokens": compact_settings.get("max_tokens", 200),
+            "temperature": compact_settings.get("temperature", 0.1),
+        }
+        reasoning_effort = compact_settings.get("reasoning_effort")
+        if isinstance(reasoning_effort, str) and reasoning_effort.strip():
+            request_kwargs["reasoning_effort"] = reasoning_effort.strip()
+
+        summary = await groq_client.chat.completions.create(**request_kwargs)
         summarized = summary.choices[0].message.content
         log.info("summarized tool result | %s | %d→%d chars", tool_name, len(result), len(summarized))
         return summarized
@@ -113,16 +133,21 @@ async def generate_and_save_title(conversation_id: str, first_message: str):
         if CONFIG["use_groq"]:
             from groq import AsyncGroq
             import os
-            # Note: We use SUMMARY_MODEL which defaults to llama-3.1-8b-instant
+            title_settings = get_model_setting("title", "default")
             groq_client = AsyncGroq(api_key=os.getenv("GROQ_API_KEY", ""))
-            response = await groq_client.chat.completions.create(
-                model=SUMMARY_MODEL,
-                messages=[
+            request_kwargs = {
+                "model": title_settings.get("model", SUMMARY_MODEL),
+                "messages": [
                     {"role": "user", "content": title_prompt}
                 ],
-                max_completion_tokens=20,
-                temperature=0.5,
-            )
+                "max_completion_tokens": title_settings.get("max_tokens", 200),
+                "temperature": title_settings.get("temperature", 0.5),
+            }
+            reasoning_effort = title_settings.get("reasoning_effort")
+            if isinstance(reasoning_effort, str) and reasoning_effort.strip():
+                request_kwargs["reasoning_effort"] = reasoning_effort.strip()
+
+            response = await groq_client.chat.completions.create(**request_kwargs)
             title = response.choices[0].message.content.strip()
         else:
             import httpx
@@ -178,18 +203,20 @@ async def agent_loop(user_message: str, mcp, model_override: str = "default", co
         use_groq = resolved_provider == "groq"
 
         if use_groq:
+            tool_settings = get_model_setting("tool", "default")
             if model_override == "coding":
-                tool_model, answer_model = CONFIG["groq_model"], CODING_MODEL
+                tool_model, answer_model = tool_settings.get("model", CONFIG["groq_model"]), get_model_setting("coding", "answer").get("model", CODING_MODEL)
             elif model_override == "thinking":
-                tool_model, answer_model = CONFIG["groq_model"], THINKING_MODEL
+                tool_model, answer_model = tool_settings.get("model", CONFIG["groq_model"]), get_model_setting("thinking", "answer").get("model", THINKING_MODEL)
             else:
                 tool_model, answer_model = select_groq_model(user_message)
 
-            if answer_model != CONFIG["groq_model"]:
+            if answer_model != tool_model:
                 yield _sse("model_upgrade", answer_model)
         else:
-            tool_model = CONFIG["model"]
-            answer_model = CONFIG["model"]
+            default_settings = get_model_setting("default", "default")
+            tool_model = default_settings.get("model", CONFIG["model"])
+            answer_model = default_settings.get("model", CONFIG["model"])
 
         mcp_tools = await mcp.list_tools()
         yield _sse("status", f"got {len(mcp_tools)} tools")
@@ -223,6 +250,11 @@ async def agent_loop(user_message: str, mcp, model_override: str = "default", co
                     is_final_call = len(trimmed_history) > 0 and trimmed_history[-1]["role"] == "tool"
                     # current_model = answer_model if is_final_call else tool_model
                     current_model = answer_model # i give up trying to optimize this single call.
+                    current_settings = get_model_setting("answer", "default")
+                    if model_override == "coding":
+                        current_settings = get_model_setting("coding", "answer")
+                    elif model_override == "thinking":
+                        current_settings = get_model_setting("thinking", "answer")
 
                     groq_client = None
                     if use_groq:
@@ -264,16 +296,21 @@ async def agent_loop(user_message: str, mcp, model_override: str = "default", co
                                         continue
                                     available_tools.append(t)
 
-                            response = await groq_client.chat.completions.create(
-                                model=current_model,
-                                messages=[
+                            request_kwargs = {
+                                "model": current_model,
+                                "messages": [
                                     {"role": "system", "content": system},
                                     *trimmed_history,
                                 ],
-                                tools=available_tools if available_tools else [],
-                                temperature=CONFIG["temperature"],
-                                max_completion_tokens=CONFIG["max_tokens"],
-                            )
+                                "tools": available_tools if available_tools else [],
+                                "temperature": current_settings.get("temperature", CONFIG["temperature"]),
+                                "max_completion_tokens": current_settings.get("max_tokens", CONFIG["max_tokens"]),
+                            }
+                            reasoning_effort = current_settings.get("reasoning_effort")
+                            if isinstance(reasoning_effort, str) and reasoning_effort.strip():
+                                request_kwargs["reasoning_effort"] = reasoning_effort.strip()
+
+                            response = await groq_client.chat.completions.create(**request_kwargs)
                         except Exception as e:
                             if hasattr(e, 'response'):
                                 log.error("Groq 400 body: %s", e.response.text)
