@@ -123,7 +123,7 @@ class CanvasManager {
     }
 
     getToolWidth() {
-        return this.tool === 'eraser' ? this.baseWidth * 20 : this.baseWidth;
+        return this.tool === 'eraser' ? this.baseWidth * 10 : this.baseWidth;
     }
 
     startStroke(point) {
