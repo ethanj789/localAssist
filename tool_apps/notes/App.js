@@ -9,6 +9,9 @@ class NotesApp {
         this.currentType = 'notes'; // 'notes' or 'art'
         this.currentPageId = null;
         this.currentPageMeta = null;
+        this.folders = [];
+        this.currentFolderId = null;
+        this.collapsedFolders = new Set();
 
         this.saveTimeout = null;
         this.isSaving = false;
@@ -120,13 +123,18 @@ class NotesApp {
         document.querySelectorAll('input[name="mode"]').forEach(radio => {
             radio.addEventListener('change', (e) => {
                 this.currentType = e.target.value;
+                this.currentFolderId = null;
                 this.loadPagesList();
             });
         });
 
-        // New Page — no prompt, instant creation
         document.getElementById('new-page-btn').addEventListener('click', async () => {
+            this.currentFolderId = null;
             await this.createNewPage('');
+        });
+
+        document.getElementById('new-folder-btn').addEventListener('click', async () => {
+            await this.createNewFolder();
         });
 
         // Tool selection
@@ -375,6 +383,40 @@ class NotesApp {
         }
     }
 
+    async _renameFolder(folder) {
+        const newName = prompt('Rename folder:', folder.name || folder.id);
+        if (newName === null) return;
+        const name = newName.trim() || 'New folder';
+        try {
+            const res = await fetch(`/api/notes/folders/${this.currentType}/${folder.id}/rename`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name })
+            });
+            if (!res.ok) throw new Error('Rename folder failed');
+            await this.loadPagesList();
+        } catch (e) {
+            console.error('Failed to rename folder', e);
+        }
+    }
+
+    async _deleteFolder(folder) {
+        const pageCount = this._countPagesInFolder(folder.id, this.currentPages || []);
+        const childFolderCount = this.folders.filter(item => item.parentFolderId === folder.id).length;
+        if (pageCount > 0 || childFolderCount > 0) {
+            alert('Folders with files or subfolders inside cannot be deleted.');
+            return;
+        }
+        if (!confirm(`Delete folder "${folder.name || folder.id}"?`)) return;
+        try {
+            const res = await fetch(`/api/notes/folders/${this.currentType}/${folder.id}`, { method: 'DELETE' });
+            if (!res.ok) throw new Error('Delete folder failed');
+            await this.loadPagesList();
+        } catch (e) {
+            console.error('Failed to delete folder', e);
+        }
+    }
+
     async _deletePage(page) {
         if (!confirm(`Delete "${page.title || page.id}"? This cannot be undone.`)) return;
         try {
@@ -399,31 +441,225 @@ class NotesApp {
         try {
             const res = await fetch(`/api/notes/pages?type=${this.currentType}`);
             const data = await res.json();
-            this.renderPageList(data.pages);
+            this.folders = data.folders || [];
+            this.currentPages = data.pages || [];
+            this.renderPageList(this.currentPages);
         } catch (e) {
             console.error("Failed to load pages", e);
         }
+    }
+
+    _sortFolders(folders) {
+        return [...folders].sort((a, b) => (a.name || a.id).localeCompare(b.name || b.id));
+    }
+
+    _getChildFolders(parentFolderId) {
+        const normalizedParent = parentFolderId === undefined || parentFolderId === null ? null : parentFolderId;
+        return this._sortFolders(this.folders.filter(folder => (folder.parentFolderId || null) === normalizedParent));
+    }
+
+    _countPagesInFolder(folderId, pages) {
+        const directCount = pages.filter(page => page.folderId === folderId).length;
+        const childFolders = this._getChildFolders(folderId);
+        return directCount + childFolders.reduce((sum, child) => sum + this._countPagesInFolder(child.id, pages), 0);
+    }
+
+    _isFolderDescendant(folderId, possibleAncestorId) {
+        if (!folderId || !possibleAncestorId || folderId === possibleAncestorId) return false;
+        const childFolders = this._getChildFolders(folderId);
+        return childFolders.some(child => child.id === possibleAncestorId || this._isFolderDescendant(child.id, possibleAncestorId));
+    }
+
+    _createPageItem(page) {
+        const el = document.createElement('div');
+        el.className = `page-item ${this.currentPageId === page.id ? 'active' : ''}`;
+        el.draggable = true;
+        el.dataset.pageId = page.id;
+        el.innerHTML = `
+            <img src="/api/notes/pages/${page.type}/${page.id}/page.png?ts=${new Date().getTime()}" onerror="this.style.display='none'" alt="thumb">
+            <div class="page-title">${page.title || page.id}</div>
+        `;
+        el.addEventListener('click', () => this.loadPage(page.type, page.id));
+        el.addEventListener('contextmenu', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            this._showContextMenu(e.clientX, e.clientY, page);
+        });
+        el.addEventListener('dragstart', (e) => {
+            e.dataTransfer.setData('text/plain', JSON.stringify({ type: 'page', id: page.id }));
+            el.classList.add('dragging');
+        });
+        el.addEventListener('dragend', () => el.classList.remove('dragging'));
+        return el;
+    }
+
+    _renderFolderSection(folder, pages, container, depth = 0) {
+        const folderPages = pages.filter(page => page.folderId === folder.id);
+        const childFolders = this._getChildFolders(folder.id);
+        const pageCount = this._countPagesInFolder(folder.id, pages);
+        const section = document.createElement('div');
+        const depthClass = `folder-depth-${Math.min(depth, 3)}`;
+        section.className = `folder-section ${depthClass}`;
+        section.dataset.folderId = folder.id;
+        section.style.setProperty('--folder-indent', `${Math.min(depth * 10, 28)}px`);
+        section.style.marginLeft = `${Math.min(depth * 10, 28)}px`;
+        section.innerHTML = `
+            <div class="folder-header" draggable="true">
+                <span class="folder-collapse-toggle">${this.collapsedFolders.has(folder.id) ? '▶' : '▼'}</span>
+                <span class="folder-name">${this.collapsedFolders.has(folder.id) ? `(${pageCount}) ${folder.name || folder.id}` : folder.name || folder.id}</span>
+                <div class="folder-actions">
+                    <button type="button" class="folder-new-btn">New</button>
+                    <button type="button" class="folder-rename-btn">Rename</button>
+                    <button type="button" class="folder-delete-btn">Delete</button>
+                </div>
+            </div>
+            <div class="folder-body ${this.collapsedFolders.has(folder.id) ? 'is-collapsed' : ''}">
+                <div class="folder-drop-target" data-folder-id="${folder.id}"></div>
+            </div>
+        `;
+
+        const body = section.querySelector('.folder-body');
+        const header = section.querySelector('.folder-header');
+        const dropTarget = section.querySelector('.folder-drop-target');
+        const newBtn = section.querySelector('.folder-new-btn');
+        const renameBtn = section.querySelector('.folder-rename-btn');
+        const deleteBtn = section.querySelector('.folder-delete-btn');
+
+        header.addEventListener('click', (e) => {
+            if (e.target.closest('button')) return;
+            this.collapsedFolders.has(folder.id) ? this.collapsedFolders.delete(folder.id) : this.collapsedFolders.add(folder.id);
+            this.renderPageList(this.currentPages || []);
+        });
+
+        header.addEventListener('dragstart', (e) => {
+            e.dataTransfer.setData('text/plain', JSON.stringify({ type: 'folder', id: folder.id }));
+            header.classList.add('dragging');
+        });
+        header.addEventListener('dragend', () => header.classList.remove('dragging'));
+
+        folderPages.forEach(page => body.appendChild(this._createPageItem(page)));
+        childFolders.forEach(child => this._renderFolderSection(child, pages, body, depth + 1));
+
+        newBtn.addEventListener('click', async (e) => {
+            e.stopPropagation();
+            this.currentFolderId = folder.id;
+            await this.createNewPage('');
+        });
+        renameBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            this._renameFolder(folder);
+        });
+        deleteBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            this._deleteFolder(folder);
+        });
+
+        const handleDrop = async (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            const targetFolderId = folder.id;
+            dropTarget.classList.remove('drop-target');
+            section.classList.remove('drop-target');
+            try {
+                const payload = e.dataTransfer.getData('text/plain');
+                if (!payload) return;
+                const item = JSON.parse(payload);
+                if (item.type === 'page') {
+                    await this.movePageToFolder(item.id, targetFolderId);
+                } else if (item.type === 'folder' && item.id !== folder.id && !this._isFolderDescendant(item.id, folder.id)) {
+                    await this.moveFolder(item.id, targetFolderId);
+                }
+            } catch (err) {
+                console.error('Failed to drop item', err);
+            }
+        };
+
+        section.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            section.classList.add('drop-target');
+        });
+        section.addEventListener('dragleave', () => section.classList.remove('drop-target'));
+        section.addEventListener('drop', handleDrop);
+        dropTarget.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            dropTarget.classList.add('drop-target');
+        });
+        dropTarget.addEventListener('dragleave', () => dropTarget.classList.remove('drop-target'));
+        dropTarget.addEventListener('drop', handleDrop);
+
+        container.appendChild(section);
     }
 
     renderPageList(pages) {
         const listEl = document.getElementById('page-list');
         listEl.innerHTML = '';
 
-        pages.forEach(page => {
-            const el = document.createElement('div');
-            el.className = `page-item ${this.currentPageId === page.id ? 'active' : ''}`;
-            el.innerHTML = `
-                <img src="/api/notes/pages/${page.type}/${page.id}/page.png?ts=${new Date().getTime()}" onerror="this.style.display='none'" alt="thumb">
-                <div class="page-title">${page.title || page.id}</div>
-            `;
-            el.addEventListener('click', () => this.loadPage(page.type, page.id));
-            el.addEventListener('contextmenu', (e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                this._showContextMenu(e.clientX, e.clientY, page);
-            });
-            listEl.appendChild(el);
+        const unfiledPages = pages.filter(page => !page.folderId);
+        const topLevelFolders = this._getChildFolders(null);
+
+        const handleListDrop = async (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            listEl.classList.remove('drop-target');
+            try {
+                const payload = e.dataTransfer.getData('text/plain');
+                if (!payload) return;
+                const item = JSON.parse(payload);
+                if (item.type === 'page') {
+                    await this.movePageToFolder(item.id, null);
+                } else if (item.type === 'folder') {
+                    await this.moveFolder(item.id, null);
+                }
+            } catch (err) {
+                console.error('Failed to drop item on sidebar root', err);
+            }
+        };
+
+        listEl.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            listEl.classList.add('drop-target');
         });
+        listEl.addEventListener('dragleave', () => listEl.classList.remove('drop-target'));
+        listEl.addEventListener('drop', handleListDrop);
+
+        const unfiledSection = document.createElement('div');
+        unfiledSection.className = 'folder-section';
+        unfiledSection.innerHTML = `
+            <div class="folder-header"><span>Unfiled</span></div>
+            <div class="folder-body"></div>
+        `;
+        const body = unfiledSection.querySelector('.folder-body');
+        unfiledPages.forEach(page => body.appendChild(this._createPageItem(page)));
+
+        const handleDrop = async (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            try {
+                const payload = e.dataTransfer.getData('text/plain');
+                if (!payload) return;
+                const item = JSON.parse(payload);
+                if (item.type === 'page') {
+                    await this.movePageToFolder(item.id, null);
+                } else if (item.type === 'folder') {
+                    await this.moveFolder(item.id, null);
+                }
+            } catch (err) {
+                console.error('Failed to drop item on unfiled', err);
+            }
+        };
+        unfiledSection.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            unfiledSection.classList.add('drop-target');
+        });
+        unfiledSection.addEventListener('dragleave', () => unfiledSection.classList.remove('drop-target'));
+        unfiledSection.addEventListener('drop', handleDrop);
+        listEl.appendChild(unfiledSection);
+
+        topLevelFolders.forEach(folder => this._renderFolderSection(folder, pages, listEl));
     }
 
     async createNewPage(title) {
@@ -431,14 +667,58 @@ class NotesApp {
             const res = await fetch(`/api/notes/pages`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ type: this.currentType, title: title || 'Untitled' })
+                body: JSON.stringify({ type: this.currentType, title: title || 'Untitled', folderId: this.currentFolderId })
             });
             const data = await res.json();
             await this.loadPagesList();
-            // Immediately open & focus the new page
             await this.loadPage(data.meta.type, data.meta.id);
         } catch (e) {
             console.error("Failed to create page", e);
+        }
+    }
+
+    async createNewFolder() {
+        try {
+            const res = await fetch(`/api/notes/folders?type=${this.currentType}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name: 'New folder', type: this.currentType })
+            });
+            if (!res.ok) throw new Error('Create folder failed');
+            await this.loadPagesList();
+        } catch (e) {
+            console.error('Failed to create folder', e);
+        }
+    }
+
+    async movePageToFolder(pageId, folderId) {
+        try {
+            const res = await fetch(`/api/notes/pages/${this.currentType}/${pageId}/move`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ folderId })
+            });
+            if (!res.ok) throw new Error('Move failed');
+            await this.loadPagesList();
+            if (this.currentPageId === pageId) {
+                await this.loadPage(this.currentType, pageId);
+            }
+        } catch (e) {
+            console.error('Failed to move page', e);
+        }
+    }
+
+    async moveFolder(folderId, parentFolderId) {
+        try {
+            const res = await fetch(`/api/notes/folders/${this.currentType}/${folderId}/move`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ parentFolderId })
+            });
+            if (!res.ok) throw new Error('Move folder failed');
+            await this.loadPagesList();
+        } catch (e) {
+            console.error('Failed to move folder', e);
         }
     }
 
@@ -451,6 +731,7 @@ class NotesApp {
             this.currentPageId = id;
             this.currentType = type;
             this.currentPageMeta = data.meta;
+            this.currentFolderId = data.meta.folderId || null;
 
             if (data.meta.viewTransform) {
                 this.canvasManager.transform = { ...data.meta.viewTransform };

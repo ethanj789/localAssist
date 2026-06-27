@@ -1,11 +1,13 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Notes App</title>
     <link rel="stylesheet" href="index.css">
 </head>
+
 <body>
     <div id="app-container">
         <!-- Sidebar for browsing pages -->
@@ -20,7 +22,10 @@
                         <input type="radio" name="mode" value="art"> Art
                     </label>
                 </div>
-                <button id="new-page-btn" class="primary-btn">+ New Page</button>
+                <div class="sidebar-actions">
+                    <button id="new-folder-btn" class="secondary-btn">+ Folder</button>
+                    <button id="new-page-btn" class="primary-btn">+ New Page</button>
+                </div>
             </div>
             <div id="page-list" class="page-list">
                 <!-- Page thumbnails populated here -->
@@ -35,7 +40,7 @@
                     <button class="tool-btn active" data-tool="pen" title="Pen">Pen</button>
                     <button class="tool-btn" data-tool="eraser" title="Eraser">Eraser</button>
                 </div>
-                
+
                 <div class="tool-group">
                     <input type="color" id="color-picker" value="#ffffff" title="Color">
                     <input type="range" id="width-picker" min="1" max="20" value="3" title="Stroke Width">
@@ -46,9 +51,9 @@
                     <button id="redo-btn" class="icon-btn" title="Redo">Redo</button>
                     <button id="fit-content-btn" class="icon-btn" title="Fit content to view">Fit</button>
                 </div>
-                
+
                 <div class="spacer"></div>
-                
+
                 <div class="tool-group">
                     <span id="save-status">Saved</span>
                 </div>
@@ -67,4 +72,5 @@
     <script src="App.js"></script>
     <script src="index.js"></script>
 </body>
+
 </html>
