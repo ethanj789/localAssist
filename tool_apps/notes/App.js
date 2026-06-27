@@ -12,18 +12,32 @@ class NotesApp {
         
         this.saveTimeout = null;
         this.isSaving = false;
+        this._strokesDirty = false;
+        this.UNDO_LIMIT = 50;
 
         // Eraser cursor overlay
         this.eraserCursor = this._createEraserCursor();
-        
+
+        this._pendingSave = null;
+        this.compactTimeout = null;
+
         this._bindUI();
         this._bindInput();
         this._bindEraserCursor();
         
         // Initial load — try to resume last session
         this._resumeLastSession();
+
     }
 
+    _cloneStrokes(strokes) {
+        return strokes.map(s => ({
+            id: s.id,
+            color: s.color,
+            width: s.width,
+            points: s.points.map(p => ({ ...p }))
+        }));
+    }
     // ─── Eraser Cursor ────────────────────────────────────────────────────────
 
     _createEraserCursor() {
@@ -121,8 +135,8 @@ class NotesApp {
         document.getElementById('fit-content-btn').addEventListener('click', () => {
             if (!this.currentPageId) return;
             this.canvasManager.fitContent();
-            this.canvasManager.redraw(this.canvasManager.strokes);
-            this._scheduleSave();
+            this.canvasManager.redrawView();
+            this._scheduleSave(true);
         });
         
         // Zooming
@@ -154,8 +168,8 @@ class NotesApp {
             this.canvasManager.transform.y = mouseY - (mouseY - this.canvasManager.transform.y) * scaleRatio;
             this.canvasManager.transform.scale = newScale;
 
-            this.canvasManager.redraw(this.canvasManager.strokes);
-            this._scheduleSave();
+            this.canvasManager.redrawView();
+            this._scheduleSave(true);
         }, { passive: false });
 
         // Dismiss context menu on outside click
@@ -167,8 +181,13 @@ class NotesApp {
     
     _bindInput() {
         this.inputSource.onStrokeStart((point) => {
+            this._preStrokeSnapshot = this._cloneStrokes(this.canvasManager.strokes);
+            this.canvasManager.startStroke(point);
+            this.redoStack = [];
+            this._strokesDirty = true;
+
             if (!this.currentPageId) return;
-            
+        
             if (point.button === 1) { // Middle click
                 this.isPanning = true;
                 this.lastPanPoint = { x: point.x, y: point.y };
@@ -184,6 +203,7 @@ class NotesApp {
 
             this.canvasManager.startStroke(point);
             this.redoStack = [];
+            this._strokesDirty = true;
         });
         
         this.inputSource.onStrokePoint((point) => {
@@ -195,7 +215,7 @@ class NotesApp {
                 this.canvasManager.transform.x += dx;
                 this.canvasManager.transform.y += dy;
                 this.lastPanPoint = { x: point.x, y: point.y };
-                this.canvasManager.redraw(this.canvasManager.strokes);
+                this.canvasManager.redrawView();
                 return;
             }
 
@@ -207,7 +227,7 @@ class NotesApp {
 
             if (this.isPanning) {
                 this.isPanning = false;
-                this._scheduleSave();
+                this._scheduleSave(true);
                 return;
             }
 
@@ -220,9 +240,14 @@ class NotesApp {
             }
 
             if (stroke) {
-                this.undoStack.push({ type: 'add_stroke', stroke });
+                this.undoStack.push(this._preStrokeSnapshot);
+                if (this.undoStack.length > this.UNDO_LIMIT) {
+                    this.undoStack.shift();
+                }
+                this._strokesDirty = true;
                 this._scheduleSave();
             }
+            this._preStrokeSnapshot = null;
         });
     }
     
@@ -230,26 +255,22 @@ class NotesApp {
 
     undo() {
         if (this.undoStack.length === 0) return;
-        const action = this.undoStack.pop();
-        if (action.type === 'add_stroke') {
-            this.canvasManager.strokes.pop();
-            this.redoStack.push(action);
-            this.canvasManager.redraw(this.canvasManager.strokes);
-            this._scheduleSave();
-        }
+        const prevSnapshot = this.undoStack.pop();
+        this.redoStack.push(this._cloneStrokes(this.canvasManager.strokes));
+        this.canvasManager.redraw(prevSnapshot);
+        this._strokesDirty = true;
+        this._scheduleSave();
     }
     
     redo() {
         if (this.redoStack.length === 0) return;
-        const action = this.redoStack.pop();
-        if (action.type === 'add_stroke') {
-            this.canvasManager.strokes.push(action.stroke);
-            this.undoStack.push(action);
-            this.canvasManager.redraw(this.canvasManager.strokes);
-            this._scheduleSave();
-        }
+        const nextSnapshot = this.redoStack.pop();
+        this.undoStack.push(this._cloneStrokes(this.canvasManager.strokes));
+        this.canvasManager.redraw(nextSnapshot);
+        this._strokesDirty = true;
+        this._scheduleSave();
     }
-
+    
     // ─── Context Menu (rename / delete) ──────────────────────────────────────
 
     _dismissContextMenu() {
@@ -409,22 +430,13 @@ class NotesApp {
                 this.canvasManager.transform = { x: 0, y: 0, scale: 1 };
             }
             
-            // Decode compact v2 format if present; fall back to v1 object format
-            let rawStrokes = data.strokes.strokes || [];
-            if (data.strokes.v === 2) {
-                rawStrokes = rawStrokes.map(stroke => ({
-                    id:    stroke.id,
-                    color: stroke.color,
-                    width: stroke.width,
-                    points: stroke.points.map(([x, y, pressure, dt]) => ({
-                        x, y, pressure, t: (stroke.t0 || 0) + (dt || 0)
-                    }))
-                }));
-            }
+            // Decode compact v2/v3 format if present; fall back to v1 object format
+            const rawStrokes = CanvasManager.decodeStrokesData(data.strokes);
             this.canvasManager.redraw(rawStrokes);
 
             this.undoStack = [];
             this.redoStack = [];
+            this._strokesDirty = false;
             
             // Sync radio button
             document.querySelector(`input[name="mode"][value="${type}"]`).checked = true;
@@ -461,46 +473,80 @@ class NotesApp {
         }
     }
     
-    _scheduleSave() {
+    _scheduleSave(viewOnly = false) {
         if (!this.currentPageId) return;
-        
         document.getElementById('save-status').innerText = 'Saving...';
-        
-        if (this.saveTimeout) {
-            clearTimeout(this.saveTimeout);
+        if (this.saveTimeout) clearTimeout(this.saveTimeout);
+        this.saveTimeout = setTimeout(() => this.saveCurrentPage(viewOnly), viewOnly ? 500 : 1000);
+    
+        if (!viewOnly) {
+            if (this.compactTimeout) clearTimeout(this.compactTimeout);
+            this.compactTimeout = setTimeout(() => this._runCompaction(), 2500);
         }
-        
-        this.saveTimeout = setTimeout(() => {
-            this.saveCurrentPage();
-        }, 1000);
     }
     
-    async saveCurrentPage() {
-        if (!this.currentPageId || this.isSaving) return;
-        this.isSaving = true;
+    _runCompaction() {
+        if (!this.currentPageId || this.canvasManager.currentStroke) return; // mid-stroke, skip for now
+        if (this.canvasManager.compactIfNeeded()) {
+            this.canvasManager.redraw(this.canvasManager.strokes);
+            this._scheduleSave(); // persist the compacted result
+        }
+    }
         
-        this.currentPageMeta.viewTransform = { ...this.canvasManager.transform };
-        
-        const payload = {
-            meta: this.currentPageMeta,
-            strokes: this.canvasManager.getStrokesData(),
-            pageDataUrl: this.canvasManager.getDataUrl()
-        };
-        
+    async saveCurrentPage(viewOnly = false) {
         try {
-            const res = await fetch(`/api/notes/pages/${this.currentType}/${this.currentPageId}`, {
-                method: 'PUT',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(payload)
-            });
-            const data = await res.json();
-            this.currentPageMeta.updatedAt = data.updatedAt;
-            document.getElementById('save-status').innerText = 'Saved';
-        } catch (e) {
-            console.error("Failed to save", e);
-            document.getElementById('save-status').innerText = 'Save Failed';
+            if (!this.currentPageId) return;
+
+            if (this.isSaving) {
+                // remember we still need to save — a full save (viewOnly=false) always wins
+                this._pendingSave = this._pendingSave === null ? viewOnly : (this._pendingSave && viewOnly);
+                return;
+            }
+            this.isSaving = true;
+            
+            this.currentPageMeta.viewTransform = { ...this.canvasManager.transform };
+
+            if (!viewOnly) {
+                const compacted = this.canvasManager.compactIfNeeded();
+                if (compacted) {
+                    this.canvasManager.redraw(this.canvasManager.strokes);
+                }
+            }       
+
+            const payload = {
+                meta: this.currentPageMeta,
+                strokes: this.canvasManager.getStrokesData()
+            };
+
+            if (!viewOnly && this._strokesDirty) {
+                payload.pageDataUrl = this.canvasManager.getDataUrl();
+            }
+            
+            try {
+                const res = await fetch(`/api/notes/pages/${this.currentType}/${this.currentPageId}`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                const data = await res.json();
+                this.currentPageMeta.updatedAt = data.updatedAt;
+                if (!viewOnly && this._strokesDirty) {
+                    this._strokesDirty = false;
+                }
+                document.getElementById('save-status').innerText = 'Saved';
+            } catch (e) {
+                console.error("Failed to save", e);
+                document.getElementById('save-status').innerText = 'Save Failed';
+            } finally {
+                this.isSaving = false;
+            }
         } finally {
             this.isSaving = false;
+            if (this._pendingSave !== null) {
+                const next = this._pendingSave;
+                this._pendingSave = null;
+                this.saveCurrentPage(next);
+            }
         }
     }
 }

@@ -100,7 +100,7 @@ async def create_page(req: CreatePageRequest):
     with open(page_dir / "meta.json", "w", encoding="utf-8") as f:
         json.dump(meta, f, indent=2)
         
-    strokes = {"v": 2, "strokes": []}
+    strokes = {"v": 3, "strokes": []}
     with gzip.open(page_dir / "strokes.json.gz", "wt", encoding="utf-8") as f:
         json.dump(strokes, f, separators=(',', ':'))
         
@@ -126,7 +126,7 @@ async def get_page(type: str, page_id: str):
             with open(json_path, "r", encoding="utf-8") as f:
                 strokes = json.load(f)
         else:
-            strokes = {"v": 2, "strokes": []}
+            strokes = {"v": 3, "strokes": []}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to read page data: {str(e)}")
         
