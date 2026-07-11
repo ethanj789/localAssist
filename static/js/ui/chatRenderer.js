@@ -105,3 +105,54 @@ export function renderMarkdown(mdDiv, text) {
         pre.appendChild(btn);
     });
 }
+
+/**
+ * Create (or return existing) a collapsible thinking block inside msgBody.
+ * Call this once when the first thinking_token arrives; subsequent tokens
+ * are appended to the returned inner <pre> element via `thinkingBlock.contentEl`.
+ */
+export function ensureThinkingBlock(msgBody) {
+    let block = msgBody.querySelector('.thinking-block');
+    if (block) return block;
+
+    const details = document.createElement('details');
+    details.className = 'thinking-block';
+
+    const summary = document.createElement('summary');
+    summary.className = 'thinking-summary';
+    summary.textContent = '💭 thinking…';
+    details.appendChild(summary);
+
+    const pre = document.createElement('pre');
+    pre.className = 'thinking-content';
+    details.appendChild(pre);
+
+    // Insert before the md-content div so thinking appears above the answer
+    const mdContent = msgBody.querySelector('.md-content');
+    msgBody.insertBefore(details, mdContent);
+
+    details.contentEl = pre;
+    return details;
+}
+
+/**
+ * Append a line of Ollama verbose stats below the message body.
+ * @param {HTMLElement} msgBody
+ * @param {object} stats  — { tokens_per_sec, eval_count, prompt_eval_count, load_duration_ms, total_duration_ms }
+ */
+export function appendOllamaStats(msgBody, stats) {
+    const parts = [];
+    if (stats.tokens_per_sec != null)     parts.push(`${stats.tokens_per_sec} tok/s`);
+    if (stats.eval_count != null)         parts.push(`${stats.eval_count} tokens`);
+    if (stats.prompt_eval_count != null)  parts.push(`${stats.prompt_eval_count} prompt tokens`);
+    if (stats.total_duration_ms != null)  parts.push(`${(stats.total_duration_ms / 1000).toFixed(2)}s total`);
+    if (stats.load_duration_ms != null && stats.load_duration_ms > 10)
+        parts.push(`${stats.load_duration_ms}ms load`);
+
+    if (parts.length === 0) return;
+
+    const el = document.createElement('div');
+    el.className = 'ollama-stats';
+    el.textContent = parts.join(' · ');
+    msgBody.appendChild(el);
+}

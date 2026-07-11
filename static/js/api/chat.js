@@ -1,6 +1,6 @@
 import { API } from '../constants.js';
 import { escHtml, setStatus, showToast, scrollToBottom } from '../utils/dom.js';
-import { appendMsg, appendPill, renderLinkCard, renderMarkdown, renderActionButton } from '../ui/chatRenderer.js';
+import { appendMsg, appendPill, renderLinkCard, renderMarkdown, renderActionButton, ensureThinkingBlock, appendOllamaStats } from '../ui/chatRenderer.js';
 import { handleProposeEdit } from '../ui/editPanel.js';
 
 export let isStreaming = false;
@@ -103,11 +103,15 @@ export async function sendMessage(customText = null) {
         cursor,
         linkCards: [],
         actionButtons: [],
+        thinkingBlock: null,
+        ollamaStats: null,
     };
 
     const modelSelector = document.getElementById('model-selector');
     const model = modelSelector ? modelSelector.value : 'default';
 
+    const thinkEl = document.getElementById('cfg-ollama-thinking');
+    const ollamaThinking = thinkEl ? thinkEl.checked : false;
     try {
         const resp = await fetch(`${API}/chat`, {
             method: 'POST',
@@ -115,7 +119,8 @@ export async function sendMessage(customText = null) {
             body: JSON.stringify({ 
                 message: text,
                 model: model,
-                conversation_id: currentConversationId
+                conversation_id: currentConversationId,
+                ollama_thinking: ollamaThinking,
             }),
         });
 
@@ -162,6 +167,34 @@ export function handleStreamEvent(event, data, state) {
     if (event === 'token') {
         state.fullText += data;
         renderMarkdown(mdDiv, state.fullText);
+        // Once content starts flowing, collapse the thinking block
+        if (state.thinkingBlock && state.thinkingBlock.open) {
+            state.thinkingBlock.open = false;
+            const summary = state.thinkingBlock.querySelector('.thinking-summary');
+            if (summary) summary.textContent = '💭 thoughts';
+        }
+    }
+
+    if (event === 'clear_tokens') {
+        // The model emitted some content tokens then decided to call a tool instead.
+        // Wipe the streamed text so we don't show stray pre-tool content.
+        state.fullText = '';
+        mdDiv.innerHTML = '';
+    }
+
+    if (event === 'thinking_token') {
+        const aBody = aDiv.querySelector('.msg-body');
+        if (!state.thinkingBlock) {
+            state.thinkingBlock = ensureThinkingBlock(aBody);
+            state.thinkingBlock.open = true;
+        }
+        state.thinkingBlock.contentEl.textContent += data;
+        // Keep the thinking block scrolled to bottom while streaming
+        state.thinkingBlock.contentEl.scrollTop = state.thinkingBlock.contentEl.scrollHeight;
+    }
+
+    if (event === 'ollama_stats') {
+        state.ollamaStats = JSON.parse(data);
     }
 
 
@@ -240,6 +273,10 @@ export function handleStreamEvent(event, data, state) {
             meta.className = 'meta';
             meta.textContent = stats.join(', ') + ' used';
             aBody.appendChild(meta);
+        }
+
+        if (state.ollamaStats) {
+            appendOllamaStats(aBody, state.ollamaStats);
         }
 
         if (state.linkCards.length > 0) {

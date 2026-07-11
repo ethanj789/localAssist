@@ -15,6 +15,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from config import CONFIG, get_raw_memory, save_memory
+import llm_provider
 from mcp_client import MCPClient
 import agent
 from agent import agent_loop
@@ -51,7 +52,7 @@ async def lifespan(app: FastAPI):
     print("[server] Loading Whisper model...")
     # Whisper already loaded above
     await asyncio.get_event_loop().run_in_executor(None, mcp.start)
-    print(f"[server] MCP client started | model={CONFIG['model']} | use_groq={CONFIG['use_groq']} | groq model={CONFIG['groq_model']}")
+    print(f"[server] MCP client started | model={CONFIG['model']} | use_provider={CONFIG.get('use_provider')} | cloud model={CONFIG.get('groq_model')}")
     yield
     await asyncio.get_event_loop().run_in_executor(None, mcp.stop)
 
@@ -106,6 +107,7 @@ class ChatRequest(BaseModel):
     message: str
     model: str = "default"
     conversation_id: str | None = None
+    ollama_thinking: bool = False
 
 
 class VoiceChatResponse(BaseModel):
@@ -117,16 +119,28 @@ class VoiceChatResponse(BaseModel):
 
 @app.get("/config")
 async def get_config():
-    return {k: v for k, v in CONFIG.items() if k != "mcp_server_cmd"}
+    exposed = {k: v for k, v in CONFIG.items() if k != "mcp_server_cmd"}
+    # Expose groq_model under the friendlier cloud_model key for the frontend
+    exposed["cloud_model"] = exposed.get("groq_model", "")
+    return exposed
 
 
 @app.post("/config")
 async def update_config(updates: dict):
-    allowed = {"model", "max_searches", "max_tokens", "temperature", "system_prompt", "use_groq", "groq_model"}
+    allowed = {"model", "max_searches", "max_tokens", "temperature", "use_provider", "use_external_provider", "cloud_model"}
     for k, v in updates.items():
-        if k in allowed:
+        if k not in allowed:
+            continue
+        if k == "use_provider":
+            provider = str(v).strip().lower() if isinstance(v, str) else ""
+            CONFIG["use_provider"] = provider if provider in {"groq", "openrouter", "ollama"} else "ollama"
+            CONFIG["use_external_provider"] = CONFIG["use_provider"] in {"groq", "openrouter"}
+        elif k == "cloud_model":
+            # Frontend sends cloud_model; store it under the internal groq_model key
+            CONFIG["groq_model"] = v
+        else:
             CONFIG[k] = v
-    return {"status": "ok", "config": {k: CONFIG[k] for k in allowed}}
+    return {"status": "ok", "config": {k: CONFIG[k] for k in ("model", "max_searches", "max_tokens", "temperature", "use_provider", "use_external_provider", "groq_model") if k in CONFIG}}
 
 
 @app.delete("/history")
@@ -190,12 +204,12 @@ async def resolve_edit(req: ResolveEditRequest):
 
 @app.post("/chat")
 async def chat(req: ChatRequest):
-    current_provider = "groq" if CONFIG["use_groq"] else "ollama"
+    current_provider = llm_provider.get_effective_provider(CONFIG)
     conv_id = req.conversation_id
     if not conv_id:
         conv_id = db.create_conversation(provider=current_provider)
     return StreamingResponse(
-        agent_loop(req.message, mcp, model_override=req.model, conversation_id=conv_id),
+        agent_loop(req.message, mcp, model_override=req.model, conversation_id=conv_id, ollama_thinking=req.ollama_thinking),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )

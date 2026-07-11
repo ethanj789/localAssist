@@ -34,11 +34,20 @@
       </div>
     </div>
 
-    <!-- Main Groq Toggle (Quick Access) -->
+    <!-- Main Cloud Toggle (Quick Access) -->
     <div class="main-toggle-row">
-      <label class="toggle-row-label">use groq</label>
+      <label class="toggle-row-label">use cloud</label>
       <label class="toggle">
-        <input id="cfg-use-groq" type="checkbox">
+        <input id="cfg-use-cloud" type="checkbox">
+        <span class="toggle-slider"></span>
+      </label>
+    </div>
+
+    <!-- Ollama thinking toggle — only visible when cloud is OFF -->
+    <div class="main-toggle-row" id="ollama-thinking-row" style="display: none;">
+      <label class="toggle-row-label" for="cfg-ollama-thinking">ollama thinking</label>
+      <label class="toggle">
+        <input id="cfg-ollama-thinking" type="checkbox">
         <span class="toggle-slider"></span>
       </label>
     </div>
@@ -60,8 +69,8 @@
               <input id="cfg-model" type="text" placeholder="gemma4:e2b">
             </div>
             <div class="config-row">
-              <label>groq model</label>
-              <input id="cfg-groq-model" type="text" placeholder="openai/gpt-oss-20b">
+              <label>cloud model</label>
+              <input id="cfg-cloud-model" type="text" placeholder="openai/gpt-oss-20b">
             </div>
           </div>
         </div>

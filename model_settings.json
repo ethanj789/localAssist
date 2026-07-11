@@ -9,6 +9,7 @@
     "tool": {
         "provider": "groq",
         "model": "openai/gpt-oss-20b",
+        "openrouter_model": "openai/gpt-oss-120b:free",
         "temperature": 0.7,
         "max_tokens": 5000,
         "enabled": true
@@ -16,6 +17,7 @@
     "answer": {
         "provider": "groq",
         "model": "openai/gpt-oss-20b",
+        "openrouter_model": "openai/gpt-oss-120b:free",
         "temperature": 0.7,
         "max_tokens": 5000,
         "enabled": true
@@ -23,6 +25,7 @@
     "coding": {
         "provider": "groq",
         "model": "qwen/qwen3.6-27b",
+        "openrouter_model": "qwen/qwen3-coder:free",
         "temperature": 0.7,
         "max_tokens": 5000,
         "enabled": true
@@ -30,6 +33,7 @@
     "thinking": {
         "provider": "groq",
         "model": "openai/gpt-oss-120b",
+        "openrouter_model": "openai/gpt-oss-120b:free",
         "temperature": 0.7,
         "max_tokens": 5000,
         "enabled": true
@@ -37,20 +41,23 @@
     "summarize": {
         "provider": "groq",
         "model": "openai/gpt-oss-20b",
+        "openrouter_model": "openai/gpt-oss-120b:free",
         "temperature": 0.3,
-        "max_tokens": 300,
+        "max_tokens": 3000,
         "enabled": true
     },
     "compact": {
         "provider": "groq",
         "model": "openai/gpt-oss-120b",
+        "openrouter_model": "openai/gpt-oss-120b:free",
         "temperature": 0.1,
-        "max_tokens": 200,
+        "max_tokens": 2000,
         "enabled": true
     },
     "title": {
         "provider": "groq",
         "model": "openai/gpt-oss-20b",
+        "openrouter_model": "openai/gpt-oss-120b:free",
         "temperature": 0.5,
         "max_tokens": 150,
         "enabled": true,

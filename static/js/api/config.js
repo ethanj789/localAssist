@@ -1,7 +1,12 @@
 import { API } from '../constants.js';
 import { setStatus, showToast, setInputDisplay } from '../utils/dom.js';
 
-export let currentUseGroq = false;
+export let currentUseProvider = 'ollama';
+
+function syncThinkingRowVisibility(isCloud) {
+    const row = document.getElementById('ollama-thinking-row');
+    if (row) row.style.display = isCloud ? 'none' : 'flex';
+}
 
 export async function loadConfig() {
     try {
@@ -22,28 +27,41 @@ export async function loadConfig() {
 
         setStatus(true, 'connected');
 
-        const groqModelEl = document.getElementById('cfg-groq-model');
-        if (cfg.groq_model && groqModelEl) groqModelEl.value = cfg.groq_model;
+        const cloudModelEl = document.getElementById('cfg-cloud-model');
+        if (cloudModelEl) cloudModelEl.value = cfg.cloud_model || cfg.groq_model || 'openai/gpt-oss-20b';
 
-        const useGroqEl = document.getElementById('cfg-use-groq');
-        if (useGroqEl) useGroqEl.checked = cfg.use_groq || false;
+        const isCloud = (cfg.use_provider || (cfg.use_external_provider ? 'openrouter' : 'ollama')) !== 'ollama';
+        const useCloudEl = document.getElementById('cfg-use-cloud');
+        if (useCloudEl) useCloudEl.checked = isCloud;
 
-        currentUseGroq = cfg.use_groq || false;
+        currentUseProvider = cfg.use_provider || (cfg.use_external_provider ? 'openrouter' : 'ollama');
+
+        syncThinkingRowVisibility(isCloud);
+
+        // Wire the cloud toggle to show/hide the thinking row live (no apply needed)
+        if (useCloudEl && !useCloudEl._thinkingListenerBound) {
+            useCloudEl._thinkingListenerBound = true;
+            useCloudEl.addEventListener('change', () => {
+                syncThinkingRowVisibility(useCloudEl.checked);
+            });
+        }
     } catch (err) {
         setStatus(false, 'server offline');
     }
 }
 
 export async function applyConfig() {
+    const useCloud = document.getElementById('cfg-use-cloud').checked;
     const updates = {
         model: document.getElementById('cfg-model').value.trim(),
         max_searches: parseInt(document.getElementById('cfg-max-searches').value, 10),
         system_prompt: document.getElementById('cfg-system-prompt').value.trim(),
-        use_groq: document.getElementById('cfg-use-groq').checked,
-        groq_model: document.getElementById('cfg-groq-model').value.trim(),
+        use_provider: useCloud ? 'openrouter' : 'ollama',
+        use_external_provider: useCloud,
+        cloud_model: document.getElementById('cfg-cloud-model').value.trim(),
     };
 
-    const groqChanged = updates.use_groq !== currentUseGroq;
+    const providerChanged = updates.use_provider !== currentUseProvider;
 
     try {
         const r = await fetch(`${API}/config`, {
@@ -53,14 +71,14 @@ export async function applyConfig() {
         });
         if (!r.ok) throw new Error('failed to apply config');
 
-        if (groqChanged) {
+        if (providerChanged) {
             await fetch(`${API}/history`, { method: 'DELETE' });
             document.getElementById('messages').innerHTML = '';
             showToast('config applied — history cleared (backend switched)');
         } else {
             showToast('config applied');
         }
-        currentUseGroq = updates.use_groq;
+        currentUseProvider = updates.use_provider;
     } catch (err) {
         showToast('failed to apply config');
     }

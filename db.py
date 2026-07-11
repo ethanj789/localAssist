@@ -79,21 +79,27 @@ def infer_provider_from_messages(messages: list[dict]) -> str | None:
     return None
 
 
+# def resolve_conversation_provider(conversation_id: str, fallback_provider: str) -> str:
+#     conv = get_conversation(conversation_id)
+#     if not conv:
+#         return fallback_provider
+
+#     stored_provider = conv.get("provider")
+#     if stored_provider:
+#         return stored_provider
+
+#     inferred_provider = infer_provider_from_messages(get_messages(conversation_id))
+#     if not inferred_provider:
+#         inferred_provider = fallback_provider
+
+#     update_conversation_provider(conversation_id, inferred_provider)
+#     return inferred_provider
 def resolve_conversation_provider(conversation_id: str, fallback_provider: str) -> str:
     conv = get_conversation(conversation_id)
     if not conv:
         return fallback_provider
 
-    stored_provider = conv.get("provider")
-    if stored_provider:
-        return stored_provider
-
-    inferred_provider = infer_provider_from_messages(get_messages(conversation_id))
-    if not inferred_provider:
-        inferred_provider = fallback_provider
-
-    update_conversation_provider(conversation_id, inferred_provider)
-    return inferred_provider
+    return conv.get("provider") or fallback_provider
 
 
 def get_conversation_title(conversation_id: str) -> str | None:

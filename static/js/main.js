@@ -107,6 +107,9 @@ function bindButtons() {
     const newChatBtn = document.getElementById('new-chat-btn');
     if (newChatBtn) newChatBtn.addEventListener('click', startNewChat);
 
+    // Ollama think toggle — now lives as a sidebar checkbox (#cfg-ollama-thinking)
+    // Visibility is managed by config.js syncThinkingRowVisibility()
+
     const menuToggle = document.querySelector('.menu-toggle');
     const aside = document.querySelector('aside');
     const overlay = document.getElementById('sidebar-overlay');

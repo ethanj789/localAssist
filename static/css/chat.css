@@ -453,3 +453,72 @@ pre:hover .copy-btn {
     height: 16px;
     color: var(--accent);
 }
+
+/* ── Ollama thinking block ── */
+.thinking-block {
+    margin-bottom: 10px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--surface);
+    overflow: hidden;
+}
+
+.thinking-summary {
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 0.08em;
+    color: var(--muted);
+    padding: 6px 10px;
+    cursor: pointer;
+    user-select: none;
+    list-style: none;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    transition: color 0.15s;
+}
+
+.thinking-summary::-webkit-details-marker { display: none; }
+
+.thinking-summary::before {
+    content: '▸';
+    font-size: 9px;
+    transition: transform 0.15s;
+}
+
+details.thinking-block[open] .thinking-summary::before {
+    transform: rotate(90deg);
+}
+
+.thinking-block[open] .thinking-summary {
+    color: var(--accent);
+    border-bottom: 1px solid var(--border);
+}
+
+.thinking-content {
+    font-family: var(--mono);
+    font-size: 11px;
+    line-height: 1.6;
+    color: var(--muted);
+    padding: 10px 12px;
+    margin: 0;
+    white-space: pre-wrap;
+    word-break: break-word;
+    max-height: 260px;
+    overflow-y: auto;
+    background: transparent;
+    border: none;
+}
+
+.thinking-content::-webkit-scrollbar { width: 3px; }
+.thinking-content::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+/* ── Ollama verbose stats line ── */
+.ollama-stats {
+    font-family: var(--mono);
+    font-size: 9px;
+    color: var(--muted);
+    letter-spacing: 0.05em;
+    margin-top: 4px;
+    opacity: 0.7;
+}
