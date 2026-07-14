@@ -55,3 +55,10 @@ TITLE_GENERATION_PROMPT_TEMPLATE = (
     "Do not include quotes, markdown formatting, or any extra text — just return the plain title text.\n\n"
     "Prompt: {first_message}"
 )
+
+OCR_PROMPT = (
+    "Extract all text exactly as written. "
+    "Preserve line breaks. "
+    "Output plain text only. "
+    "Do not add commentary."
+)

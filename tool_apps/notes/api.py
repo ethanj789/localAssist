@@ -1,13 +1,27 @@
+import asyncio
 import gzip
 import json
 import base64
+import logging
 import shutil
 import re
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
-from typing import List, Optional
+from typing import Any, List, Optional
+
+log = logging.getLogger(__name__)
+
+# ── OCR background task state ─────────────────────────────────────────────────
+
+OCR_DEBOUNCE_SECS: float = 30.0
+_ocr_tasks: dict[str, asyncio.Task] = {}
+_ocr_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="ocr")
+
+OUTPUT_DIR = Path(__file__).resolve().parent.parent.parent / "aiWorkspace" / "notesAppText"
+OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 
 class RenamePageRequest(BaseModel):
@@ -35,6 +49,146 @@ router = APIRouter()
 
 # Anchor the path to localAssist/tool_apps/notes/data
 WORKSPACE_DIR = Path(__file__).parent / "data"
+
+
+def _ocr_output_slug(title: str, page_id: str) -> str:
+    """Return the notesAppText subdirectory slug for a given title."""
+    t = (title or "").strip()
+    if t and t.lower() != "untitled":
+        return _slugify(t)
+    return _slugify(page_id)
+
+
+def _rename_ocr_dir(page_id: str, old_title: str, new_title: str) -> None:
+    """Move the notesAppText output directory when a page is renamed."""
+    old_slug = _ocr_output_slug(old_title, page_id)
+    new_slug = _ocr_output_slug(new_title, page_id)
+    if old_slug == new_slug:
+        return
+    old_dir = OUTPUT_DIR / old_slug
+    new_dir = OUTPUT_DIR / new_slug
+    if old_dir.exists() and not new_dir.exists():
+        try:
+            old_dir.rename(new_dir)
+            # Update the .page_meta.json sidecar so scan_note_blobs still finds page_id
+            sidecar = new_dir / ".page_meta.json"
+            sidecar.write_text(json.dumps({"page_id": page_id}), encoding="utf-8")
+            log.info("OCR dir renamed: %s → %s", old_slug, new_slug)
+        except Exception as exc:
+            log.warning("Failed to rename OCR dir %s → %s: %s", old_slug, new_slug, exc)
+
+
+# ── OCR helpers ───────────────────────────────────────────────────────────────
+
+def _decode_strokes_for_ocr(strokes_data: dict) -> list[dict]:
+    """
+    Expand the v3 compact stroke format [{id, points: [x,y,p], color, ...}]
+    into the fuller {x, y, pressure} dict form that ocr_pipeline expects.
+    Handles both dict-point and [x,y,p]-list-point formats defensively.
+    """
+    result: list[dict] = []
+    for stroke in strokes_data.get("strokes", []):
+        expanded_points: list[dict] = []
+        for p in stroke.get("points", []):
+            if isinstance(p, dict):
+                expanded_points.append({
+                    "x": float(p.get("x", 0)),
+                    "y": float(p.get("y", 0)),
+                    "pressure": float(p.get("pressure", p.get("p", 0.5))),
+                })
+            elif isinstance(p, (list, tuple)) and len(p) >= 2:
+                expanded_points.append({
+                    "x": float(p[0]),
+                    "y": float(p[1]),
+                    "pressure": float(p[2]) if len(p) > 2 else 0.5,
+                })
+        result.append({**stroke, "points": expanded_points})
+    return result
+
+
+def backfill_ocr_for_existing_pages() -> None:
+    """
+    Synchronous backfill — called once at startup (in a thread-pool executor)
+    to OCR any page whose notesAppText directory doesn't exist yet or is empty.
+
+    Reads strokes.json.gz directly; no save required from the user.
+    Processes both 'notes' and 'art' page types.
+    """
+    from tool_apps.notes.ocr_pipeline import process_page
+
+    for type_dir in ("notes", "art"):
+        base = WORKSPACE_DIR / type_dir
+        if not base.exists():
+            continue
+        for page_dir in sorted(base.iterdir()):
+            if not page_dir.is_dir() or page_dir.name in ("__pycache__", "folders.json"):
+                continue
+            page_id = page_dir.name
+
+            # Skip if output dir already has .txt files (already OCR'd)
+            out_dir = OUTPUT_DIR / page_id
+            if out_dir.exists() and any(out_dir.glob("*.txt")):
+                continue
+
+            gz_path = page_dir / "strokes.json.gz"
+            json_path = page_dir / "strokes.json"
+            try:
+                if gz_path.exists():
+                    with gzip.open(gz_path, "rt", encoding="utf-8") as f:
+                        strokes_data = json.load(f)
+                elif json_path.exists():
+                    with open(json_path, "r", encoding="utf-8") as f:
+                        strokes_data = json.load(f)
+                else:
+                    continue
+
+                strokes = _decode_strokes_for_ocr(strokes_data)
+                if not strokes:
+                    continue
+
+                log.info("OCR backfill: processing page %s", page_id)
+                process_page(page_id, strokes, OUTPUT_DIR)
+
+            except Exception as exc:
+                log.error("OCR backfill failed for page %s: %s", page_id, exc)
+
+
+async def _schedule_ocr(page_id: str, strokes_data: dict) -> None:
+    """
+    Cancel any pending OCR task for this page and schedule a new one with
+    OCR_DEBOUNCE_SECS of delay.  The actual OCR runs in the thread-pool
+    executor so it never blocks the event loop.
+    """
+    # Cancel existing debounce task for this page if one is pending
+    existing = _ocr_tasks.get(page_id)
+    if existing is not None and not existing.done():
+        existing.cancel()
+        _ocr_tasks.pop(page_id, None)
+
+    async def _run() -> None:
+        try:
+            await asyncio.sleep(OCR_DEBOUNCE_SECS)
+            strokes = _decode_strokes_for_ocr(strokes_data)
+            loop = asyncio.get_running_loop()
+            from tool_apps.notes.ocr_pipeline import process_page
+            await loop.run_in_executor(
+                _ocr_executor,
+                process_page,
+                page_id,
+                strokes,
+                OUTPUT_DIR,
+            )
+            log.info("OCR complete for page %s", page_id)
+        except asyncio.CancelledError:
+            log.debug("OCR task cancelled for page %s (superseded by newer save)", page_id)
+        except Exception as exc:
+            log.error("OCR failed for page %s: %s", page_id, exc)
+        finally:
+            _ocr_tasks.pop(page_id, None)
+
+    loop = asyncio.get_running_loop()
+    task = loop.create_task(_run())
+    _ocr_tasks[page_id] = task
 
 
 class CreatePageRequest(BaseModel):
@@ -249,6 +403,11 @@ async def save_page(type: str, page_id: str, req: SavePageRequest):
         except Exception as e:
             print(f"Failed to save page.png: {e}")
 
+    # Schedule background OCR for any save that has strokes (debounced 30s).
+    # We don't require pageDataUrl — the strokes dict is all the pipeline needs.
+    if req.strokes.get("strokes"):
+        await _schedule_ocr(page_id, req.strokes)
+
     return {"status": "ok", "updatedAt": now}
 
 
@@ -264,11 +423,16 @@ async def rename_page(type: str, page_id: str, req: RenamePageRequest):
     try:
         with open(meta_path, "r", encoding="utf-8") as f:
             meta = json.load(f)
+        old_title = meta.get("title", "")
         meta["title"] = _normalize_title(req.title, "Untitled")
         now = datetime.now(timezone.utc).isoformat() + "Z"
         meta["updatedAt"] = now.replace("+00:00Z", "Z")
         with open(meta_path, "w", encoding="utf-8") as f:
             json.dump(meta, f, indent=2)
+
+        # Rename the notesAppText output directory to match the new title slug
+        _rename_ocr_dir(page_id, old_title, meta["title"])
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to rename page: {str(e)}")
 

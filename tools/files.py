@@ -21,7 +21,8 @@ MAX_SCAN_BYTES = 1_000_000
 
 SKIP_DIRS = {
     "node_modules", ".git", "venv", ".venv", "__pycache__",
-    "dist", "build", ".mypy_cache", ".pytest_cache", ".index", ".stfolder", "aiNotes"
+    "dist", "build", ".mypy_cache", ".pytest_cache", ".index", ".stfolder", "aiNotes",
+    "notesAppText",  # OCR output — indexed via note_blobs table, not file_chunks
 }
 
 SCANNABLE_EXTENSIONS = {
@@ -405,6 +406,135 @@ def _get_generic_skeleton(source_code: str, file_path: str) -> str:
 
     return "\n".join(skeleton)
 
+_CHUNK_TARGET_LINES = 30   # soft target for paragraph windows
+_CHUNK_MAX_LINES    = 60   # hard ceiling before we force a split
+
+
+def _chunk_markdown(source: str, path: str) -> list[dict]:
+    """
+    Split a markdown file on heading boundaries (# / ## / ### …).
+    Each section from one heading to the next becomes one chunk.
+    A leading block before the first heading gets its own chunk too.
+    """
+    lines = source.splitlines()
+    chunks: list[dict] = []
+    section_start = 0
+    section_title = "preamble"
+
+    def _flush(start: int, end: int, title: str, idx: int) -> None:
+        block = lines[start:end]
+        text = "\n".join(block).strip()
+        if not text:
+            return
+        slug = title.replace(" ", "_")[:40]
+        chunks.append({
+            "id": f"{path}::{idx}_{slug}",
+            "file": path,
+            "type": "section",
+            "start_line": start + 1,
+            "count": end - start,
+            "code": text,
+        })
+
+    for i, line in enumerate(lines):
+        if line.startswith("#") and i > section_start:
+            _flush(section_start, i, section_title, len(chunks))
+            section_start = i
+            section_title = line.lstrip("#").strip() or f"section_{i}"
+
+    _flush(section_start, len(lines), section_title, len(chunks))
+    return chunks
+
+
+def _chunk_paragraphs(source: str, path: str) -> list[dict]:
+    """
+    Split plain-text / HTML on blank lines, then merge small paragraphs into
+    windows of up to _CHUNK_TARGET_LINES lines so we don't index tiny stubs.
+    """
+    lines = source.splitlines()
+    # Collect paragraph spans [start, end) (0-indexed)
+    paragraphs: list[tuple[int, int]] = []
+    start = 0
+    in_para = False
+
+    for i, line in enumerate(lines):
+        if line.strip():
+            if not in_para:
+                start = i
+                in_para = True
+        else:
+            if in_para:
+                paragraphs.append((start, i))
+                in_para = False
+    if in_para:
+        paragraphs.append((start, len(lines)))
+
+    if not paragraphs:
+        return [{
+            "id": path,
+            "file": path,
+            "type": "file",
+            "start_line": 1,
+            "count": len(lines),
+            "code": source.strip(),
+        }]
+
+    chunks: list[dict] = []
+    window_start, window_end = paragraphs[0]
+
+    for para_start, para_end in paragraphs[1:]:
+        current_size = window_end - window_start
+        next_size = para_end - para_start
+
+        if current_size + next_size <= _CHUNK_TARGET_LINES:
+            # Merge into current window
+            window_end = para_end
+        else:
+            # Flush current window
+            text = "\n".join(lines[window_start:window_end]).strip()
+            if text:
+                chunks.append({
+                    "id": f"{path}::{len(chunks)}",
+                    "file": path,
+                    "type": "passage",
+                    "start_line": window_start + 1,
+                    "count": window_end - window_start,
+                    "code": text,
+                })
+            # If next paragraph alone exceeds max, split it into fixed windows
+            if next_size > _CHUNK_MAX_LINES:
+                for off in range(para_start, para_end, _CHUNK_TARGET_LINES):
+                    chunk_end = min(off + _CHUNK_TARGET_LINES, para_end)
+                    text = "\n".join(lines[off:chunk_end]).strip()
+                    if text:
+                        chunks.append({
+                            "id": f"{path}::{len(chunks)}",
+                            "file": path,
+                            "type": "passage",
+                            "start_line": off + 1,
+                            "count": chunk_end - off,
+                            "code": text,
+                        })
+                window_start, window_end = para_end, para_end
+            else:
+                window_start, window_end = para_start, para_end
+
+    # Flush remaining window
+    if window_start < window_end:
+        text = "\n".join(lines[window_start:window_end]).strip()
+        if text:
+            chunks.append({
+                "id": f"{path}::{len(chunks)}",
+                "file": path,
+                "type": "passage",
+                "start_line": window_start + 1,
+                "count": window_end - window_start,
+                "code": text,
+            })
+
+    return chunks
+
+
 def get_file_chunks(path: str) -> list[dict]:
     """Extract chunks for a file, applying all security and filtering guards."""
     raw = WORKSPACE_ROOT / path
@@ -476,11 +606,15 @@ def get_file_chunks(path: str) -> list[dict]:
                     "count": s["end_line"] - s["start_line"] + 1,
                     "code": code
                 })
+    elif ext == ".md":
+        chunks = _chunk_markdown(source, path)
+    elif ext in (".txt", ".html"):
+        chunks = _chunk_paragraphs(source, path)
     else:
-        # Non-code or other files: single chunk
+        # YAML, TOML, JSON, CSS, shell, etc. — usually small; single chunk is fine
         lines = source.splitlines()
         chunks.append({
-            "id": f"{path}",
+            "id": path,
             "file": path,
             "type": "file",
             "start_line": 1,

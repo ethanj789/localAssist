@@ -19,7 +19,7 @@ import llm_provider
 from mcp_client import MCPClient
 import agent
 from agent import agent_loop
-from tools.index import BUSY_LOCK_FILE
+from tools.index import BUSY_LOCK_FILE, build_index
 import db
 
 # Voice transcription
@@ -53,6 +53,28 @@ async def lifespan(app: FastAPI):
     # Whisper already loaded above
     await asyncio.get_event_loop().run_in_executor(None, mcp.start)
     print(f"[server] MCP client started | model={CONFIG['model']} | use_provider={CONFIG.get('use_provider')} | cloud model={CONFIG.get('groq_model')}")
+
+    # Kick off a full index build in the background so pre-existing workspace
+    # files are indexed and manifest.json is written without blocking startup.
+    async def _background_index():
+        try:
+            loop = asyncio.get_running_loop()
+            await loop.run_in_executor(None, build_index)
+            print("[index] Startup index build complete.")
+        except Exception as exc:
+            logging.error(f"[index] Startup index build failed: {exc}")
+
+        # After indexing, backfill OCR for any pages not yet processed.
+        try:
+            from tool_apps.notes.api import backfill_ocr_for_existing_pages
+            loop = asyncio.get_running_loop()
+            await loop.run_in_executor(None, backfill_ocr_for_existing_pages)
+            print("[ocr] Startup OCR backfill complete.")
+        except Exception as exc:
+            logging.error(f"[ocr] Startup OCR backfill failed: {exc}")
+
+    asyncio.get_event_loop().create_task(_background_index())
+
     yield
     await asyncio.get_event_loop().run_in_executor(None, mcp.stop)
 
