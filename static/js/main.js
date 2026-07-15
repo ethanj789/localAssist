@@ -13,7 +13,8 @@ import {
     renameConversation,
     deleteConversation
 } from './api/chat.js';
-import { initVoiceRecorder, bindVoiceButton } from './api/voice.js';
+// import { initVoiceRecorder, bindVoiceButton } from './api/voice.js'; // DEAD CODE — replaced by Web Speech API
+import { initWebSpeechVoice, bindWebSpeechButton } from './api/webSpeechVoice.js';
 import { initMemoryUI } from './ui/memory.js';
 import { initEditPanel, handleProposeEdit } from './ui/editPanel.js';
 import { appendMsg, appendPill, renderMarkdown } from './ui/chatRenderer.js';
@@ -21,8 +22,10 @@ import { initSkillsAutocomplete, loadSkills, isDropdownVisible } from './ui/skil
 
 async function init() {
     initThemes();
-    initVoiceRecorder();
-    bindVoiceButton();
+    // initVoiceRecorder();  // DEAD CODE — Whisper-based voice disabled
+    // bindVoiceButton();   // DEAD CODE — Whisper-based voice disabled
+    initWebSpeechVoice();
+    bindWebSpeechButton();
     bindInputEvents();
     bindButtons();
     initMemoryUI();

@@ -24,7 +24,8 @@ from skills import list_skills, get_skill_by_command, run_skill
 import db
 
 # Voice transcription
-from faster_whisper import WhisperModel
+# DEAD CODE — Whisper replaced by browser Web Speech API (see static/js/api/webSpeechVoice.js)
+# from faster_whisper import WhisperModel
 import json
 logging.basicConfig(
     filename="logs.txt",
@@ -38,10 +39,10 @@ logging.getLogger("watchfiles").setLevel(logging.WARNING)
 STARTUP_TOKEN = str(uuid.uuid4())
 mcp = MCPClient(CONFIG["mcp_server_cmd"])
 
-# Load Whisper model (tiny.en = ~250MB, CPU-friendly)
-whisper_model = WhisperModel("tiny.en", device="cpu", compute_type="int8")
-TEMP_DIR = Path("./voiceChats")
-TEMP_DIR.mkdir(exist_ok=True)
+# DEAD CODE — Whisper model no longer used, transcription handled by browser Web Speech API
+# whisper_model = WhisperModel("tiny.en", device="cpu", compute_type="int8")
+# TEMP_DIR = Path("./voiceChats")
+# TEMP_DIR.mkdir(exist_ok=True)
 
 
 @asynccontextmanager
@@ -51,7 +52,7 @@ async def lifespan(app: FastAPI):
     print("[db] Cleaning up old conversations...")
     db.cleanup_old_conversations()
     print("[server] Loading Whisper model...")
-    # Whisper already loaded above
+    # Whisper no longer loaded — dead code
     await asyncio.get_event_loop().run_in_executor(None, mcp.start)
     print(f"[server] MCP client started | model={CONFIG['model']} | use_provider={CONFIG.get('use_provider')} | cloud model={CONFIG.get('groq_model')}")
 
@@ -175,9 +176,10 @@ class ChatRequest(BaseModel):
     ollama_thinking: bool = False
 
 
-class VoiceChatResponse(BaseModel):
-    transcription: str
-    message: str  # This will be the chat response
+# DEAD CODE — VoiceChatResponse no longer used (browser Web Speech API handles transcription)
+# class VoiceChatResponse(BaseModel):
+#     transcription: str
+#     message: str  # This will be the chat response
 
 
 # ============ ENDPOINTS ============
@@ -381,84 +383,84 @@ async def status_stream():
     )
 
 
-# ============ VOICE ENDPOINTS ============
+# ============ VOICE ENDPOINTS (DEAD CODE — replaced by browser Web Speech API) ============
 
-@app.post("/transcribe")
-async def transcribe(audio: UploadFile = File(...)):
-    """
-    Transcribe audio file to text only.
-    
-    Usage: Send audio file, get back transcribed text.
-    Then call /chat with that text if you want a response.
-    """
-    try:
-        # Save audio file temporarily
-        audio_path = TEMP_DIR / audio.filename
-        with open(audio_path, "wb") as f:
-            f.write(await audio.read())
-        
-        # Transcribe using Whisper (local, free)
-        segments, _ = whisper_model.transcribe(str(audio_path))
-        text = " ".join([s.text for s in segments]).strip()
-        
-        # Cleanup
-        audio_path.unlink()
-        
-        if not text:
-            raise HTTPException(status_code=400, detail="Could not transcribe audio")
-        
-        return {"text": text}
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logging.error(f"Transcription error: {e}")
-        raise HTTPException(status_code=500, detail=f"Transcription failed: {str(e)}")
+# @app.post("/transcribe")
+# async def transcribe(audio: UploadFile = File(...)):
+#     """
+#     Transcribe audio file to text only.
+#
+#     Usage: Send audio file, get back transcribed text.
+#     Then call /chat with that text if you want a response.
+#     """
+#     try:
+#         # Save audio file temporarily
+#         audio_path = TEMP_DIR / audio.filename
+#         with open(audio_path, "wb") as f:
+#             f.write(await audio.read())
+#
+#         # Transcribe using Whisper (local, free)
+#         segments, _ = whisper_model.transcribe(str(audio_path))
+#         text = " ".join([s.text for s in segments]).strip()
+#
+#         # Cleanup
+#         audio_path.unlink()
+#
+#         if not text:
+#             raise HTTPException(status_code=400, detail="Could not transcribe audio")
+#
+#         return {"text": text}
+#
+#     except HTTPException:
+#         raise
+#     except Exception as e:
+#         logging.error(f"Transcription error: {e}")
+#         raise HTTPException(status_code=500, detail=f"Transcription failed: {str(e)}")
 
 
-@app.post("/voice-chat")
-async def voice_chat(audio: UploadFile = File(...)):
-    """
-    All-in-one endpoint: audio → transcribe → chat response
-    
-    Streams SSE events:
-    1. transcription event with what was said
-    2. Then chat response tokens
-    """
-    try:
-        # Step 1: Save and transcribe
-        audio_path = TEMP_DIR / audio.filename
-        with open(audio_path, "wb") as f:
-            f.write(await audio.read())
-        
-        segments, _ = whisper_model.transcribe(str(audio_path))
-        transcription = " ".join([s.text for s in segments]).strip()
-        
-        audio_path.unlink()
-        
-        if not transcription:
-            raise HTTPException(status_code=400, detail="Could not transcribe audio")
-        
-        # Step 2: Stream the chat response with transcription first
-        async def response_stream():
-            import json
-            # Send transcription as SSE event first
-            yield f"data: {json.dumps({'event': 'transcription', 'data': transcription})}\n\n"
-            # Then stream the chat response
-            async for chunk in agent_loop(transcription, mcp):
-                yield chunk
-        
-        return StreamingResponse(
-            response_stream(),
-            media_type="text/event-stream",
-            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
-        )
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logging.error(f"Voice chat error: {e}")
-        raise HTTPException(status_code=500, detail=f"Voice chat failed: {str(e)}")
+# @app.post("/voice-chat")
+# async def voice_chat(audio: UploadFile = File(...)):
+#     """
+#     All-in-one endpoint: audio → transcribe → chat response
+#
+#     Streams SSE events:
+#     1. transcription event with what was said
+#     2. Then chat response tokens
+#     """
+#     try:
+#         # Step 1: Save and transcribe
+#         audio_path = TEMP_DIR / audio.filename
+#         with open(audio_path, "wb") as f:
+#             f.write(await audio.read())
+#
+#         segments, _ = whisper_model.transcribe(str(audio_path))
+#         transcription = " ".join([s.text for s in segments]).strip()
+#
+#         audio_path.unlink()
+#
+#         if not transcription:
+#             raise HTTPException(status_code=400, detail="Could not transcribe audio")
+#
+#         # Step 2: Stream the chat response with transcription first
+#         async def response_stream():
+#             import json
+#             # Send transcription as SSE event first
+#             yield f"data: {json.dumps({'event': 'transcription', 'data': transcription})}\n\n"
+#             # Then stream the chat response
+#             async for chunk in agent_loop(transcription, mcp):
+#                 yield chunk
+#
+#         return StreamingResponse(
+#             response_stream(),
+#             media_type="text/event-stream",
+#             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+#         )
+#
+#     except HTTPException:
+#         raise
+#     except Exception as e:
+#         logging.error(f"Voice chat error: {e}")
+#         raise HTTPException(status_code=500, detail=f"Voice chat failed: {str(e)}")
 
 
 if __name__ == "__main__":
