@@ -1,7 +1,7 @@
 import { API } from './constants.js';
 import { showToast, setInputDisplay, scrollToBottom, escHtml } from './utils/dom.js';
 import { initThemes } from './ui/theme.js';
-import { loadConfig, applyConfig } from './api/config.js';
+import { loadConfig, applyConfig, bindReindexButtons } from './api/config.js';
 import {
     sendMessage,
     clearHistory,
@@ -16,6 +16,7 @@ import { initVoiceRecorder, bindVoiceButton } from './api/voice.js';
 import { initMemoryUI } from './ui/memory.js';
 import { initEditPanel, handleProposeEdit } from './ui/editPanel.js';
 import { appendMsg, appendPill, renderMarkdown } from './ui/chatRenderer.js';
+import { initSkillsAutocomplete, loadSkills } from './ui/skillsAutocomplete.js';
 
 async function init() {
     initThemes();
@@ -27,6 +28,8 @@ async function init() {
     initEditPanel();
     initCustomSelect();
     initAutoScroll();
+    initSkillsAutocomplete();
+    bindReindexButtons();
     bindSettingsAccordion();
 
     // Hook up custom events
@@ -37,6 +40,7 @@ async function init() {
     document.addEventListener('conversation-cleared', startNewChat);
 
     await loadConfig();
+    await loadSkills();
     startStatusPolling();
 
     // Fetch and display existing conversations

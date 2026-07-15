@@ -259,6 +259,63 @@ export function handleStreamEvent(event, data, state) {
         handleProposeEdit(editData);
     }
 
+    if (event === 'skill_start') {
+        const info = JSON.parse(data);
+        const aBody = aDiv.querySelector('.msg-body');
+        const progressEl = document.createElement('div');
+        progressEl.className = 'skill-progress';
+        progressEl.id = 'skill-progress-active';
+
+        const header = document.createElement('div');
+        header.className = 'skill-progress-header';
+        header.textContent = `⚡ ${info.name}`;
+        progressEl.appendChild(header);
+
+        // Pre-render step placeholders
+        for (let i = 0; i < info.total_steps; i++) {
+            const stepEl = document.createElement('div');
+            stepEl.className = 'skill-progress-step pending';
+            stepEl.dataset.index = i;
+            stepEl.innerHTML = `<span class="step-icon"></span> <span class="step-label">step ${i + 1}</span>`;
+            progressEl.appendChild(stepEl);
+        }
+
+        aBody.appendChild(progressEl);
+    }
+
+    if (event === 'skill_step') {
+        const info = JSON.parse(data);
+        const progressEl = document.getElementById('skill-progress-active');
+        if (progressEl) {
+            const stepEl = progressEl.querySelector(`[data-index="${info.step_index}"]`);
+            if (stepEl) {
+                stepEl.className = `skill-progress-step ${info.status}`;
+                const label = stepEl.querySelector('.step-label');
+                if (label) {
+                    if (info.status === 'running') {
+                        label.textContent = `${info.step_id} — running...`;
+                    } else if (info.status === 'thinking') {
+                        label.textContent = `${info.step_id} — thinking...`;
+                    } else if (info.status === 'done') {
+                        label.textContent = `${info.step_id} — done`;
+                    }
+                }
+            }
+        }
+    }
+
+    if (event === 'skill_complete') {
+        const progressEl = document.getElementById('skill-progress-active');
+        if (progressEl) {
+            progressEl.removeAttribute('id');
+            const header = progressEl.querySelector('.skill-progress-header');
+            if (header) {
+                const info = JSON.parse(data);
+                header.textContent = `✓ ${info.name} — ${info.steps_completed} steps completed`;
+            }
+        }
+    }
+
     if (event === 'done') {
         const info = JSON.parse(data);
         if (state.cursor && state.cursor.parentNode) state.cursor.remove();

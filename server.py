@@ -20,6 +20,7 @@ from mcp_client import MCPClient
 import agent
 from agent import agent_loop
 from tools.index import BUSY_LOCK_FILE, build_index
+from skills import list_skills, get_skill_by_command, run_skill
 import db
 
 # Voice transcription
@@ -125,6 +126,48 @@ if tool_apps_dir.exists():
 def root():
     return FileResponse("static/index.html")
 
+
+# ============ REINDEX ENDPOINTS ============
+
+@app.post("/reindex/files")
+async def reindex_files():
+    """Force a full workspace file index rebuild in the background."""
+    import shutil
+    async def _run():
+        try:
+            await asyncio.get_running_loop().run_in_executor(None, lambda: build_index(force=True))
+            logging.info("[reindex] File index rebuild complete.")
+        except Exception as exc:
+            logging.error(f"[reindex] File index rebuild failed: {exc}")
+    asyncio.get_event_loop().create_task(_run())
+    return {"status": "ok", "message": "File re-index started in background."}
+
+
+@app.post("/reindex/ocr")
+async def reindex_ocr():
+    """Wipe existing OCR output and re-run OCR backfill for all notes pages."""
+    import shutil
+    from tool_apps.notes.api import backfill_ocr_for_existing_pages, OUTPUT_DIR
+    # Clear existing output so backfill processes everything fresh
+    if OUTPUT_DIR.exists():
+        shutil.rmtree(OUTPUT_DIR)
+        OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    async def _run():
+        try:
+            await asyncio.get_running_loop().run_in_executor(None, backfill_ocr_for_existing_pages)
+            logging.info("[reindex] OCR backfill complete.")
+            # Re-run note blob scan to update the vector DB
+            from tools.index import scan_note_blobs
+            import tools.vector_db as vector_db
+            from tools.index import DB_FILE
+            vector_db.init_vector_db(DB_FILE)
+            await asyncio.get_running_loop().run_in_executor(None, scan_note_blobs)
+            logging.info("[reindex] Note blob scan complete.")
+        except Exception as exc:
+            logging.error(f"[reindex] OCR re-index failed: {exc}")
+    asyncio.get_event_loop().create_task(_run())
+    return {"status": "ok", "message": "OCR re-index started in background."}
+
 class ChatRequest(BaseModel):
     message: str
     model: str = "default"
@@ -224,12 +267,41 @@ async def resolve_edit(req: ResolveEditRequest):
     return {"status": "ok"}
 
 
+@app.get("/skills")
+async def get_skills():
+    """Return available skills for the frontend autocomplete."""
+    return list_skills()
+
+
 @app.post("/chat")
 async def chat(req: ChatRequest):
     current_provider = llm_provider.get_effective_provider(CONFIG)
     conv_id = req.conversation_id
     if not conv_id:
         conv_id = db.create_conversation(provider=current_provider)
+
+    # Detect slash commands → route to skill executor
+    message = req.message.strip()
+    if message.startswith("/"):
+        parts = message.split(None, 1)
+        command = parts[0].lower()
+        raw_args = parts[1] if len(parts) > 1 else ""
+
+        skill = get_skill_by_command(command)
+        if skill:
+            async def skill_stream():
+                # Emit conversation_id first so frontend can track it
+                yield f"data: {json.dumps({'event': 'conversation_id', 'data': conv_id})}\n\n"
+                async for chunk in run_skill(skill, raw_args, mcp, conv_id):
+                    yield chunk
+
+            return StreamingResponse(
+                skill_stream(),
+                media_type="text/event-stream",
+                headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+            )
+
+    # Normal chat flow
     return StreamingResponse(
         agent_loop(req.message, mcp, model_override=req.model, conversation_id=conv_id, ollama_thinking=req.ollama_thinking),
         media_type="text/event-stream",

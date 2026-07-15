@@ -1,0 +1,24 @@
+{
+    "name": "Summarize Notes",
+    "command": "/notes",
+    "description": "Search and summarize your workspace notes on a topic",
+    "inputs": [
+        {"name": "topic", "type": "string", "required": true, "placeholder": "topic to search notes for"}
+    ],
+    "steps": [
+        {
+            "id": "semantic_search",
+            "action": "tool",
+            "tool": "search_semantic",
+            "args": {"query": "{topic}"}
+        },
+        {
+            "id": "list_context",
+            "action": "tool",
+            "tool": "list_files",
+            "args": {"topic": "{topic}"}
+        }
+    ],
+    "result_prompt": "I searched your workspace notes for '{topic}'. Here's what I found. Summarize the relevant information clearly.",
+    "think_between_steps": false
+}

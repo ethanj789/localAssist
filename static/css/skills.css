@@ -1,0 +1,127 @@
+/* Skills autocomplete dropdown */
+.skills-dropdown {
+    position: absolute;
+    bottom: 100%;
+    left: 0;
+    right: 0;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    margin-bottom: 6px;
+    max-height: 200px;
+    overflow-y: auto;
+    z-index: 100;
+    box-shadow: 0 -4px 12px rgba(0, 0, 0, 0.3);
+}
+
+.skills-dropdown-item {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 14px;
+    cursor: pointer;
+    transition: background 0.1s;
+}
+
+.skills-dropdown-item:hover,
+.skills-dropdown-item.active {
+    background: var(--border);
+}
+
+.skills-dropdown-item:first-child {
+    border-radius: 8px 8px 0 0;
+}
+
+.skills-dropdown-item:last-child {
+    border-radius: 0 0 8px 8px;
+}
+
+.skills-cmd {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 13px;
+    color: var(--accent);
+    font-weight: 500;
+    white-space: nowrap;
+}
+
+.skills-desc {
+    font-size: 12px;
+    color: var(--muted);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.skills-input-hint {
+    position: absolute;
+    bottom: 100%;
+    left: 0;
+    font-size: 11px;
+    color: var(--muted);
+    padding: 4px 10px;
+    font-style: italic;
+    pointer-events: none;
+}
+
+/* Skill execution progress in chat */
+.skill-progress {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin: 8px 0;
+    padding: 8px 12px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    font-size: 12px;
+}
+
+.skill-progress-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-weight: 500;
+    color: var(--accent);
+}
+
+.skill-progress-step {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 3px 0;
+    color: var(--muted);
+}
+
+.skill-progress-step.running {
+    color: var(--accent2);
+}
+
+.skill-progress-step.done {
+    color: var(--ok);
+}
+
+.skill-progress-step.thinking {
+    color: var(--warn);
+}
+
+.skill-progress-step .step-icon {
+    width: 14px;
+    text-align: center;
+    font-size: 11px;
+}
+
+.skill-progress-step.running .step-icon::after {
+    content: '⟳';
+}
+
+.skill-progress-step.done .step-icon::after {
+    content: '✓';
+}
+
+.skill-progress-step.thinking .step-icon::after {
+    content: '💭';
+}
+
+.skill-progress-step.pending .step-icon::after {
+    content: '·';
+}

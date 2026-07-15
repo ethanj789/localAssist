@@ -183,6 +183,13 @@ class TrOCRBackend:
 
         try:
             import torch
+            from PIL import ImageOps
+
+            # Auto-invert dark images: TrOCR expects black text on white.
+            # If the tile is mostly dark (mean < 128), invert it.
+            grey_mean = np.array(image.convert("L")).mean()
+            if grey_mean < 128:
+                image = ImageOps.invert(image.convert("RGB"))
 
             columns = _split_into_columns(image)
             results: list[dict] = []

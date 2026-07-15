@@ -1,0 +1,24 @@
+{
+    "name": "Morning Briefing",
+    "command": "/briefing",
+    "description": "Get weather and news summary for your day",
+    "inputs": [
+        {"name": "location", "type": "string", "required": false, "default": "Seattle", "placeholder": "your city"}
+    ],
+    "steps": [
+        {
+            "id": "weather",
+            "action": "tool",
+            "tool": "web_search",
+            "args": {"query": "weather today in {location}"}
+        },
+        {
+            "id": "news",
+            "action": "tool",
+            "tool": "web_search",
+            "args": {"query": "top news today {date}"}
+        }
+    ],
+    "result_prompt": "I gathered today's weather for {location} and top news. Write a concise morning briefing — weather first, then 3-5 key headlines with one-sentence summaries each.",
+    "think_between_steps": false
+}

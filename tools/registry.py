@@ -8,7 +8,7 @@ from mcp.server import Server
 from mcp import types
 
 from tools.web import _web_search, _fetch_webpage
-from tools.files import _list_files, _read_file, _read_code_skeleton
+from tools.files import _list_files, _read_file, _read_code_skeleton, _list_files_by_glob, _is_glob_pattern
 from tools.calculate import _calculate
 from tools.events import _recent_events
 from tools.emails import _draft_email
@@ -257,7 +257,11 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
         if not query:
             return await _list_files(None)
         
-        # Run both
+        # Handle glob/wildcard patterns (e.g. *.py, **, test_*)
+        if _is_glob_pattern(query):
+            return _list_files_by_glob(query)
+        
+        # Run both keyword and semantic search
         keyword_results = await _list_files(query)
         semantic_results = await _search_semantic(query, 3)
         

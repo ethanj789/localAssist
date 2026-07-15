@@ -4,7 +4,10 @@ Provides list_files, read_file, and read_code_skeleton with strict
 path-traversal and symlink guards.
 """
 import os
+import re
 import ast
+import json
+import fnmatch
 import logging
 from pathlib import Path
 from mcp import types
@@ -98,6 +101,105 @@ def _find_topic_ranges(
     return [(s + 1, e + 1) for s, e in ranges]
 
 
+# ── Note-path resolution ──────────────────────────────────────────────────────
+
+# Matches patterns like "note: <page_id> / blob <N>" (with optional brackets)
+_NOTE_PATH_RE = re.compile(
+    r"^\[?note:\s*(?P<page_id>[^\]/]+?)\s*/\s*blob\s+(?P<blob_idx>\d+)\]?$",
+    re.IGNORECASE,
+)
+
+NOTES_TEXT_DIR = WORKSPACE_ROOT.parent / "aiWorkspace" / "notesAppText"
+
+
+def _resolve_note_path(path: str) -> Path | None:
+    """
+    If *path* looks like a note reference (e.g. "note: 2026-07-13_untitled / blob 0"),
+    resolve it to the actual .txt file under notesAppText by scanning .page_meta.json
+    sidecars for the matching page_id.
+
+    Returns the absolute Path to the blob .txt file, or None if not a note ref or not found.
+    """
+    m = _NOTE_PATH_RE.match(path.strip())
+    if not m:
+        return None
+
+    target_page_id = m.group("page_id").strip()
+    blob_idx = m.group("blob_idx")
+
+    if not NOTES_TEXT_DIR.exists():
+        return None
+
+    # Scan subdirectories for matching page_id in .page_meta.json
+    for page_dir in NOTES_TEXT_DIR.iterdir():
+        if not page_dir.is_dir():
+            continue
+        meta_file = page_dir / ".page_meta.json"
+        if meta_file.exists():
+            try:
+                meta = json.loads(meta_file.read_text(encoding="utf-8"))
+                if meta.get("page_id") == target_page_id:
+                    txt_file = page_dir / f"{blob_idx}.txt"
+                    if txt_file.exists():
+                        return txt_file
+                    return None
+            except (json.JSONDecodeError, OSError):
+                continue
+
+    return None
+
+
+# ── Wildcard/glob detection ───────────────────────────────────────────────────
+
+_GLOB_CHARS_RE = re.compile(r"[*?\[\]]")
+
+
+def _is_glob_pattern(query: str) -> bool:
+    """Return True if query looks like a file glob pattern (e.g. *.py, **/*.txt)."""
+    return bool(_GLOB_CHARS_RE.search(query))
+
+
+def _list_files_by_glob(pattern: str) -> list[types.TextContent]:
+    """
+    List workspace files matching a glob/wildcard pattern.
+    Supports patterns like *.py, **/*.txt, test_*, etc.
+    """
+    log.info("list_files_by_glob | pattern=%s", pattern)
+    # Normalize: strip leading ./ or /
+    pattern = pattern.lstrip("./\\")
+
+    lines = []
+    for root, dirs, files in os.walk(WORKSPACE_ROOT):
+        dirs[:] = [d for d in dirs if d not in SKIP_DIRS]
+        level = Path(root).relative_to(WORKSPACE_ROOT)
+        prefix = str(level) if str(level) != "." else ""
+
+        for f in files:
+            rel_path = f if not prefix else f"{prefix}/{f}"
+            abs_path = Path(root) / f
+
+            if abs_path.is_symlink():
+                continue
+            if _is_sensitive(f, rel_path):
+                continue
+
+            # Match against filename only, or full relative path depending on pattern
+            if "/" in pattern or "\\" in pattern:
+                # Pattern includes path separators — match against full rel_path
+                if fnmatch.fnmatch(rel_path.lower(), pattern.lower()):
+                    lines.append(f"  {rel_path}")
+            else:
+                # Pattern is filename-only — match just the filename
+                if fnmatch.fnmatch(f.lower(), pattern.lower()):
+                    lines.append(f"  {rel_path}")
+
+    if not lines:
+        return [types.TextContent(type="text", text=f"No files matching '{pattern}'.")]
+
+    header = f"Files matching '{pattern}':\n"
+    return [types.TextContent(type="text", text=header + "\n".join(lines))]
+
+
 def _read_scannable(path: Path, max_bytes: int = MAX_SCAN_BYTES) -> list[str] | None:
     """One open(): size cap, null-byte detection, line streaming. Returns lines or None."""
     try:
@@ -166,6 +268,21 @@ async def _list_files(topic: str | None = None) -> list[types.TextContent]:
 
 async def _read_file(path: str, start: int = 1, count: int | None = None) -> list[types.TextContent]:
     log.info("read_file | path=%s start=%s count=%s", path, start, count)
+
+    # ── Handle note-style paths (e.g. "note: page_id / blob N") ──────────────
+    note_target = _resolve_note_path(path)
+    if note_target is not None:
+        try:
+            text = note_target.read_text(encoding="utf-8")
+        except OSError as e:
+            return [types.TextContent(type="text", text=f"Error reading note blob: {e}")]
+        rel = note_target.relative_to(NOTES_TEXT_DIR)
+        header = f"Note content ({rel}):\n\n"
+        return [types.TextContent(type="text", text=header + text)]
+    elif _NOTE_PATH_RE.match(path.strip()):
+        # It looked like a note reference but we couldn't resolve it
+        return [types.TextContent(type="text", text=f"Note not found: {path}. The page may have been deleted or renamed.")]
+
     raw = WORKSPACE_ROOT / path
     if _has_symlink_component(raw):
         return [types.TextContent(type="text", text="Access denied: symlinks not allowed.")]

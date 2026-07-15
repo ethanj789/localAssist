@@ -508,3 +508,17 @@ aside {
     font-size: 12px;
     color: var(--muted);
 }
+
+
+.btn-reindex {
+    background: transparent;
+    border-color: var(--border);
+    color: var(--muted);
+    font-size: 0.75rem;
+    padding: 5px 10px;
+}
+
+.btn-reindex:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+}

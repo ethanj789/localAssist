@@ -1,0 +1,30 @@
+{
+    "name": "Research",
+    "command": "/research",
+    "description": "Deep search on a topic — runs multiple searches and synthesizes results",
+    "inputs": [
+        {"name": "topic", "type": "string", "required": true, "placeholder": "what to research"}
+    ],
+    "steps": [
+        {
+            "id": "search_main",
+            "action": "tool",
+            "tool": "web_search",
+            "args": {"query": "{topic}"}
+        },
+        {
+            "id": "search_recent",
+            "action": "tool",
+            "tool": "web_search",
+            "args": {"query": "{topic} latest developments 2025 2026"}
+        },
+        {
+            "id": "search_deep",
+            "action": "tool",
+            "tool": "web_search",
+            "args": {"query": "{topic} explained in depth"}
+        }
+    ],
+    "result_prompt": "I ran a deep research skill on '{topic}'. Here are the aggregated search results. Synthesize them into a clear, well-organized summary with key facts, recent developments, and sources.",
+    "think_between_steps": false
+}

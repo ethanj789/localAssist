@@ -92,3 +92,37 @@ export async function applyConfig() {
         showToast('failed to apply config');
     }
 }
+
+
+// ── Reindex buttons ───────────────────────────────────────────────────────────
+
+export function bindReindexButtons() {
+    const filesBtn = document.getElementById('btn-reindex-files');
+    const ocrBtn = document.getElementById('btn-reindex-ocr');
+
+    if (filesBtn) {
+        filesBtn.addEventListener('click', async () => {
+            if (!confirm('Re-index all workspace files? This runs in the background.')) return;
+            try {
+                const r = await fetch(`${API}/reindex/files`, { method: 'POST' });
+                if (!r.ok) throw new Error();
+                showToast('File re-index started');
+            } catch {
+                showToast('Failed to start file re-index');
+            }
+        });
+    }
+
+    if (ocrBtn) {
+        ocrBtn.addEventListener('click', async () => {
+            if (!confirm('Re-run OCR on all notes pages? This clears existing OCR output and re-processes everything. May take a few minutes.')) return;
+            try {
+                const r = await fetch(`${API}/reindex/ocr`, { method: 'POST' });
+                if (!r.ok) throw new Error();
+                showToast('OCR re-index started');
+            } catch {
+                showToast('Failed to start OCR re-index');
+            }
+        });
+    }
+}
