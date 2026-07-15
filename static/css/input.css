@@ -1,22 +1,150 @@
 .input-area {
     border-top: 1px solid var(--border);
-    padding: 20px 40px;
-    background: var(--bg)
+    padding: 12px 24px 16px;
+    background: var(--bg);
 }
 
+/* ── Toolbar row above input ── */
+.input-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    max-width: 760px;
+    margin-bottom: 10px;
+    gap: 8px;
+}
+
+.input-toolbar-left {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+}
+
+.input-toolbar-right {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+/* ── Chip / pill-style controls ── */
+.chip-select {
+    position: relative;
+}
+
+.chip-trigger {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 6px 12px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 20px;
+    color: var(--text);
+    font-family: var(--sans);
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.15s ease;
+    white-space: nowrap;
+}
+
+.chip-trigger:hover {
+    border-color: var(--accent);
+    background: rgba(124, 255, 182, 0.05);
+}
+
+.chip-icon {
+    font-size: 13px;
+    line-height: 1;
+}
+
+.chip-dropdown {
+    position: absolute;
+    bottom: calc(100% + 6px);
+    left: 0;
+    min-width: 160px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    display: none;
+    flex-direction: column;
+    z-index: 200;
+    box-shadow: 0 -8px 24px rgba(0, 0, 0, 0.4);
+    overflow: hidden;
+    backdrop-filter: blur(12px);
+}
+
+.chip-select.open .chip-dropdown {
+    display: flex;
+}
+
+.chip-option {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 14px;
+    cursor: pointer;
+    font-family: var(--sans);
+    font-size: 12px;
+    color: var(--muted);
+    transition: all 0.12s;
+    border-bottom: 1px solid var(--border);
+}
+
+.chip-option:last-child {
+    border-bottom: none;
+}
+
+.chip-option:hover {
+    background: rgba(255, 255, 255, 0.04);
+    color: var(--text);
+}
+
+.chip-option.active {
+    color: var(--accent);
+    font-weight: 500;
+}
+
+.chip-opt-icon {
+    font-size: 14px;
+}
+
+/* ── Chip toggle button (cloud, thinking) ── */
+.chip-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 6px 12px;
+    background: transparent;
+    border: 1px solid var(--border);
+    border-radius: 20px;
+    color: var(--muted);
+    font-family: var(--sans);
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.15s ease;
+    white-space: nowrap;
+}
+
+.chip-toggle:hover {
+    border-color: var(--muted);
+    color: var(--text);
+}
+
+.chip-toggle.active {
+    background: rgba(124, 255, 182, 0.1);
+    border-color: var(--accent);
+    color: var(--accent);
+}
+
+/* ── Input wrap ── */
 .input-wrap {
     display: flex;
-    gap: 12px;
+    gap: 10px;
     align-items: flex-end;
-    max-width: 860px;
-    /* Increased to accommodate new controls */
-}
-
-.input-controls {
-    display: flex;
-    gap: 8px;
-    align-items: flex-end;
-    flex-shrink: 0;
+    max-width: 760px;
 }
 
 #user-input {
@@ -28,206 +156,90 @@
     font-size: 15px;
     font-weight: 400;
     padding: 14px 16px;
-    border-radius: 5px;
+    border-radius: 12px;
     outline: none;
     resize: none;
     min-height: 52px;
     max-height: 160px;
-    transition: border-color .15s;
-    line-height: 1.7
+    transition: border-color .15s, box-shadow .15s;
+    line-height: 1.7;
 }
 
 #user-input:focus {
-    border-color: var(--accent)
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px rgba(124, 255, 182, 0.08);
 }
 
 #user-input::placeholder {
-    color: var(--muted)
+    color: var(--muted);
+    opacity: 0.6;
 }
 
-/* ── Send button: intentionally mono ── */
+/* ── Send button ── */
 #send-btn {
+    width: 44px;
+    height: 44px;
+    border-radius: 50%;
     background: var(--accent);
     color: var(--bg);
     border: none;
-    font-family: var(--mono);
-    font-size: 11px;
-    font-weight: 500;
-    letter-spacing: .1em;
-    padding: 0 20px;
-    height: 52px;
-    border-radius: 4px;
+    font-size: 18px;
+    font-weight: 600;
     cursor: pointer;
-    transition: opacity .15s;
+    transition: all 0.15s ease;
+    display: flex;
+    align-items: center;
+    justify-content: center;
     flex-shrink: 0;
-    text-transform: uppercase;
 }
 
 #send-btn:disabled {
-    opacity: .3;
-    cursor: not-allowed
+    opacity: .25;
+    cursor: not-allowed;
 }
 
 #send-btn:not(:disabled):hover {
-    opacity: .85;
+    transform: scale(1.08);
+    box-shadow: 0 4px 12px rgba(124, 255, 182, 0.3);
 }
 
-.hint {
-    font-family: var(--mono);
-    font-size: 9px;
-    color: var(--muted);
-    margin-top: 8px;
-    letter-spacing: .05em
-}
-
-/* Voice Button Styles */
-.voice-btn {
+/* ── Voice button (compact) ── */
+.voice-btn-compact {
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
     background: transparent;
     border: 1px solid var(--border);
     color: var(--text);
-    padding: 0.5rem 0.75rem;
-    border-radius: 4px;
+    font-size: 16px;
     cursor: pointer;
-    font-family: var(--sans);
-    transition: all 0.2s ease;
-    --volume: 0;
-    height: 52px;
+    transition: all 0.15s ease;
+    display: flex;
+    align-items: center;
+    justify-content: center;
 }
 
-.voice-btn:hover {
-    background: var(--surface);
+.voice-btn-compact:hover {
     border-color: var(--accent);
+    background: rgba(124, 255, 182, 0.05);
 }
 
-.voice-btn.recording {
+.voice-btn-compact.recording {
     background: var(--warn);
-    color: var(--bg);
     border-color: var(--warn);
     animation: voicepulse 1.5s ease-in-out infinite;
 }
 
-.voice-btn.recording::after {
-    content: '';
-    display: inline-block;
-    width: 8px;
-    height: 8px;
-    background: currentColor;
-    border-radius: 50%;
-    margin-left: 6px;
-    animation: voiceblink 0.6s ease-in-out infinite;
-}
-
 @keyframes voicepulse {
-
-    0%,
-    100% {
-        opacity: 1;
+    0%, 100% {
         box-shadow: 0 0 0 0 rgba(255, 140, 86, 0.7);
     }
-
-    50% {
-        opacity: 0.95;
-    }
-
     100% {
         box-shadow: 0 0 0 10px rgba(255, 140, 86, 0);
     }
 }
 
-@keyframes voiceblink {
-
-    0%,
-    49%,
-    100% {
-        opacity: 1;
-    }
-
-    50%,
-    99% {
-        opacity: 0.3;
-    }
-}
-
-.custom-select {
-    position: relative;
-    flex: 1;
-}
-
-.select-trigger {
-    background: var(--surface);
-    border: 1px solid var(--border);
-    color: var(--text);
-    font-family: var(--mono);
-    font-size: 10px;
-    padding: 0 12px;
-    height: 52px;
-    border-radius: 4px;
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    transition: all 0.2s ease;
-    user-select: none;
-}
-
-.select-trigger:after {
-    content: '';
-    width: 0;
-    height: 0;
-    border-left: 4px solid transparent;
-    border-right: 4px solid transparent;
-    border-bottom: 4px solid var(--accent);
-    margin-left: 10px;
-}
-
-.select-options {
-    position: absolute;
-    bottom: calc(100% + 8px);
-    left: 0;
-    width: 100%;
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: 4px;
+/* Legacy voice-btn class for JS compatibility */
+.voice-btn {
     display: none;
-    flex-direction: column;
-    z-index: 100;
-    box-shadow: 0 -10px 30px rgba(0, 0, 0, 0.5);
-    overflow: hidden;
-    backdrop-filter: blur(10px);
 }
-
-.custom-select.open .select-options {
-    display: flex;
-}
-
-.select-option {
-    padding: 14px 12px;
-    cursor: pointer;
-    font-size: 10px;
-    text-transform: uppercase;
-    transition: all 0.2s;
-    border-bottom: 1px solid var(--border);
-    color: var(--muted);
-}
-
-.select-option:last-child {
-    border-bottom: none;
-}
-
-.select-option:hover {
-    background: var(--border);
-    color: var(--accent);
-}
-
-.select-option.active {
-    color: var(--accent);
-    font-weight: 500;
-}
-
-.select-trigger:hover {
-    border-color: var(--accent);
-    background-color: var(--bg);
-}
-

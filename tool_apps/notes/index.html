@@ -4,7 +4,10 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Notes App</title>
+    <title>Notes</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap">
     <link rel="stylesheet" href="index.css">
 </head>
 
@@ -38,8 +41,12 @@
             <!-- Toolbar for drawing tools -->
             <header id="toolbar">
                 <div class="tool-group">
-                    <button class="tool-btn active" data-tool="pen" title="Pen">Pen</button>
-                    <button class="tool-btn" data-tool="eraser" title="Eraser">Eraser</button>
+                    <button class="tool-btn active" data-tool="pen" title="Pen (draw)">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 19l7-7 3 3-7 7-3-3z"/><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/><path d="M2 2l7.586 7.586"/></svg>
+                    </button>
+                    <button class="tool-btn" data-tool="eraser" title="Eraser">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M20 20H7L3 16l10-10 7 7-4 4"/><path d="M6.5 17.5L13 11"/></svg>
+                    </button>
                 </div>
 
                 <div class="tool-group">
@@ -48,9 +55,9 @@
                 </div>
 
                 <div class="tool-group">
-                    <button id="undo-btn" class="icon-btn" title="Undo">Undo</button>
-                    <button id="redo-btn" class="icon-btn" title="Redo">Redo</button>
-                    <button id="fit-content-btn" class="icon-btn" title="Fit content to view">Fit</button>
+                    <button id="undo-btn" class="icon-btn" title="Undo">&#8630;</button>
+                    <button id="redo-btn" class="icon-btn" title="Redo">&#8631;</button>
+                    <button id="fit-content-btn" class="icon-btn" title="Fit content to view">&#9723;</button>
                 </div>
 
                 <div class="spacer"></div>

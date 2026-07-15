@@ -330,6 +330,13 @@ class NotesApp {
                     this.undoStack.shift();
                 }
                 this._strokesDirty = true;
+
+                // Compact immediately after eraser to avoid visual pop
+                if (CanvasManager._isEraserStroke(stroke)) {
+                    this.canvasManager.compactIfNeeded();
+                    this.canvasManager.redraw(this.canvasManager.strokes);
+                }
+
                 this._scheduleSave();
             }
             this._preStrokeSnapshot = null;

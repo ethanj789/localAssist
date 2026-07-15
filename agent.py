@@ -426,9 +426,10 @@ async def agent_loop(user_message: str, mcp, model_override: str = "default", co
                     # (e.g. model returned only thinking tokens, fallback also gave
                     # nothing useful) should not be written to history as it will
                     # corrupt future turns.
+                    thinking_text = getattr(msg, 'thinking', None) or None
                     if content:
                         conversation_history.append({"role": "assistant", "content": content})
-                        db.add_message(conversation_id, "assistant", content)
+                        db.add_message(conversation_id, "assistant", content, thinking_content=thinking_text)
 
                     if content_started:
                         # Ollama already streamed tokens live — just emit stats and done
@@ -629,6 +630,7 @@ async def agent_loop(user_message: str, mcp, model_override: str = "default", co
                                 fallback_stats = fallback_assembled.verbose_stats if fallback_assembled else None
                                 break
                         content = fallback_assembled.content if fallback_assembled else ""
+                        fallback_thinking = fallback_assembled.thinking if fallback_assembled else None
                         if fallback_stats:
                             yield _sse("ollama_stats", json.dumps(fallback_stats))
                     else:
@@ -636,13 +638,14 @@ async def agent_loop(user_message: str, mcp, model_override: str = "default", co
                             resolved_provider, fallback_kwargs, CONFIG
                         )
                         content = response.choices[0].message.content or ""
+                        fallback_thinking = None
                         for word in content.split(" "):
                             yield _sse("token", word + " ")
                             await asyncio.sleep(0.01)
 
                     if content:
                         conversation_history.append({"role": "assistant", "content": content})
-                        db.add_message(conversation_id, "assistant", content)
+                        db.add_message(conversation_id, "assistant", content, thinking_content=fallback_thinking)
                     yield _sse("done", json.dumps({
                         "searches_used": search_count,
                         "emails_used": email_count,

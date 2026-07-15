@@ -144,7 +144,7 @@ function bindButtons() {
 function initCustomSelect() {
     const wrapper = document.getElementById('model-select-wrapper');
     const trigger = document.getElementById('model-select-trigger');
-    const options = document.querySelectorAll('.select-option');
+    const options = document.querySelectorAll('.chip-option');
     const hiddenInput = document.getElementById('model-selector');
 
     if (!wrapper || !trigger) return;
@@ -157,10 +157,11 @@ function initCustomSelect() {
     options.forEach(opt => {
         opt.addEventListener('click', () => {
             const val = opt.getAttribute('data-value');
-            const label = opt.textContent;
+            const icon = opt.querySelector('.chip-opt-icon')?.textContent || '⚡';
+            const label = opt.textContent.trim();
 
             hiddenInput.value = val;
-            trigger.textContent = label;
+            trigger.innerHTML = `<span class="chip-icon">${icon}</span> ${label}`;
 
             options.forEach(o => o.classList.remove('active'));
             opt.classList.add('active');
@@ -172,6 +173,33 @@ function initCustomSelect() {
     document.addEventListener('click', () => {
         wrapper.classList.remove('open');
     });
+
+    // Cloud chip toggle
+    const cloudChip = document.getElementById('chip-cloud-toggle');
+    const cloudLabel = document.getElementById('cloud-chip-label');
+    const thinkingChip = document.getElementById('chip-thinking-toggle');
+
+    if (cloudChip) {
+        cloudChip.addEventListener('click', () => {
+            const cfgCloud = document.getElementById('cfg-use-cloud');
+            const isNowCloud = !cfgCloud.checked;
+            cfgCloud.checked = isNowCloud;
+            cloudChip.classList.toggle('active', isNowCloud);
+            cloudLabel.textContent = isNowCloud ? 'Cloud' : 'Local';
+            // Show/hide thinking chip (only for local)
+            if (thinkingChip) thinkingChip.style.display = isNowCloud ? 'none' : 'inline-flex';
+            // Auto-apply provider change
+            applyConfig();
+        });
+    }
+
+    if (thinkingChip) {
+        thinkingChip.addEventListener('click', () => {
+            const cfgThinking = document.getElementById('cfg-ollama-thinking');
+            cfgThinking.checked = !cfgThinking.checked;
+            thinkingChip.classList.toggle('active', cfgThinking.checked);
+        });
+    }
 }
 
 // ====== CONVERSATION MANAGEMENT ======
@@ -337,6 +365,24 @@ function renderConversationHistory(messages) {
             const div = appendMsg('assistant', '');
             lastAssistantDiv = div;
             const body = div.querySelector('.msg-body');
+
+            // Render thinking block if present
+            if (msg.thinking_content) {
+                const details = document.createElement('details');
+                details.className = 'thinking-block';
+
+                const summary = document.createElement('summary');
+                summary.className = 'thinking-summary';
+                summary.textContent = '💭 thoughts';
+                details.appendChild(summary);
+
+                const pre = document.createElement('pre');
+                pre.className = 'thinking-content';
+                pre.textContent = msg.thinking_content;
+                details.appendChild(pre);
+
+                body.appendChild(details);
+            }
 
             if (msg.content) {
                 const mdDiv = document.createElement('div');

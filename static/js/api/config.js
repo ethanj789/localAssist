@@ -6,6 +6,15 @@ export let currentUseProvider = 'ollama';
 function syncThinkingRowVisibility(isCloud) {
     const row = document.getElementById('ollama-thinking-row');
     if (row) row.style.display = isCloud ? 'none' : 'flex';
+    // Sync chip toggles in the input bar
+    const thinkingChip = document.getElementById('chip-thinking-toggle');
+    if (thinkingChip) thinkingChip.style.display = isCloud ? 'none' : 'inline-flex';
+    const cloudChip = document.getElementById('chip-cloud-toggle');
+    const cloudLabel = document.getElementById('cloud-chip-label');
+    if (cloudChip) {
+        cloudChip.classList.toggle('active', isCloud);
+        if (cloudLabel) cloudLabel.textContent = isCloud ? 'Cloud' : 'Local';
+    }
 }
 
 export async function loadConfig() {

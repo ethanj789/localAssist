@@ -1,6 +1,6 @@
 class CanvasManager {
     // Background fill used everywhere — eraser strokes match this
-    static BG = '#1a1a1a';
+    static BG = '#141414';
 
     // Geometry simplification — higher = fewer stored points, still looks smooth
     static RDP_TOLERANCE = 1.0;
@@ -459,7 +459,9 @@ class CanvasManager {
 
     _drawPointInContext(ctx, p, baseWidth, color) {
         ctx.beginPath();
-        const r = (baseWidth * p.pressure) / 2;
+        const isEraser = color === CanvasManager.BG;
+        const pressure = isEraser ? 1 : p.pressure;
+        const r = (baseWidth * pressure) / 2;
         ctx.arc(p.x, p.y, Math.max(r, 0.5), 0, Math.PI * 2);
         ctx.fillStyle = color;
         ctx.fill();
@@ -469,7 +471,9 @@ class CanvasManager {
         ctx.beginPath();
         ctx.moveTo(p1.x, p1.y);
         ctx.lineTo(p2.x, p2.y);
-        const pressure = (p1.pressure + p2.pressure) / 2;
+        // Eraser uses fixed width (no pressure) so visual matches cursor & hit-test
+        const isEraser = color === CanvasManager.BG;
+        const pressure = isEraser ? 1 : (p1.pressure + p2.pressure) / 2;
         ctx.lineWidth = Math.max(baseWidth * pressure, 1);
         ctx.lineCap = 'round';
         ctx.lineJoin = 'round';

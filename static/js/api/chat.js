@@ -167,8 +167,9 @@ export function handleStreamEvent(event, data, state) {
     if (event === 'token') {
         state.fullText += data;
         renderMarkdown(mdDiv, state.fullText);
-        // Once content starts flowing, collapse the thinking block
-        if (state.thinkingBlock && state.thinkingBlock.open) {
+        // Collapse the thinking block once when response starts, then leave it alone
+        if (state.thinkingBlock && !state._thinkingCollapsed) {
+            state._thinkingCollapsed = true;
             state.thinkingBlock.open = false;
             const summary = state.thinkingBlock.querySelector('.thinking-summary');
             if (summary) summary.textContent = '💭 thoughts';

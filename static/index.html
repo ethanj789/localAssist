@@ -24,43 +24,48 @@
   <div id="sidebar-overlay" class="sidebar-overlay"></div>
 
   <aside>
-    <div class="logo">yay yippie learning<br><span>// funny bunny</span></div>
+    <div class="sidebar-top">
+      <div class="logo">local<span>assist</span></div>
+      <button id="new-chat-btn" class="btn-new-chat-icon" title="New Chat">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+          <line x1="8" y1="3" x2="8" y2="13"/><line x1="3" y1="8" x2="13" y2="8"/>
+        </svg>
+      </button>
+    </div>
 
     <div class="conversations-section">
-      <div class="section-label">Conversations</div>
-      <button id="new-chat-btn" class="btn btn-new-chat">+ New Chat</button>
       <div id="conversation-list" class="conversation-list">
         <!-- Rendered conversations go here -->
       </div>
     </div>
 
-    <!-- Main Cloud Toggle (Quick Access) -->
-    <div class="main-toggle-row">
-      <label class="toggle-row-label">use cloud</label>
-      <label class="toggle">
-        <input id="cfg-use-cloud" type="checkbox">
-        <span class="toggle-slider"></span>
-      </label>
-    </div>
-
-    <!-- Ollama thinking toggle — only visible when cloud is OFF -->
-    <div class="main-toggle-row" id="ollama-thinking-row" style="display: none;">
-      <label class="toggle-row-label" for="cfg-ollama-thinking">ollama thinking</label>
-      <label class="toggle">
-        <input id="cfg-ollama-thinking" type="checkbox">
-        <span class="toggle-slider"></span>
-      </label>
-    </div>
-
-    <button class="btn btn-apply">apply config</button>
-
     <!-- Collapsible Settings Section -->
     <div class="settings-accordion">
       <button class="settings-toggle-btn" id="settings-toggle-btn">
-        <span>Settings</span>
+        <span>⚙ Settings</span>
         <span class="arrow-icon" id="settings-arrow">▸</span>
       </button>
       <div class="settings-content" id="settings-content" style="display: none;">
+        <div class="settings-group">
+          <div class="section-label">Provider</div>
+          <div class="config-group">
+            <div class="toggle-row">
+              <label>use cloud</label>
+              <label class="toggle">
+                <input id="cfg-use-cloud" type="checkbox">
+                <span class="toggle-slider"></span>
+              </label>
+            </div>
+            <div class="toggle-row" id="ollama-thinking-row">
+              <label>ollama thinking</label>
+              <label class="toggle">
+                <input id="cfg-ollama-thinking" type="checkbox">
+                <span class="toggle-slider"></span>
+              </label>
+            </div>
+          </div>
+        </div>
+
         <div class="settings-group">
           <div class="section-label">Model</div>
           <div class="config-group">
@@ -89,44 +94,48 @@
           <div class="section-label">System Prompt</div>
           <div class="config-row">
             <textarea id="cfg-system-prompt"
-              rows="4">You are a helpful assistant with access to web search tools. Use web_search to look up current information when needed. Always cite your sources.</textarea>
+              rows="3">You are a helpful assistant with access to web search tools. Use web_search to look up current information when needed. Always cite your sources.</textarea>
           </div>
         </div>
 
         <div class="settings-group">
-          <div class="section-label">Theme</div>
-          <div class="theme-select-wrap">
-            <select id="theme-select" class="theme-select">
-              <option value="default">Terminal</option>
-              <option value="light">Paper</option>
-              <option value="solarized">Solarized</option>
-              <option value="rose">Rose Pine</option>
-              <option value="nord">Nord</option>
-              <option value="gruvbox">Gruvbox</option>
-              <option value="dracula">Dracula</option>
-              <option value="monokai">Monokai</option>
-              <option value="oceanic">Oceanic</option>
-              <option value="Nebula">Nebula</option>
-              <option value="lumina">Lumina</option>
-              <option value="aurora">Aurora</option>
-            </select>
+          <div class="section-label">Appearance</div>
+          <div class="config-group">
+            <div class="config-row">
+              <label>theme</label>
+              <div class="theme-select-wrap">
+                <select id="theme-select" class="theme-select">
+                  <option value="default">Terminal</option>
+                  <option value="light">Paper</option>
+                  <option value="solarized">Solarized</option>
+                  <option value="rose">Rose Pine</option>
+                  <option value="nord">Nord</option>
+                  <option value="gruvbox">Gruvbox</option>
+                  <option value="dracula">Dracula</option>
+                  <option value="monokai">Monokai</option>
+                  <option value="oceanic">Oceanic</option>
+                  <option value="Nebula">Nebula</option>
+                  <option value="lumina">Lumina</option>
+                  <option value="aurora">Aurora</option>
+                </select>
+              </div>
+            </div>
+            <div class="config-row">
+              <label>font</label>
+              <div class="font-select-wrap">
+                <select id="font-select" class="font-select">
+                  <option value="dm">DM Sans</option>
+                  <option value="inter">Inter</option>
+                  <option value="nunito">Nunito</option>
+                  <option value="outfit">Outfit</option>
+                  <option value="jakarta">Plus Jakarta Sans</option>
+                </select>
+              </div>
+            </div>
           </div>
         </div>
 
-        <div class="settings-group">
-          <div class="section-label">Font</div>
-          <div class="font-select-wrap">
-            <select id="font-select" class="font-select">
-              <option value="dm">DM Sans</option>
-              <option value="inter">Inter</option>
-              <option value="nunito">Nunito</option>
-              <option value="outfit">Outfit</option>
-              <option value="jakarta">Plus Jakarta Sans</option>
-            </select>
-          </div>
-        </div>
-
-        <!-- <button class="btn btn-apply">apply config</button> -->
+        <button class="btn btn-apply">apply settings</button>
         <button class="btn btn-clear">clear all chats</button>
       </div>
     </div>
@@ -157,23 +166,34 @@
     <div id="messages"></div>
 
     <div class="input-area">
-      <div class="input-wrap">
-        <textarea id="user-input" placeholder="ask something..." rows="1"></textarea>
-        <div class="input-controls">
-          <div class="custom-select" id="model-select-wrapper">
-            <div class="select-trigger" id="model-select-trigger">Default Mode</div>
-            <div class="select-options" id="model-select-options">
-              <div class="select-option" data-value="default">Default Mode</div>
-              <div class="select-option" data-value="coding">Coding Mode</div>
-              <div class="select-option" data-value="thinking">Thinking Mode</div>
+      <div class="input-toolbar">
+        <div class="input-toolbar-left">
+          <div class="chip-select" id="model-select-wrapper">
+            <button class="chip-trigger" id="model-select-trigger" title="Response mode">
+              <span class="chip-icon">⚡</span> Default
+            </button>
+            <div class="chip-dropdown" id="model-select-options">
+              <div class="chip-option active" data-value="default"><span class="chip-opt-icon">⚡</span> Default</div>
+              <div class="chip-option" data-value="coding"><span class="chip-opt-icon">🧑‍💻</span> Coding</div>
+              <div class="chip-option" data-value="thinking"><span class="chip-opt-icon">🧠</span> Thinking</div>
             </div>
             <input type="hidden" id="model-selector" value="default">
           </div>
-          <button id="voice-btn" class="voice-btn" title="click to record, stops on silence">🎤 voice</button>
-          <button id="send-btn">send</button>
+          <button class="chip-toggle" id="chip-cloud-toggle" title="Toggle cloud/local model">
+            <span class="chip-icon">☁️</span> <span id="cloud-chip-label">Local</span>
+          </button>
+          <button class="chip-toggle" id="chip-thinking-toggle" title="Enable extended thinking (local only)" style="display:none;">
+            <span class="chip-icon">💭</span> Think
+          </button>
+        </div>
+        <div class="input-toolbar-right">
+          <button id="voice-btn" class="voice-btn-compact" title="Voice input (auto-stops on silence)">🎤</button>
         </div>
       </div>
-      <div class="hint">enter to send · shift+enter for newline · 🎤 auto-stops on silence</div>
+      <div class="input-wrap">
+        <textarea id="user-input" placeholder="ask something..." rows="1"></textarea>
+        <button id="send-btn">↑</button>
+      </div>
     </div>
   </main>
 

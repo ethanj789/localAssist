@@ -39,6 +39,11 @@ def init_db():
             conn.execute("ALTER TABLE conversations ADD COLUMN provider TEXT")
         except Exception:
             pass  # column already exists
+        # Migrate: add thinking_content column for storing thinking tokens
+        try:
+            conn.execute("ALTER TABLE messages ADD COLUMN thinking_content TEXT")
+        except Exception:
+            pass  # column already exists
         conn.commit()
 
 def create_conversation(title="New Chat", provider: str | None = None) -> str:
@@ -113,7 +118,7 @@ def get_conversation_title(conversation_id: str) -> str | None:
 def get_messages(conversation_id: str) -> list[dict]:
     with get_db_connection() as conn:
         rows = conn.execute(
-            "SELECT role, content, tool_calls, tool_call_id FROM messages WHERE conversation_id = ? ORDER BY id ASC",
+            "SELECT role, content, tool_calls, tool_call_id, thinking_content FROM messages WHERE conversation_id = ? ORDER BY id ASC",
             (conversation_id,)
         ).fetchall()
         
@@ -127,16 +132,18 @@ def get_messages(conversation_id: str) -> list[dict]:
                 msg["tool_calls"] = json.loads(r["tool_calls"])
             if r["tool_call_id"]:
                 msg["tool_call_id"] = r["tool_call_id"]
+            if r["thinking_content"]:
+                msg["thinking_content"] = r["thinking_content"]
             messages.append(msg)
         return messages
 
-def add_message(conversation_id: str, role: str, content: str | None, tool_calls: list | None = None, tool_call_id: str | None = None):
+def add_message(conversation_id: str, role: str, content: str | None, tool_calls: list | None = None, tool_call_id: str | None = None, thinking_content: str | None = None):
     now = datetime.utcnow().isoformat()
     tool_calls_str = json.dumps(tool_calls) if tool_calls else None
     with get_db_connection() as conn:
         conn.execute(
-            "INSERT INTO messages (conversation_id, role, content, tool_calls, tool_call_id, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-            (conversation_id, role, content, tool_calls_str, tool_call_id, now)
+            "INSERT INTO messages (conversation_id, role, content, tool_calls, tool_call_id, thinking_content, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (conversation_id, role, content, tool_calls_str, tool_call_id, thinking_content, now)
         )
         conn.execute(
             "UPDATE conversations SET updated_at = ? WHERE id = ?",

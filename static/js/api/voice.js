@@ -33,7 +33,7 @@ export async function startVoiceRecording() {
         const btn = document.getElementById('voice-btn');
         if (btn) {
             btn.classList.add('recording');
-            btn.textContent = '● stop';
+            btn.textContent = '●';
         }
 
         await voiceRecorder.start();
@@ -53,7 +53,7 @@ export async function stopVoiceRecording() {
     const btn = document.getElementById('voice-btn');
     if (btn) {
         btn.classList.remove('recording');
-        btn.textContent = '🎤 voice';
+        btn.textContent = '🎤';
         btn.disabled = true;
     }
 
