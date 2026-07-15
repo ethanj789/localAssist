@@ -5,6 +5,7 @@ import { handleProposeEdit } from '../ui/editPanel.js';
 
 export let isStreaming = false;
 export let currentConversationId = null;
+let currentAbortController = null;
 
 export function setIsStreaming(value) {
     isStreaming = value;
@@ -12,6 +13,13 @@ export function setIsStreaming(value) {
 
 export function setCurrentConversationId(value) {
     currentConversationId = value;
+}
+
+export function cancelStream() {
+    if (currentAbortController) {
+        currentAbortController.abort();
+        currentAbortController = null;
+    }
 }
 
 export async function clearHistory() {
@@ -112,6 +120,10 @@ export async function sendMessage(customText = null) {
 
     const thinkEl = document.getElementById('cfg-ollama-thinking');
     const ollamaThinking = thinkEl ? thinkEl.checked : false;
+
+    currentAbortController = new AbortController();
+    const signal = currentAbortController.signal;
+
     try {
         const resp = await fetch(`${API}/chat`, {
             method: 'POST',
@@ -122,6 +134,7 @@ export async function sendMessage(customText = null) {
                 conversation_id: currentConversationId,
                 ollama_thinking: ollamaThinking,
             }),
+            signal,
         });
 
         const reader = resp.body.getReader();
@@ -146,9 +159,19 @@ export async function sendMessage(customText = null) {
             }
         }
     } catch (e) {
-        aBody.innerHTML = `<span style="color:var(--warn)">error: ${e.message}</span>`;
-        setStatus(false, 'error');
+        if (e.name === 'AbortError') {
+            // User cancelled — show a subtle indicator
+            const meta = document.createElement('div');
+            meta.className = 'meta';
+            meta.textContent = '⏹ stopped';
+            aBody.appendChild(meta);
+            setStatus(true, 'stopped');
+        } else {
+            aBody.innerHTML = `<span style="color:var(--warn)">error: ${e.message}</span>`;
+            setStatus(false, 'error');
+        }
     } finally {
+        currentAbortController = null;
         cursor.remove();
         setIsStreaming(false);
         document.getElementById('send-btn').disabled = false;

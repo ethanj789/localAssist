@@ -4,6 +4,7 @@ import { initThemes } from './ui/theme.js';
 import { loadConfig, applyConfig, bindReindexButtons } from './api/config.js';
 import {
     sendMessage,
+    cancelStream,
     clearHistory,
     currentConversationId,
     setCurrentConversationId,
@@ -16,7 +17,7 @@ import { initVoiceRecorder, bindVoiceButton } from './api/voice.js';
 import { initMemoryUI } from './ui/memory.js';
 import { initEditPanel, handleProposeEdit } from './ui/editPanel.js';
 import { appendMsg, appendPill, renderMarkdown } from './ui/chatRenderer.js';
-import { initSkillsAutocomplete, loadSkills } from './ui/skillsAutocomplete.js';
+import { initSkillsAutocomplete, loadSkills, isDropdownVisible } from './ui/skillsAutocomplete.js';
 
 async function init() {
     initThemes();
@@ -96,8 +97,28 @@ function bindInputEvents() {
     }
 
     const sendBtn = document.getElementById('send-btn');
+    const stopBtn = document.getElementById('stop-btn');
+
     if (sendBtn) {
         sendBtn.addEventListener('click', sendMessage);
+    }
+
+    if (stopBtn) {
+        stopBtn.addEventListener('click', () => {
+            cancelStream();
+        });
+    }
+
+    // Toggle send/stop button visibility based on streaming state
+    const observer = new MutationObserver(() => {
+        // sendBtn is disabled during streaming
+        const streaming = sendBtn && sendBtn.disabled;
+        if (sendBtn) sendBtn.classList.toggle('hidden', streaming);
+        if (stopBtn) stopBtn.classList.toggle('hidden', !streaming);
+    });
+
+    if (sendBtn) {
+        observer.observe(sendBtn, { attributes: true, attributeFilter: ['disabled'] });
     }
 }
 
@@ -138,6 +159,7 @@ function bindButtons() {
         });
         userInput.addEventListener('keydown', e => {
             if (e.key === 'Enter' && !e.shiftKey) {
+                if (isDropdownVisible()) return; // let the dropdown handle it
                 e.preventDefault();
                 sendMessage();
             }

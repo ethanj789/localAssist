@@ -206,6 +206,37 @@
     box-shadow: 0 4px 12px rgba(124, 255, 182, 0.3);
 }
 
+/* ── Stop/cancel button ── */
+#stop-btn {
+    width: 44px;
+    height: 44px;
+    border-radius: 50%;
+    background: var(--warn, #ff6b6b);
+    color: #fff;
+    border: none;
+    font-size: 16px;
+    font-weight: 700;
+    cursor: pointer;
+    transition: all 0.15s ease;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+}
+
+#stop-btn:hover {
+    transform: scale(1.08);
+    box-shadow: 0 4px 12px rgba(255, 107, 107, 0.3);
+}
+
+#stop-btn.hidden {
+    display: none;
+}
+
+#send-btn.hidden {
+    display: none;
+}
+
 /* ── Voice button (compact) ── */
 .voice-btn-compact {
     width: 36px;

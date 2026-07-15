@@ -9,14 +9,14 @@
         {
             "id": "weather",
             "action": "tool",
-            "tool": "web_search",
-            "args": {"query": "weather today in {location}"}
+            "tool": "recent_events",
+            "args": {"infoType": "weather", "details": "{location}"}
         },
         {
             "id": "news",
             "action": "tool",
-            "tool": "web_search",
-            "args": {"query": "top news today {date}"}
+            "tool": "recent_events",
+            "args": {"infoType": "news", "details": "general"}
         }
     ],
     "result_prompt": "I gathered today's weather for {location} and top news. Write a concise morning briefing — weather first, then 3-5 key headlines with one-sentence summaries each.",

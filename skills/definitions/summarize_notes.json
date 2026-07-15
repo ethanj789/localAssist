@@ -7,16 +7,10 @@
     ],
     "steps": [
         {
-            "id": "semantic_search",
+            "id": "workspace_search",
             "action": "tool",
-            "tool": "search_semantic",
+            "tool": "search_workspace",
             "args": {"query": "{topic}"}
-        },
-        {
-            "id": "list_context",
-            "action": "tool",
-            "tool": "list_files",
-            "args": {"topic": "{topic}"}
         }
     ],
     "result_prompt": "I searched your workspace notes for '{topic}'. Here's what I found. Summarize the relevant information clearly.",

@@ -87,15 +87,13 @@ function handleKeydown(e, input) {
 
     if (e.key === 'ArrowDown') {
         e.preventDefault();
-        activeIndex = Math.min(activeIndex + 1, items.length - 1);
+        activeIndex = (activeIndex + 1) % items.length;
         updateActiveItem(items);
     } else if (e.key === 'ArrowUp') {
         e.preventDefault();
-        activeIndex = Math.max(activeIndex - 1, 0);
+        activeIndex = (activeIndex - 1 + items.length) % items.length;
         updateActiveItem(items);
-    } else if (e.key === 'Tab' || (e.key === 'Enter' && activeIndex >= 0)) {
-        // Only intercept Enter if we have an active selection in the dropdown
-        if (e.key === 'Enter' && activeIndex < 0) return;
+    } else if (e.key === 'Tab' || e.key === 'Enter') {
         e.preventDefault();
         const selected = items[activeIndex >= 0 ? activeIndex : 0];
         if (selected) {
@@ -104,6 +102,13 @@ function handleKeydown(e, input) {
     } else if (e.key === 'Escape') {
         hideDropdown();
     }
+}
+
+/**
+ * Returns true if the skills dropdown is currently visible.
+ */
+export function isDropdownVisible() {
+    return dropdownEl && dropdownEl.style.display !== 'none';
 }
 
 function showDropdown(matches, input) {
