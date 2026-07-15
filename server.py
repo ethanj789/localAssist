@@ -77,6 +77,32 @@ async def lifespan(app: FastAPI):
 
     asyncio.get_event_loop().create_task(_background_index())
 
+    # Warm up Ollama KV cache for the system prompt so subsequent requests
+    # skip the expensive prefill phase (~2k tokens at ~50 tok/s = ~40s saved).
+    async def _warmup_ollama_kv():
+        import httpx
+        from prompts import SYSTEM_PROMPT
+        try:
+            async with httpx.AsyncClient(timeout=120) as client:
+                resp = await client.post(
+                    f"{CONFIG['ollama_base_url']}/api/chat",
+                    json={
+                        "model": CONFIG["model"],
+                        "messages": [
+                            {"role": "system", "content": SYSTEM_PROMPT},
+                            {"role": "user", "content": "hi"},
+                        ],
+                        "options": {"num_predict": 1},
+                        "stream": False,
+                    },
+                )
+                resp.raise_for_status()
+                print("[warmup] Ollama KV cache primed for system prompt.")
+        except Exception as exc:
+            logging.warning(f"[warmup] Ollama KV warm-up failed (non-fatal): {exc}")
+
+    asyncio.get_event_loop().create_task(_warmup_ollama_kv())
+
     yield
     await asyncio.get_event_loop().run_in_executor(None, mcp.stop)
 
