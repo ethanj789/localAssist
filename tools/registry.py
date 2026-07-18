@@ -195,27 +195,28 @@ async def list_tools() -> list[types.Tool]:
         types.Tool(
             name="propose_edit",
             description=(
-                "Propose a file edit or creation. "
+                "Propose a file edit or creation (single or multi-file). "
                 "Always use read_file first to check the current content before editing an existing file. "
-                "Supply one or more search/replace pairs in the 'edits' array. "
-                "Each entry has a 'search' field (exact text to find) and a 'replace' field (replacement text). "
+                "SINGLE-FILE shape: pass 'path', 'edits', and 'summary' at the top level. "
+                "MULTI-FILE shape: pass 'files' (array of {path, edits}) and 'summary'. "
+                "Each entry in 'edits' has a 'search' field (exact text to find) and a 'replace' field (replacement text). "
                 "IMPORTANT: search for the smallest possible unique snippet that contains your change — "
                 "a single line, a few words, or even a single word if it is unambiguous. "
                 "Never search for large blocks or the entire file content unless you are replacing the whole file. "
                 "Smaller searches are more precise and less likely to fail due to whitespace or formatting differences. "
                 "To create a new file, pass a single entry with an empty 'search' and the full file content in 'replace'. "
-                "Matching is case-sensitive; if an exact match fails, a case-insensitive match is attempted automatically."
+                "Matching is case-sensitive; if an exact match fails, case-insensitive and then whitespace-tolerant matches are attempted."
             ),
             inputSchema={
                 "type": "object",
                 "properties": {
                     "path": {
                         "type": "string",
-                        "description": "Path to the file, relative to the aiWorkspace folder."
+                        "description": "Path to the file, relative to the aiWorkspace folder. (Single-file shape only.)"
                     },
                     "edits": {
                         "type": "array",
-                        "description": "List of search/replace pairs to apply in order.",
+                        "description": "List of search/replace pairs to apply in order. (Single-file shape only.)",
                         "items": {
                             "type": "object",
                             "properties": {
@@ -232,12 +233,92 @@ async def list_tools() -> list[types.Tool]:
                         },
                         "minItems": 1
                     },
+                    "files": {
+                        "type": "array",
+                        "description": "Array of file objects for multi-file edits. Each has 'path' and 'edits'.",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "path": {
+                                    "type": "string",
+                                    "description": "Path to the file, relative to the aiWorkspace folder."
+                                },
+                                "edits": {
+                                    "type": "array",
+                                    "description": "List of search/replace pairs to apply in order.",
+                                    "items": {
+                                        "type": "object",
+                                        "properties": {
+                                            "search": {"type": "string"},
+                                            "replace": {"type": "string"}
+                                        },
+                                        "required": ["search", "replace"]
+                                    },
+                                    "minItems": 1
+                                }
+                            },
+                            "required": ["path", "edits"]
+                        },
+                        "minItems": 1
+                    },
                     "summary": {
                         "type": "string",
                         "description": "A very short description of the change (max ~15 words)."
                     }
                 },
-                "required": ["path", "edits", "summary"]
+                "required": ["summary"]
+            }
+        ),
+        types.Tool(
+            name="create_plan",
+            description=(
+                "Create a step-by-step plan for the current task. "
+                "Use this at the start of multi-step tasks to track progress. "
+                "Only one plan can be active per conversation — calling this again replaces the old plan."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "goal": {
+                        "type": "string",
+                        "description": "A short description of what this plan accomplishes."
+                    },
+                    "steps": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Ordered list of step descriptions.",
+                        "minItems": 1
+                    }
+                },
+                "required": ["goal", "steps"]
+            }
+        ),
+        types.Tool(
+            name="update_plan",
+            description=(
+                "Update the active plan: mark a step done/failed, or add new steps. "
+                "Call this after completing or failing a step to keep the plan current."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "step_index": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "description": "Zero-based index of the step to update."
+                    },
+                    "status": {
+                        "type": "string",
+                        "enum": ["done", "failed"],
+                        "description": "New status for the step at step_index."
+                    },
+                    "new_steps": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Additional steps to append to the plan."
+                    }
+                },
+                "required": []
             }
         ),
     ]
@@ -293,18 +374,39 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
         return [types.TextContent(type="text", text=result)]
     elif name == "propose_edit":
         try:
-            edit_data = validate_and_apply_edit(WORKSPACE_ROOT, arguments["path"], arguments["edits"])
-            # Return JSON string so agent.py can intercept it and enter pending state
+            # Detect single-file vs multi-file shape
+            if "files" in arguments:
+                # Multi-file shape: {files: [{path, edits}, ...], summary}
+                file_entries = arguments["files"]
+            elif "path" in arguments and "edits" in arguments:
+                # Single-file shape: {path, edits, summary} → normalize to list
+                file_entries = [{"path": arguments["path"], "edits": arguments["edits"]}]
+            else:
+                return [types.TextContent(type="text", text="REJECTED: Must provide either 'path'+'edits' or 'files' array.")]
+
+            # Validate and compute diffs for each file in the batch
+            batch_results = []
+            for entry in file_entries:
+                edit_data = validate_and_apply_edit(WORKSPACE_ROOT, entry["path"], entry["edits"])
+                batch_results.append({
+                    "path": entry["path"],
+                    "old_content": edit_data["old_content"],
+                    "new_content": edit_data["new_content"],
+                    "target_path": edit_data["target_path"],
+                })
+
             result = {
                 "status": "pending_approval",
-                "old_content": edit_data["old_content"],
-                "new_content": edit_data["new_content"],
-                "target_path": edit_data["target_path"],
+                "files": batch_results,
                 "summary": arguments["summary"]
             }
             return [types.TextContent(type="text", text=json.dumps(result))]
         except Exception as e:
             # If validation fails, return REJECTED immediately
             return [types.TextContent(type="text", text=f"REJECTED: {str(e)}")]
+    elif name in ("create_plan", "update_plan"):
+        # Plan tools are intercepted in agent.py (they need conversation_id).
+        # If they somehow reach here, return a no-op acknowledgment.
+        return [types.TextContent(type="text", text="OK (handled by agent)")]
     else:
         raise ValueError(f"Unknown tool: {name}")

@@ -1,50 +1,40 @@
 import { API } from '../constants.js';
 import { showToast } from '../utils/dom.js';
 
-let currentPendingEdit = null;
+let currentPendingBatch = null;  // {toolCallId, files: [...], summary}
 
 export function initEditPanel() {
     const panel = document.getElementById('edit-panel');
     const closeBtn = document.getElementById('close-edit-panel');
-    const approveBtn = document.getElementById('btn-approve');
-    const rejectBtn = document.getElementById('btn-reject');
-    const reasonInput = document.getElementById('reject-reason');
+    const submitBtn = document.getElementById('btn-submit-batch');
 
     if (!panel) return;
 
     closeBtn.addEventListener('click', () => panel.classList.remove('open'));
 
-    approveBtn.addEventListener('click', async () => {
-        if (!currentPendingEdit) return;
-        await resolveEdit('approve', '');
-    });
-
-    rejectBtn.addEventListener('click', async () => {
-        if (!currentPendingEdit) return;
-        const reason = reasonInput.value.trim();
-        await resolveEdit('reject', reason);
+    submitBtn.addEventListener('click', async () => {
+        if (!currentPendingBatch) return;
+        await submitBatchDecisions();
     });
 
     // Resizer logic
     const resizer = document.getElementById('edit-resizer');
     let isResizing = false;
-    
+
     resizer.addEventListener('mousedown', (e) => {
         isResizing = true;
         document.body.style.cursor = 'ew-resize';
         document.body.style.userSelect = 'none';
     });
-    
+
     window.addEventListener('mousemove', (e) => {
         if (!isResizing) return;
-        // Panel is on the right, so width is (window.innerWidth - e.clientX)
         const newWidth = window.innerWidth - e.clientX;
-        // Enforce min and max widths
         if (newWidth > 300 && newWidth < window.innerWidth - 100) {
             panel.style.width = newWidth + 'px';
         }
     });
-    
+
     window.addEventListener('mouseup', () => {
         if (isResizing) {
             isResizing = false;
@@ -55,32 +45,109 @@ export function initEditPanel() {
 }
 
 export function handleProposeEdit(data) {
-    currentPendingEdit = data;
-    
+    // data shape: {toolCallId, files: [{path, old_content, new_content, target_path}], summary}
+    currentPendingBatch = data;
+
     const panel = document.getElementById('edit-panel');
-    const badge = document.getElementById('edit-badge');
-    const pathEl = document.getElementById('edit-path');
     const summaryEl = document.getElementById('edit-summary');
-    const oldCode = document.getElementById('diff-old');
-    const newCode = document.getElementById('diff-new');
-    const reasonInput = document.getElementById('reject-reason');
-    
-    // reset UI
-    reasonInput.value = '';
-    
-    const isNew = !data.old_content;
+    const cardsContainer = document.getElementById('edit-cards');
+
+    // Reset
+    cardsContainer.innerHTML = '';
+    summaryEl.textContent = data.summary || '';
+
+    // Render a card for each file
+    for (const file of data.files) {
+        const card = createFileCard(file);
+        cardsContainer.appendChild(card);
+    }
+
+    panel.classList.add('open');
+    showToast(`Edit proposed: ${data.files.length} file(s)`);
+}
+
+function createFileCard(file) {
+    const card = document.createElement('div');
+    card.className = 'edit-card';
+    card.dataset.path = file.path;
+    card.dataset.decision = 'approve'; // default to approve
+
+    const isNew = !file.old_content;
+
+    // Header
+    const header = document.createElement('div');
+    header.className = 'edit-card-header';
+
+    const badge = document.createElement('span');
     badge.className = 'badge ' + (isNew ? 'new-file' : 'edit-file');
-    badge.textContent = isNew ? 'NEW FILE' : 'EDIT';
-    
-    pathEl.textContent = data.path;
-    summaryEl.textContent = data.summary;
-    
-    renderDiff(data.old_content || '', data.new_content || '', oldCode, newCode);
-    
-    // Sync scrolling
+    badge.textContent = isNew ? 'NEW' : 'EDIT';
+
+    const pathEl = document.createElement('span');
+    pathEl.className = 'edit-card-path';
+    pathEl.textContent = file.path;
+
+    const toggleContainer = document.createElement('div');
+    toggleContainer.className = 'edit-card-toggle';
+
+    const approveBtn = document.createElement('button');
+    approveBtn.className = 'toggle-approve active';
+    approveBtn.textContent = 'Approve';
+    approveBtn.addEventListener('click', () => {
+        card.dataset.decision = 'approve';
+        approveBtn.classList.add('active');
+        rejectBtn.classList.remove('active');
+        card.classList.remove('rejected');
+    });
+
+    const rejectBtn = document.createElement('button');
+    rejectBtn.className = 'toggle-reject';
+    rejectBtn.textContent = 'Reject';
+    rejectBtn.addEventListener('click', () => {
+        card.dataset.decision = 'reject';
+        rejectBtn.classList.add('active');
+        approveBtn.classList.remove('active');
+        card.classList.add('rejected');
+    });
+
+    toggleContainer.appendChild(approveBtn);
+    toggleContainer.appendChild(rejectBtn);
+
+    header.appendChild(badge);
+    header.appendChild(pathEl);
+    header.appendChild(toggleContainer);
+
+    // Diff view
+    const diffView = document.createElement('div');
+    diffView.className = 'edit-card-diff';
+
+    const oldPane = document.createElement('div');
+    oldPane.className = 'diff-pane';
+    const oldHeader = document.createElement('div');
+    oldHeader.className = 'diff-pane-header';
+    oldHeader.textContent = 'Original';
+    const oldCode = document.createElement('div');
+    oldCode.className = 'diff-code';
+    oldPane.appendChild(oldHeader);
+    oldPane.appendChild(oldCode);
+
+    const newPane = document.createElement('div');
+    newPane.className = 'diff-pane';
+    const newHeader = document.createElement('div');
+    newHeader.className = 'diff-pane-header';
+    newHeader.textContent = 'Proposed';
+    const newCode = document.createElement('div');
+    newCode.className = 'diff-code';
+    newPane.appendChild(newHeader);
+    newPane.appendChild(newCode);
+
+    diffView.appendChild(oldPane);
+    diffView.appendChild(newPane);
+
+    renderDiff(file.old_content || '', file.new_content || '', oldCode, newCode);
+
+    // Sync scrolling between panes
     let isSyncingLeft = false;
     let isSyncingRight = false;
-    
     oldCode.onscroll = () => {
         if (!isSyncingLeft) {
             isSyncingRight = true;
@@ -89,7 +156,6 @@ export function handleProposeEdit(data) {
         }
         isSyncingLeft = false;
     };
-    
     newCode.onscroll = () => {
         if (!isSyncingRight) {
             isSyncingLeft = true;
@@ -99,23 +165,22 @@ export function handleProposeEdit(data) {
         isSyncingRight = false;
     };
 
-    panel.classList.add('open');
-    showToast('New file edit proposed');
+    card.appendChild(header);
+    card.appendChild(diffView);
+
+    return card;
 }
 
 function renderDiff(oldText, newText, oldContainer, newContainer) {
     oldContainer.innerHTML = '';
     newContainer.innerHTML = '';
 
-    // If jsdiff is not loaded, fallback to simple text
     if (typeof Diff === 'undefined') {
         oldContainer.textContent = oldText;
         newContainer.textContent = newText;
         return;
     }
 
-    // Collect the line-level diff chunks, then group consecutive removed/added
-    // pairs so we can do a secondary word-level diff on them.
     const diff = Diff.diffLines(oldText, newText);
 
     let i = 0;
@@ -123,30 +188,25 @@ function renderDiff(oldText, newText, oldContainer, newContainer) {
         const part = diff[i];
 
         if (part.removed && i + 1 < diff.length && diff[i + 1].added) {
-            // We have a removed block immediately followed by an added block.
-            // Split both into individual lines and pair them up for word-level diffs.
             const removedLines = splitLines(part.value);
             const addedLines   = splitLines(diff[i + 1].value);
             const pairCount    = Math.min(removedLines.length, addedLines.length);
 
-            // Paired lines — render with intra-line word diff
             for (let p = 0; p < pairCount; p++) {
                 renderIntraLineDiff(removedLines[p], addedLines[p], oldContainer, newContainer);
             }
 
-            // Surplus removed lines (more removed than added)
             for (let p = pairCount; p < removedLines.length; p++) {
                 appendPlainLine(oldContainer, removedLines[p], 'del');
                 appendPlainLine(newContainer, '', 'empty');
             }
 
-            // Surplus added lines (more added than removed)
             for (let p = pairCount; p < addedLines.length; p++) {
                 appendPlainLine(oldContainer, '', 'empty');
                 appendPlainLine(newContainer, addedLines[p], 'add');
             }
 
-            i += 2; // consume both the removed and the added chunk
+            i += 2;
         } else if (part.added) {
             appendLines(newContainer, part.value, 'add');
             appendLines(oldContainer, '\n'.repeat(part.count), 'empty');
@@ -163,10 +223,6 @@ function renderDiff(oldText, newText, oldContainer, newContainer) {
     }
 }
 
-/**
- * Renders a single paired old/new line with word-level highlights so only
- * the changed words are coloured instead of the entire line.
- */
 function renderIntraLineDiff(oldLine, newLine, oldContainer, newContainer) {
     const wordDiff = Diff.diffWords(oldLine, newLine);
 
@@ -187,7 +243,6 @@ function renderIntraLineDiff(oldLine, newLine, oldContainer, newContainer) {
             span.textContent = token.value;
             newDiv.appendChild(span);
         } else {
-            // Unchanged token — show in both sides as plain text
             oldDiv.appendChild(document.createTextNode(token.value));
             newDiv.appendChild(document.createTextNode(token.value));
         }
@@ -218,40 +273,68 @@ function appendLines(container, text, type) {
     });
 }
 
-async function resolveEdit(action, reason) {
+async function submitBatchDecisions() {
+    if (!currentPendingBatch) return;
+
+    const cards = document.querySelectorAll('#edit-cards .edit-card');
+    const decisions = [];
+
+    cards.forEach(card => {
+        decisions.push({
+            path: card.dataset.path,
+            action: card.dataset.decision || 'approve'
+        });
+    });
+
     try {
         const res = await fetch(`${API}/resolve_edit`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-                toolCallId: currentPendingEdit.toolCallId,
-                action,
-                reason
+                toolCallId: currentPendingBatch.toolCallId,
+                decisions
             })
         });
 
         if (res.ok) {
-            showToast(`Edit ${action === 'approve' ? 'approved' : 'rejected'}`);
-            addHistoryItem(currentPendingEdit, action, reason);
-            currentPendingEdit = null;
+            const result = await res.json();
+            const approved = result.applied || [];
+            const rejected = result.rejected || [];
+
+            let msg = '';
+            if (approved.length) msg += `Approved: ${approved.join(', ')}`;
+            if (rejected.length) msg += `${msg ? '. ' : ''}Rejected: ${rejected.join(', ')}`;
+            showToast(msg || 'Batch resolved');
+
+            addHistoryItem(currentPendingBatch, approved, rejected);
+            currentPendingBatch = null;
             document.getElementById('edit-panel').classList.remove('open');
         } else {
             const data = await res.json();
-            showToast(data.detail || 'Failed to resolve edit');
+            showToast(data.detail || 'Failed to resolve edits');
         }
     } catch (e) {
         console.error(e);
-        showToast('Error resolving edit');
+        showToast('Error resolving edits');
     }
 }
 
-function addHistoryItem(edit, action, reason) {
+function addHistoryItem(batch, approved, rejected) {
     const list = document.getElementById('edit-history-list');
     const div = document.createElement('div');
-    div.className = `history-item ${action === 'approve' ? 'approved' : 'rejected'}`;
+
+    const allApproved = rejected.length === 0;
+    const allRejected = approved.length === 0;
+    div.className = `history-item ${allRejected ? 'rejected' : 'approved'}`;
+
+    const fileSummaries = batch.files.map(f => {
+        const wasApproved = approved.includes(f.path);
+        return `<span class="${wasApproved ? 'hist-approved' : 'hist-rejected'}">${f.path}</span>`;
+    }).join(', ');
+
     div.innerHTML = `
-        <strong>${edit.path}</strong>: ${edit.summary}<br>
-        <small>${action.toUpperCase()}${reason ? ' - ' + reason : ''}</small>
+        <strong>${batch.summary}</strong><br>
+        <small>${fileSummaries}</small>
     `;
     list.prepend(div);
 }

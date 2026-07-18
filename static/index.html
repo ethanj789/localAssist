@@ -227,27 +227,14 @@
   <div id="edit-panel" class="edit-panel">
     <div id="edit-resizer" class="edit-resizer"></div>
     <div class="edit-header">
-      <h2><span id="edit-badge" class="badge"></span> <span id="edit-path"></span></h2>
+      <h2>Proposed Edits</h2>
       <button class="close-edit-panel" id="close-edit-panel">&times;</button>
     </div>
     <div class="edit-content">
-      <div class="diff-view">
-        <div class="diff-pane">
-          <div class="diff-pane-header">Original</div>
-          <div class="diff-code" id="diff-old"></div>
-        </div>
-        <div class="diff-pane">
-          <div class="diff-pane-header">Proposed</div>
-          <div class="diff-code" id="diff-new"></div>
-        </div>
-      </div>
+      <div class="edit-batch-summary" id="edit-summary"></div>
+      <div class="edit-cards-container" id="edit-cards"></div>
       <div class="diff-controls">
-        <div class="summary" id="edit-summary"></div>
-        <div class="diff-actions">
-          <button class="btn-approve" id="btn-approve">Approve</button>
-          <input type="text" id="reject-reason" placeholder="Reason for rejection (optional)">
-          <button class="btn-reject" id="btn-reject">Reject</button>
-        </div>
+        <button class="btn-approve" id="btn-submit-batch">Submit All</button>
       </div>
       <div class="edit-history">
         <div class="edit-history-header">Edit History</div>

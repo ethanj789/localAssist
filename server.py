@@ -240,7 +240,7 @@ async def update_config(updates: dict):
 async def clear_history():
     # db.clear_all_conversations()
     agent.global_edit_log.clear()
-    agent.global_pending_edit = None
+    agent.global_pending_edits.clear()
     return {"status": "cleared"}
 
 
@@ -261,38 +261,67 @@ async def delete_memory_slot(index: int):
     save_memory(data)
     return {"status": "ok"}
 
+class FileDecision(BaseModel):
+    path: str
+    action: str  # "approve" | "reject"
+
 class ResolveEditRequest(BaseModel):
     toolCallId: str
-    action: str  # "approve" | "reject"
-    reason: str = ""
+    decisions: list[FileDecision]
 
 @app.post("/resolve_edit")
 async def resolve_edit(req: ResolveEditRequest):
-    if not agent.global_pending_edit or agent.global_pending_edit["toolCallId"] != req.toolCallId:
-        raise HTTPException(status_code=400, detail="No matching pending edit.")
+    # Find the pending batch by toolCallId
+    batch = None
+    batch_idx = None
+    for i, b in enumerate(agent.global_pending_edits):
+        if b["toolCallId"] == req.toolCallId:
+            batch = b
+            batch_idx = i
+            break
 
-    pending = agent.global_pending_edit
-    conv_id = pending.get("conversation_id")
+    if batch is None:
+        raise HTTPException(status_code=400, detail="No matching pending edit batch.")
+
+    conv_id = batch.get("conversation_id")
     if not conv_id:
-        raise HTTPException(status_code=400, detail="Pending edit does not have a conversation ID.")
+        raise HTTPException(status_code=400, detail="Pending edit batch does not have a conversation ID.")
 
-    # Mutate history in DB
-    if req.action == "approve":
-        content = "APPROVED"
-        # Write to disk
-        target = Path(pending["target_path"])
-        target.parent.mkdir(parents=True, exist_ok=True)
-        with target.open("w", encoding="utf-8") as f:
-            f.write(pending["new_content"])
-        agent.global_edit_log.append(f"{pending['path']} — {pending['summary']} — APPROVED")
-    else:
-        reason_str = req.reason.strip() if req.reason else "No reason provided"
-        content = f"REJECTED: {reason_str}"
-        agent.global_edit_log.append(f"{pending['path']} — {pending['summary']} — REJECTED")
+    # Process each file decision
+    approved_paths = []
+    rejected_paths = []
+
+    for decision in req.decisions:
+        # Find the matching file entry in the batch
+        file_entry = next((f for f in batch["files"] if f["path"] == decision.path), None)
+        if not file_entry:
+            continue
+
+        if decision.action == "approve":
+            target = Path(file_entry["target_path"])
+            target.parent.mkdir(parents=True, exist_ok=True)
+            with target.open("w", encoding="utf-8") as f:
+                f.write(file_entry["new_content"])
+            approved_paths.append(decision.path)
+            agent.global_edit_log.append(f"{decision.path} — {batch['summary']} — APPROVED")
+        else:
+            rejected_paths.append(decision.path)
+            agent.global_edit_log.append(f"{decision.path} — {batch['summary']} — REJECTED")
+
+    # Build tool result message for the conversation
+    parts = []
+    if approved_paths:
+        parts.append(f"Applied: {', '.join(approved_paths)}")
+    if rejected_paths:
+        parts.append(f"Rejected: {', '.join(rejected_paths)} (user rejected)")
+    content = ". ".join(parts) if parts else "No files processed."
 
     db.update_message_content(conv_id, req.toolCallId, content)
-    agent.global_pending_edit = None
-    return {"status": "ok"}
+
+    # Remove this batch from pending
+    agent.global_pending_edits.pop(batch_idx)
+
+    return {"status": "ok", "applied": approved_paths, "rejected": rejected_paths}
 
 
 @app.get("/skills")

@@ -125,3 +125,73 @@
 .skill-progress-step.pending .step-icon::after {
     content: '·';
 }
+
+
+/* ── Plan tracker (in-chat step progress) ── */
+.plan-tracker {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin: 8px 0;
+    padding: 10px 14px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    font-size: 12px;
+    transition: opacity 0.2s;
+}
+
+.plan-tracker-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-weight: 500;
+    color: var(--accent);
+    font-size: 13px;
+    margin-bottom: 2px;
+}
+
+.plan-tracker-step {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 3px 0;
+    color: var(--muted);
+    transition: color 0.15s;
+}
+
+.plan-tracker-step.current {
+    color: var(--accent2);
+    font-weight: 500;
+}
+
+.plan-tracker-step.done {
+    color: var(--ok);
+}
+
+.plan-tracker-step.failed {
+    color: var(--warn);
+}
+
+.plan-tracker-step .plan-step-icon {
+    width: 16px;
+    text-align: center;
+    font-size: 11px;
+    flex-shrink: 0;
+}
+
+.plan-tracker-step.pending .plan-step-icon::after {
+    content: '○';
+}
+
+.plan-tracker-step.current .plan-step-icon::after {
+    content: '→';
+}
+
+.plan-tracker-step.done .plan-step-icon::after {
+    content: '✓';
+}
+
+.plan-tracker-step.failed .plan-step-icon::after {
+    content: '✗';
+}

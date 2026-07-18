@@ -12,11 +12,17 @@ from config import (
 )
 import llm_provider
 import prompts
+import plans
 
 log = logging.getLogger(__name__)
 
-global_pending_edit = None
+global_pending_edits: list[dict] = []
 global_edit_log: list[str] = []
+
+
+def _count_pending_files() -> int:
+    """Count total files across all pending edit batches."""
+    return sum(len(batch.get("files", [])) for batch in global_pending_edits)
 
 
 def _sse(event: str, data: str) -> str:
@@ -32,7 +38,7 @@ def _prune_history(history: list[dict], keep_last_n_tool_results: int = 2) -> li
     for msg in reversed(history):
         if msg["role"] == "tool":
             # EXEMPT pending edits from pruning
-            if msg.get("content") == "edit pending approval":
+            if msg.get("content") and "edit pending approval" in msg.get("content", ""):
                 pruned.append(msg)
                 continue
                 
@@ -156,7 +162,7 @@ async def generate_and_save_title(conversation_id: str, first_message: str):
 
 
 async def agent_loop(user_message: str, mcp, model_override: str = "default", conversation_id: str = None, ollama_thinking: bool = False) -> AsyncGenerator[str, None]:
-    global global_pending_edit
+    global global_pending_edits
     import db
     try:
         if conversation_id:
@@ -263,7 +269,7 @@ async def agent_loop(user_message: str, mcp, model_override: str = "default", co
                 }))
 
                 available_tools = []
-                last_was_pending_edit = len(trimmed_history) > 0 and trimmed_history[-1].get("role") == "tool" and trimmed_history[-1].get("content") == "edit pending approval"
+                last_was_pending_edit = len(trimmed_history) > 0 and trimmed_history[-1].get("role") == "tool" and trimmed_history[-1].get("content") == "edit pending approval. provide a short summary of the changes."
                 
                 if not last_was_pending_edit:
                     for t in ollama_tools:
@@ -276,7 +282,7 @@ async def agent_loop(user_message: str, mcp, model_override: str = "default", co
                             continue
                         if func_name == "save_user_preference" and memory_count >= max_memory:
                             continue
-                        if global_pending_edit and func_name == "propose_edit":
+                        if _count_pending_files() >= 5 and func_name == "propose_edit":
                             continue
                         available_tools.append(t)
 
@@ -532,7 +538,20 @@ async def agent_loop(user_message: str, mcp, model_override: str = "default", co
                     yield _sse("searching", json.dumps(event_payload))
                     log.info("tool_call | %s | args=%s", name, json.dumps(args))
 
-                    result = await mcp.call_tool(name, args)
+                    # Intercept plan tools (they need conversation_id, not MCP)
+                    if name == "create_plan":
+                        plan = plans.create_plan(conversation_id, args["goal"], args["steps"])
+                        result = json.dumps({"status": "plan_created", "goal": plan["goal"], "steps": len(plan["steps"])})
+                        yield _sse("plan_update", json.dumps({"plan": plan}))
+                    elif name == "update_plan":
+                        plan = plans.update_plan(conversation_id, args.get("step_index"), args.get("status"), args.get("new_steps"))
+                        if plan:
+                            result = json.dumps({"status": "plan_updated", "plan": plans.format_plan_status(plan)})
+                            yield _sse("plan_update", json.dumps({"plan": plan}))
+                        else:
+                            result = "No active plan for this conversation."
+                    else:
+                        result = await mcp.call_tool(name, args)
 
                     if name == "fetch_webpage":
                         try:
@@ -560,16 +579,15 @@ async def agent_loop(user_message: str, mcp, model_override: str = "default", co
                         try:
                             parsed = json.loads(result)
                             if parsed.get("status") == "pending_approval":
-                                global_pending_edit = {
+                                batch_files = parsed.get("files", [])
+                                batch_entry = {
                                     "toolCallId": tc.id,
-                                    "path": args.get("path"),
+                                    "files": batch_files,
                                     "summary": parsed.get("summary"),
-                                    "old_content": parsed.get("old_content"),
-                                    "new_content": parsed.get("new_content"),
-                                    "target_path": parsed.get("target_path"),
                                     "conversation_id": conversation_id
                                 }
-                                yield _sse("propose_edit", json.dumps(global_pending_edit))
+                                global_pending_edits.append(batch_entry)
+                                yield _sse("propose_edit", json.dumps(batch_entry))
                                 result = "edit pending approval. provide a short summary of the changes."
                         except Exception:
                             yield _sse("status", "Edit proposed but failed validation. Agent will retry.")
@@ -586,7 +604,8 @@ async def agent_loop(user_message: str, mcp, model_override: str = "default", co
                     if name == "save_user_preference":
                         memory_count += 1
 
-                    tool_count += 1
+                    if name not in ("create_plan", "update_plan"):
+                        tool_count += 1
                     yield _sse("search_result", json.dumps({"tool": name, "count": tool_count}))
 
                     pending_tool_messages.append((tc.id, result))
@@ -599,6 +618,12 @@ async def agent_loop(user_message: str, mcp, model_override: str = "default", co
                         "content": content,
                     })
                     db.add_message(conversation_id, "tool", content, tool_call_id=tool_call_id)
+
+                # Append plan status to the last tool result (ephemeral, not persisted)
+                active_plan = plans.get_plan(conversation_id)
+                if active_plan and conversation_history and conversation_history[-1]["role"] == "tool":
+                    plan_status = plans.format_plan_status(active_plan)
+                    conversation_history[-1]["content"] += f"\n\n{plan_status}"
             except Exception as e:
                 if resolved_provider == "groq" and hasattr(e, 'response'):
                     log.error("Groq 400 body: %s", e.response.text)

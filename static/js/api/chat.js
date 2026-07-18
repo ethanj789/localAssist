@@ -282,6 +282,35 @@ export function handleStreamEvent(event, data, state) {
         handleProposeEdit(editData);
     }
 
+    if (event === 'plan_update') {
+        const { plan } = JSON.parse(data);
+        const aBody = aDiv.querySelector('.msg-body');
+        // Remove any existing plan tracker in this message
+        const existing = aBody.querySelector('.plan-tracker');
+        if (existing) existing.remove();
+
+        const tracker = document.createElement('div');
+        tracker.className = 'plan-tracker';
+
+        const header = document.createElement('div');
+        header.className = 'plan-tracker-header';
+        header.textContent = `📋 ${plan.goal}`;
+        tracker.appendChild(header);
+
+        plan.steps.forEach((step, i) => {
+            const stepEl = document.createElement('div');
+            let cls = 'pending';
+            if (step.status === 'done') cls = 'done';
+            else if (step.status === 'failed') cls = 'failed';
+            else if (i === plan.current_step) cls = 'current';
+            stepEl.className = `plan-tracker-step ${cls}`;
+            stepEl.innerHTML = `<span class="plan-step-icon"></span> <span>${step.description}</span>`;
+            tracker.appendChild(stepEl);
+        });
+
+        aBody.appendChild(tracker);
+    }
+
     if (event === 'skill_start') {
         const info = JSON.parse(data);
         const aBody = aDiv.querySelector('.msg-body');
