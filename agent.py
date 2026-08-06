@@ -57,6 +57,67 @@ def _sse(event: str, data: str) -> str:
     return f"data: {payload}\n\n"
 
 
+def _extract_tool_call_from_text(content: str, available_tools: list[dict]) -> SimpleNamespace | None:
+    """Detect when a model emits a tool call as plain text instead of a structured
+    tool_call.  Handles patterns like:
+        tool_name{key: "value", ...}
+        tool_name({"key": "value", ...})
+        tool_name{"key": "value"}
+    Returns a SimpleNamespace matching the tool_call shape, or None."""
+    import re
+
+    if not content:
+        return None
+
+    tool_names = {t["function"]["name"] for t in available_tools}
+
+    # Strip surrounding whitespace and any markdown fencing
+    stripped = content.strip()
+    # Some models (gemma4) emit <|"|> instead of actual quote characters
+    stripped = stripped.replace('<|"|>', '"')
+    log.debug("_extract_tool_call_from_text | checking content (len=%d): %r", len(stripped), stripped[:200])
+    # Remove thinking/reasoning preamble — look for tool call anywhere in the text
+    for name in tool_names:
+        # Patterns: name{...}  or  name({...})  or  name( {...} )
+        patterns = [
+            rf'{re.escape(name)}\s*\(\s*(\{{.*\}})\s*\)',   # name({...})
+            rf'{re.escape(name)}\s*(\{{.*\}})',              # name{...}
+        ]
+        for pattern in patterns:
+            match = re.search(pattern, stripped, re.DOTALL)
+            if match:
+                json_str = match.group(1)
+                try:
+                    args = json.loads(json_str)
+                    if isinstance(args, dict):
+                        return SimpleNamespace(
+                            id=f"call_{name}_extracted",
+                            function=SimpleNamespace(
+                                name=name,
+                                arguments=json.dumps(args),
+                            ),
+                        )
+                except json.JSONDecodeError:
+                    # Try fixing common issues: unquoted keys, single quotes
+                    try:
+                        fixed = json_str.replace("'", '"')
+                        # Quote unquoted keys: {action:"v"} -> {"action":"v"}
+                        fixed = re.sub(r'(\{|,)\s*([a-zA-Z_]\w*)\s*:', r'\1"\2":', fixed)
+                        args = json.loads(fixed)
+                        if isinstance(args, dict):
+                            return SimpleNamespace(
+                                id=f"call_{name}_extracted",
+                                function=SimpleNamespace(
+                                    name=name,
+                                    arguments=json.dumps(args),
+                                ),
+                            )
+                    except json.JSONDecodeError:
+                        continue
+
+    return None
+
+
 
 
 def _prune_history(history: list[dict], keep_last_n_tool_results: int = 2) -> list[dict]:
@@ -419,6 +480,24 @@ async def agent_loop(user_message: str, mcp, model_override: str = "default", co
                                 (assembled_content or "")[:120],
                                 [tc.function.name for tc in assembled_tool_calls],
                             )
+
+                        # Fallback: some models (especially gemma4) emit tool calls
+                        # as plain text content instead of structured tool_calls.
+                        # Detect patterns like: tool_name{...json...} or tool_name({...})
+                        # and convert them into real tool calls.
+                        if not assembled_tool_calls and assembled_content:
+                            extracted = _extract_tool_call_from_text(assembled_content, ollama_tools)
+                            if extracted:
+                                log.warning(
+                                    "ollama emitted tool call as text — extracting: %s",
+                                    extracted.function.name,
+                                )
+                                assembled_tool_calls = [extracted]
+                                assembled_content = None
+                                # Tell the UI to discard the text tokens already streamed
+                                if content_started:
+                                    yield _sse("clear_tokens", "")
+                                    content_started = False
 
                         msg = SimpleNamespace(
                             content=assembled_content,
