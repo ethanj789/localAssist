@@ -1,3 +1,7 @@
+/* ═══════════════════════════════════════════════════════════════
+   Edit Panel — slide-out panel for reviewing proposed edits
+   ═══════════════════════════════════════════════════════════════ */
+
 .edit-panel {
     position: fixed;
     top: 0;
@@ -14,6 +18,10 @@
     box-shadow: -4px 0 24px rgba(0, 0, 0, 0.1);
 }
 
+.edit-panel.open {
+    right: 0;
+}
+
 .edit-resizer {
     position: absolute;
     top: 0;
@@ -28,12 +36,9 @@
     opacity: 0.5;
 }
 
-.edit-panel.open {
-    right: 0;
-}
-
+/* Header */
 .edit-header {
-    padding: 16px 24px;
+    padding: 14px 20px;
     border-bottom: 1px solid var(--border);
     display: flex;
     justify-content: space-between;
@@ -45,21 +50,7 @@
     margin: 0;
     font-size: 1rem;
     font-weight: 500;
-    display: flex;
-    align-items: center;
-    gap: 12px;
 }
-
-.badge {
-    padding: 2px 8px;
-    border-radius: 12px;
-    font-size: 0.75rem;
-    font-weight: 600;
-    text-transform: uppercase;
-}
-
-.badge.new-file { background: var(--ok); color: var(--bg); }
-.badge.edit-file { background: var(--warn); color: var(--bg); }
 
 .close-edit-panel {
     background: none;
@@ -68,9 +59,9 @@
     font-size: 1.5rem;
     cursor: pointer;
 }
-
 .close-edit-panel:hover { color: var(--text); }
 
+/* Content area */
 .edit-content {
     flex: 1;
     display: flex;
@@ -79,221 +70,102 @@
     min-height: 0;
 }
 
-.diff-view {
-    flex: 1;
-    display: flex;
-    overflow: hidden;
-    background: var(--surface-dim);
-    min-height: 0;
-}
-
-.diff-pane {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    overflow: hidden;
-    border-right: 1px solid var(--border);
-    min-height: 0;
-}
-
-.diff-pane:last-child { border-right: none; }
-
-.diff-pane-header {
-    padding: 8px 12px;
-    background: var(--surface);
-    border-bottom: 1px solid var(--border);
-    font-size: 0.8rem;
-    color: var(--text-dim);
-    font-weight: 500;
-    text-align: center;
-}
-
-.diff-code {
-    flex: 1;
-    overflow: auto;
-    padding: 12px;
-    font-family: 'IBM Plex Mono', monospace;
-    font-size: 0.85rem;
-    line-height: 1.5;
-    white-space: pre;
-    color: var(--text);
-}
-
-.diff-line {
-    display: block;
-    min-height: 1.5em;
-    padding: 0 4px;
-}
-
-.diff-line.add { background-color: rgba(46, 160, 67, 0.15); }
-.diff-line.del { background-color: rgba(248, 81, 73, 0.15); }
-.diff-line.empty { background-color: transparent; }
-
-/* Intra-line word-level highlights — only the changed tokens */
-.intra-add {
-    background-color: rgba(46, 160, 67, 0.45);
-    border-radius: 2px;
-    padding: 0 1px;
-}
-.intra-del {
-    background-color: rgba(248, 81, 73, 0.45);
-    border-radius: 2px;
-    padding: 0 1px;
-    text-decoration: line-through;
-    text-decoration-color: rgba(248, 81, 73, 0.7);
-}
-
-.diff-controls {
-    padding: 16px 24px;
-    background: var(--surface);
-    border-top: 1px solid var(--border);
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-}
-
-.diff-controls .summary {
+/* Batch summary */
+.edit-batch-summary {
+    padding: 10px 20px;
     font-size: 0.9rem;
     color: var(--text-dim);
-    margin-bottom: 8px;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface);
 }
 
-.diff-actions {
+/* Bulk action bar */
+.edit-bulk-actions {
     display: flex;
-    gap: 12px;
+    gap: 8px;
+    padding: 10px 20px;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface-dim);
 }
 
-.diff-actions input {
-    flex: 1;
-    background: var(--bg);
-    border: 1px solid var(--border);
-    color: var(--text);
-    padding: 8px 12px;
-    border-radius: 6px;
-    outline: none;
-    font-family: inherit;
+.btn-approve-all,
+.btn-reject-all {
+    border: none;
+    padding: 7px 16px;
+    border-radius: 5px;
+    cursor: pointer;
+    font-weight: 600;
+    font-size: 0.8rem;
+    font-family: var(--sans);
+    transition: filter 0.15s ease;
 }
 
-.diff-actions input:focus { border-color: var(--accent); }
-
-.btn-approve {
+.btn-approve-all {
     background: #22c55e;
     color: #050505;
-    border: none;
-    padding: 10px 22px;
-    border-radius: 6px;
-    cursor: pointer;
-    font-weight: 600;
-    font-size: 0.9rem;
-    font-family: var(--sans);
-    transition: filter 0.15s ease;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
 }
-.btn-approve:hover { filter: brightness(0.88); }
-.btn-approve:active { filter: brightness(0.78); }
-
-.btn-reject {
+.btn-reject-all {
     background: var(--warn);
     color: #050505;
-    border: none;
-    padding: 10px 22px;
-    border-radius: 6px;
-    cursor: pointer;
-    font-weight: 600;
-    font-size: 0.9rem;
-    font-family: var(--sans);
-    transition: filter 0.15s ease;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-}
-.btn-reject:hover { filter: brightness(0.88); }
-.btn-reject:active { filter: brightness(0.78); }
-
-/* Edit History */
-.edit-history {
-    height: 200px;
-    border-top: 1px solid var(--border);
-    background: var(--bg);
-    display: flex;
-    flex-direction: column;
+    margin-left: auto;
 }
 
-.edit-history-header {
-    padding: 8px 24px;
-    background: var(--surface);
-    border-bottom: 1px solid var(--border);
-    font-size: 0.85rem;
-    font-weight: 500;
-    color: var(--text-dim);
-}
+.btn-approve-all:hover,
+.btn-reject-all:hover { filter: brightness(0.88); }
+.btn-approve-all:active,
+.btn-reject-all:active { filter: brightness(0.78); }
 
-.edit-history-list {
-    flex: 1;
-    overflow-y: auto;
-    padding: 12px 24px;
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-}
-
-.history-item {
-    font-size: 0.85rem;
-    padding: 8px 12px;
-    border-radius: 6px;
-    background: var(--surface);
-    border: 1px solid var(--border);
-}
-.history-item.approved { border-left: 3px solid var(--ok); }
-.history-item.rejected { border-left: 3px solid var(--warn); }
-
-
-/* Multi-file batch layout */
-.edit-batch-summary {
-    padding: 12px 24px;
-    font-size: 0.9rem;
-    color: var(--text-dim);
-    border-bottom: 1px solid var(--border);
-    background: var(--surface);
-}
-
+/* Cards container */
 .edit-cards-container {
     flex: 1;
     overflow-y: auto;
-    padding: 16px;
+    padding: 12px 16px;
     display: flex;
     flex-direction: column;
-    gap: 16px;
+    gap: 12px;
     min-height: 0;
 }
 
-/* Individual file card */
+/* Individual edit card */
 .edit-card {
     border: 1px solid var(--border);
     border-radius: 8px;
     background: var(--surface);
     overflow: hidden;
-    transition: border-color 0.2s ease;
+    transition: border-color 0.2s ease, opacity 0.2s ease;
 }
 .edit-card.rejected {
     border-color: var(--warn);
-    opacity: 0.7;
+    opacity: 0.6;
 }
 
 .edit-card-header {
     display: flex;
     align-items: center;
-    gap: 10px;
-    padding: 10px 14px;
+    flex-wrap: wrap;
+    gap: 8px;
+    padding: 8px 12px;
     background: var(--surface-dim);
     border-bottom: 1px solid var(--border);
 }
 
+/* Action badge (replace, insert_before, insert_after, create) */
+.badge.action-badge {
+    padding: 2px 8px;
+    border-radius: 12px;
+    font-size: 0.7rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+}
+.action-replace { background: var(--warn); color: var(--bg); }
+.action-insert_before { background: #3b82f6; color: #fff; }
+.action-insert_after { background: #8b5cf6; color: #fff; }
+.action-create { background: var(--ok); color: var(--bg); }
+
 .edit-card-path {
     flex: 1;
-    font-size: 0.85rem;
+    font-size: 0.82rem;
     font-family: 'IBM Plex Mono', monospace;
     color: var(--text);
     overflow: hidden;
@@ -301,38 +173,77 @@
     white-space: nowrap;
 }
 
-.edit-card-toggle {
+/* Approve/Reject toggle per card */
+.edit-card-actions {
     display: flex;
     gap: 4px;
+    margin-left: auto;
 }
 
-.edit-card-toggle button {
-    border: 1px solid var(--border);
-    background: var(--bg);
-    color: var(--text-dim);
+.card-btn-approve,
+.card-btn-reject {
+    border: none;
     padding: 4px 10px;
     border-radius: 4px;
-    font-size: 0.75rem;
-    font-weight: 500;
+    font-size: 0.72rem;
+    font-weight: 600;
     cursor: pointer;
-    transition: all 0.15s ease;
+    transition: filter 0.15s ease, opacity 0.15s ease;
 }
 
-.toggle-approve.active {
+.card-btn-approve {
     background: #22c55e;
     color: #050505;
-    border-color: #22c55e;
 }
-
-.toggle-reject.active {
+.card-btn-reject {
     background: var(--warn);
     color: #050505;
+}
+.card-btn-approve:hover,
+.card-btn-reject:hover { filter: brightness(0.88); }
+.card-btn-approve:disabled,
+.card-btn-reject:disabled { opacity: 0.4; cursor: not-allowed; }
+
+/* Resolved animations */
+.edit-card.resolved-approved {
+    border-color: var(--ok);
+    opacity: 0;
+    transform: translateX(20px);
+    transition: opacity 0.3s ease, transform 0.3s ease;
+}
+.edit-card.resolved-rejected {
     border-color: var(--warn);
+    opacity: 0;
+    transform: translateX(20px);
+    transition: opacity 0.3s ease, transform 0.3s ease;
 }
 
+/* Anchor preview */
+.edit-card-anchor {
+    width: 100%;
+    padding: 4px 0 0;
+    font-size: 0.75rem;
+    color: var(--text-dim);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.edit-card-anchor .anchor-label {
+    color: var(--text-dim);
+    opacity: 0.7;
+}
+.edit-card-anchor code {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.72rem;
+    background: var(--bg);
+    padding: 1px 4px;
+    border-radius: 3px;
+}
+
+/* Diff view within a card */
 .edit-card-diff {
     display: flex;
-    max-height: 300px;
+    max-height: 280px;
     overflow: hidden;
 }
 
@@ -346,10 +257,19 @@
 }
 .edit-card-diff .diff-pane:last-child { border-right: none; }
 
-.edit-card-diff .diff-code {
+.diff-pane-header {
+    padding: 6px 10px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    font-size: 0.75rem;
+    color: var(--text-dim);
+    font-weight: 500;
+    text-align: center;
+}
+
+.diff-code {
     flex: 1;
     overflow: auto;
-    max-height: 260px;
     padding: 8px;
     font-family: 'IBM Plex Mono', monospace;
     font-size: 0.8rem;
@@ -358,6 +278,68 @@
     color: var(--text);
 }
 
-/* History per-file status */
-.hist-approved { color: var(--ok); }
-.hist-rejected { color: var(--warn); text-decoration: line-through; }
+.edit-card-diff .diff-code {
+    max-height: 240px;
+}
+
+/* Diff line styles */
+.diff-line {
+    display: block;
+    min-height: 1.4em;
+    padding: 0 4px;
+}
+
+.diff-line.add { background-color: rgba(46, 160, 67, 0.15); }
+.diff-line.del { background-color: rgba(248, 81, 73, 0.15); }
+.diff-line.empty { background-color: transparent; }
+
+/* Intra-line word-level highlights */
+.intra-add {
+    background-color: rgba(46, 160, 67, 0.45);
+    border-radius: 2px;
+    padding: 0 1px;
+}
+.intra-del {
+    background-color: rgba(248, 81, 73, 0.45);
+    border-radius: 2px;
+    padding: 0 1px;
+    text-decoration: line-through;
+    text-decoration-color: rgba(248, 81, 73, 0.7);
+}
+
+/* Edit History */
+.edit-history {
+    height: 180px;
+    border-top: 1px solid var(--border);
+    background: var(--bg);
+    display: flex;
+    flex-direction: column;
+}
+
+.edit-history-header {
+    padding: 8px 20px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    font-size: 0.8rem;
+    font-weight: 500;
+    color: var(--text-dim);
+}
+
+.edit-history-list {
+    flex: 1;
+    overflow-y: auto;
+    padding: 10px 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.history-item {
+    font-size: 0.8rem;
+    padding: 6px 10px;
+    border-radius: 5px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+}
+.history-item.approved { border-left: 3px solid var(--ok); }
+.history-item.rejected { border-left: 3px solid var(--warn); }

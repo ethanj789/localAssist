@@ -9,6 +9,7 @@ import ast
 import json
 import fnmatch
 import logging
+from difflib import SequenceMatcher
 from pathlib import Path
 from mcp import types
 
@@ -159,6 +160,51 @@ def _is_glob_pattern(query: str) -> bool:
     return bool(_GLOB_CHARS_RE.search(query))
 
 
+# ── Fuzzy filename matching ───────────────────────────────────────────────────
+
+_FUZZY_FILENAME_THRESHOLD = 0.75  # minimum similarity ratio to consider a fuzzy match
+
+
+def _fuzzy_filename_match(query: str, filename: str) -> float:
+    """
+    Score how well *query* matches *filename* using fuzzy logic.
+    Returns a similarity score in [0, 1]. Higher is better.
+
+    Handles cases like:
+      - "mathHelper.py" → "mathHelpers.py"  (missing plural 's')
+      - "mathHelper" → "mathHelpers.py"     (query without extension)
+      - "server" → "server.py"             (stem-only query)
+
+    A score >= _FUZZY_FILENAME_THRESHOLD is considered a match.
+    """
+    q = query.lower()
+    f = filename.lower()
+
+    # Exact substring — already handled by the caller, but just in case
+    if q in f:
+        return 1.0
+
+    # Compare query stem vs filename stem (ignore extensions for matching)
+    q_stem = Path(q).stem
+    f_stem = Path(f).stem
+    q_ext = Path(q).suffix
+    f_ext = Path(f).suffix
+
+    # If query has an extension and it doesn't match, reduce score
+    ext_penalty = 0.0
+    if q_ext and f_ext and q_ext != f_ext:
+        ext_penalty = 0.15
+
+    # Primary: compare stems using SequenceMatcher
+    stem_ratio = SequenceMatcher(None, q_stem, f_stem).ratio()
+
+    # Bonus: if one stem contains the other as a substring
+    if q_stem in f_stem or f_stem in q_stem:
+        stem_ratio = max(stem_ratio, 0.85)
+
+    return max(0.0, stem_ratio - ext_penalty)
+
+
 def _list_files_by_glob(pattern: str) -> list[types.TextContent]:
     """
     List workspace files matching a glob/wildcard pattern.
@@ -240,9 +286,15 @@ async def _list_files(topic: str | None = None) -> list[types.TextContent]:
                     section_lines.append(f"  {rel_path}")
                 continue
 
-            # Topic set: filename match
+            # Topic set: filename match (exact substring)
             if topic_lower in f.lower():
                 section_lines.append(f"  {rel_path}  [match: filename]")
+                continue
+
+            # Topic set: filename match (fuzzy — catches typos, missing plurals, etc.)
+            fuzzy_score = _fuzzy_filename_match(topic_lower, f)
+            if fuzzy_score >= _FUZZY_FILENAME_THRESHOLD:
+                section_lines.append(f"  {rel_path}  [match: filename (fuzzy)]")
                 continue
 
             # Topic set: content match (only for scannable files)
@@ -302,7 +354,7 @@ async def _read_file(path: str, start: int = 1, count: int | None = None) -> lis
     try:
         size = target.stat().st_size
     except FileNotFoundError:
-        return [types.TextContent(type="text", text=f"File not found: {path}")]
+        return [types.TextContent(type="text", text=f"File not found: {path}. Include the file extension (e.g. 'draft.txt' not 'draft'). Try search_workspace with '*' to list all files.")]
 
     with target.open("rb") as f:
         raw_bytes = f.read(MAX_SCAN_BYTES)
@@ -358,7 +410,7 @@ async def _read_code_skeleton(path: str) -> list[types.TextContent]:
     try:
         target.stat().st_size
     except FileNotFoundError:
-        return [types.TextContent(type="text", text=f"File not found: {path}")]
+        return [types.TextContent(type="text", text=f"File not found: {path}. Include the file extension (e.g. 'draft.txt' not 'draft'). Try search_workspace with '*' to list all files.")]
 
     try:
         with target.open("r", encoding="utf-8", errors="replace") as f:

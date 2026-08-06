@@ -7,7 +7,7 @@ log = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
-# Whitespace normalization helpers
+# Whitespace normalization helpers (used for anchor matching)
 # ---------------------------------------------------------------------------
 
 def _build_norm_map(text: str) -> tuple[str, list[int]]:
@@ -22,50 +22,15 @@ def _build_norm_map(text: str) -> tuple[str, list[int]]:
     """
     norm: list[str] = []
     pos_map: list[int] = []
-
-    for line in text.split('\n'):
-        # If not the first line, append the newline separator
-        if norm and norm[-1] != '\n':
-            # Find the newline position in the original text.
-            # We track it by looking at the last mapped original position and
-            # scanning forward to the newline.
-            pass  # handled below
-
-        stripped = line.strip()
-        if not stripped:
-            # Empty/whitespace-only line → keep as a single newline boundary
-            continue  # will be represented by the '\n' appended between lines
-
-        # Collapse internal whitespace runs
-        prev_was_space = False
-        for ch in stripped:
-            if ch in (' ', '\t'):
-                if not prev_was_space:
-                    norm.append(' ')
-                    # pos_map entry for collapsed space — use first char position
-                    # (not critical for replacement, just needs to be in range)
-                    pos_map.append(-1)  # placeholder, filled in pass 2
-                prev_was_space = True
-            else:
-                norm.append(ch)
-                pos_map.append(-1)  # placeholder
-                prev_was_space = False
-
-    # The simple approach above loses positional info. Let's do a proper
-    # single-pass that keeps the original index tracking.
-    # -- Re-implement with correct tracking --
-    norm = []
-    pos_map = []
     i = 0
     length = len(text)
-    line_start = True  # are we in leading whitespace?
+    line_start = True
 
     while i < length:
         ch = text[i]
 
         if ch == '\n':
-            # Before appending the newline, strip any trailing space we may
-            # have just added (collapse trailing ws on the line).
+            # Strip any trailing space we may have just added
             while norm and norm[-1] == ' ':
                 norm.pop()
                 pos_map.pop()
@@ -75,10 +40,8 @@ def _build_norm_map(text: str) -> tuple[str, list[int]]:
             i += 1
         elif ch in (' ', '\t'):
             if line_start:
-                # Skip leading whitespace
-                i += 1
+                i += 1  # skip leading whitespace
             else:
-                # Internal whitespace: collapse to single space
                 if not norm or norm[-1] != ' ':
                     norm.append(' ')
                     pos_map.append(i)
@@ -97,47 +60,77 @@ def _build_norm_map(text: str) -> tuple[str, list[int]]:
     return ''.join(norm), pos_map
 
 
-def _whitespace_tolerant_find(content: str, search_text: str) -> tuple[int, int] | None:
+# ---------------------------------------------------------------------------
+# Anchor finding — 3-tier matching
+# ---------------------------------------------------------------------------
+
+def _find_anchor(content: str, anchor: str) -> tuple[int, int]:
     """
-    Attempt to find search_text in content using whitespace-normalized matching.
-    Returns (start, end) character indices in the *original* content, or None.
-    Raises ValueError if more than one match is found.
+    Find anchor text in content. Returns (start, end) indices in original content.
+    Tries three tiers:
+      1. Case-sensitive exact match
+      2. Case-insensitive exact match
+      3. Whitespace-tolerant match
+
+    Raises ValueError if not found or ambiguous (multiple matches).
     """
+    # --- Tier 1: Case-sensitive ---
+    if anchor in content:
+        count = content.count(anchor)
+        if count > 1:
+            raise ValueError(
+                f"Anchor matched {count} times (case-sensitive). "
+                f"Provide more context to make it unique.\n{anchor}"
+            )
+        start = content.index(anchor)
+        return (start, start + len(anchor))
+
+    # --- Tier 2: Case-insensitive ---
+    escaped = re.escape(anchor)
+    ci_matches = list(re.finditer(escaped, content, flags=re.IGNORECASE))
+    if len(ci_matches) == 1:
+        m = ci_matches[0]
+        return (m.start(), m.end())
+    if len(ci_matches) > 1:
+        raise ValueError(
+            f"Anchor matched {len(ci_matches)} times (case-insensitive). "
+            f"Provide more context.\n{anchor}"
+        )
+
+    # --- Tier 3: Whitespace-tolerant ---
+    log.debug("Anchor not found with exact/CI, trying whitespace-tolerant.")
     norm_content, content_map = _build_norm_map(content)
-    norm_search, _ = _build_norm_map(search_text)
+    norm_anchor, _ = _build_norm_map(anchor)
 
-    if not norm_search:
-        return None
+    if not norm_anchor:
+        raise ValueError(f"Anchor is empty or whitespace-only.\n{anchor}")
 
-    # Find all occurrences in normalized space
     matches = []
     start_pos = 0
     while True:
-        idx = norm_content.find(norm_search, start_pos)
+        idx = norm_content.find(norm_anchor, start_pos)
         if idx == -1:
             break
         matches.append(idx)
         start_pos = idx + 1
 
     if len(matches) == 0:
-        return None
+        raise ValueError(
+            f"Anchor not found (tried exact, case-insensitive, whitespace-tolerant).\n{anchor}"
+        )
     if len(matches) > 1:
-        raise ValueError(f"whitespace-tolerant search matched {len(matches)} times")
+        raise ValueError(
+            f"Anchor matched {len(matches)} times (whitespace-tolerant). "
+            f"Provide more context.\n{anchor}"
+        )
 
     match_start_norm = matches[0]
-    match_end_norm = matches[0] + len(norm_search) - 1
+    match_end_norm = matches[0] + len(norm_anchor) - 1
 
-    # Map back to original positions
     orig_start = content_map[match_start_norm]
-    orig_end = content_map[match_end_norm]
+    orig_end = content_map[match_end_norm] + 1
 
-    # Extend orig_end to include the full character (it points to the last
-    # matched char's start position in original). We want the slice to go
-    # one past it.
-    orig_end += 1
-
-    # Extend to include any trailing whitespace up to (but not including) the
-    # next newline or non-space char, so the replacement is clean.
+    # Extend to include trailing whitespace (not newlines)
     while orig_end < len(content) and content[orig_end] in (' ', '\t'):
         orig_end += 1
 
@@ -145,109 +138,122 @@ def _whitespace_tolerant_find(content: str, search_text: str) -> tuple[int, int]
 
 
 # ---------------------------------------------------------------------------
-# Main edit logic
+# Action handlers
 # ---------------------------------------------------------------------------
 
-def apply_edits(original_content: str, edits: list[dict]) -> str:
+def _apply_single_edit(content: str, edit: dict) -> str:
     """
-    Applies a list of {search, replace} edits to the original content.
-    Each edit is a dict with:
-      - 'search': the exact text to find (empty string for new-file creation)
-      - 'replace': the text to substitute in
+    Apply a single edit to content.
 
-    Matching tiers:
-      1. Case-sensitive exact match
-      2. Case-insensitive exact match
-      3. Whitespace-tolerant match (normalized whitespace, preserving newline boundaries)
+    Edit shape: {action, anchor, content}
+      - action: "replace" | "insert_before" | "insert_after" | "create"
+      - anchor: text to locate in the file (ignored for "create")
+      - content: the new text (replacement or insertion content, or full file for "create")
+
+    Returns the modified content.
+    Raises ValueError on failure.
     """
-    if not edits:
-        return original_content
+    action = edit.get("action", "replace")
+    anchor = edit.get("anchor", "")
+    new_text = edit.get("content", "")
 
-    new_content = original_content
-    for i, edit in enumerate(edits):
-        search_text: str = edit.get("search", "")
-        replace_text: str = edit.get("replace", "")
+    if action == "create":
+        # Full file creation — content is the entire file
+        return new_text
 
-        # New-file shortcut: empty search means replace everything
-        if search_text == "":
-            new_content = replace_text
-            continue
+    if not anchor:
+        raise ValueError(f"Action '{action}' requires a non-empty anchor.")
 
-        # --- Tier 1: Case-sensitive attempt ---
-        if search_text in new_content:
-            count = new_content.count(search_text)
-            if count > 1:
-                raise ValueError(
-                    f"Edit #{i+1}: search text matched {count} times. "
-                    f"Please provide more context to make it unique.\n{search_text}"
-                )
-            new_content = new_content.replace(search_text, replace_text)
-            continue
+    # Find the anchor
+    start, end = _find_anchor(content, anchor)
 
-        # --- Tier 2: Case-insensitive fallback ---
-        log.debug("Edit #%d: exact match not found, trying case-insensitive fallback.", i + 1)
-        escaped = re.escape(search_text)
-        ci_matches = re.findall(escaped, new_content, flags=re.IGNORECASE)
-        if len(ci_matches) == 1:
-            new_content = re.sub(escaped, replace_text.replace("\\", r"\\\\"), new_content, count=1, flags=re.IGNORECASE)
-            continue
-        if len(ci_matches) > 1:
-            raise ValueError(
-                f"Edit #{i+1}: case-insensitive search matched {len(ci_matches)} times. "
-                f"Please provide more context.\n{search_text}"
-            )
+    if action == "replace":
+        return content[:start] + new_text + content[end:]
 
-        # --- Tier 3: Whitespace-tolerant fallback ---
-        log.debug("Edit #%d: case-insensitive not found, trying whitespace-tolerant match.", i + 1)
-        try:
-            span = _whitespace_tolerant_find(new_content, search_text)
-        except ValueError as e:
-            raise ValueError(
-                f"Edit #{i+1}: {e}. Please provide more context.\n{search_text}"
-            )
+    elif action == "insert_before":
+        # Insert content before the anchor. Ensure it ends with a newline
+        # so the anchor stays on its own line.
+        insertion = new_text if new_text.endswith('\n') else new_text + '\n'
+        return content[:start] + insertion + content[start:]
 
-        if span is None:
-            raise ValueError(
-                f"Edit #{i+1}: search text not found in file "
-                f"(tried exact, case-insensitive, and whitespace-tolerant).\n{search_text}"
-            )
+    elif action == "insert_after":
+        # Insert content after the anchor. Find the end of the anchor's line.
+        # If anchor ends mid-line, extend to the end of that line.
+        line_end = end
+        while line_end < len(content) and content[line_end] != '\n':
+            line_end += 1
+        if line_end < len(content):
+            line_end += 1  # include the newline
 
-        start, end = span
-        new_content = new_content[:start] + replace_text + new_content[end:]
+        insertion = new_text if new_text.endswith('\n') else new_text + '\n'
+        return content[:line_end] + insertion + content[line_end:]
 
-    return new_content
+    else:
+        raise ValueError(f"Unknown action: '{action}'. Use replace, insert_before, insert_after, or create.")
 
-def validate_and_apply_edit(workspace_root: Path, relative_path: str, edits: list[dict]) -> dict:
+
+# ---------------------------------------------------------------------------
+# Public API
+# ---------------------------------------------------------------------------
+
+def validate_and_preview_edit(workspace_root: Path, edit: dict) -> dict:
     """
-    Validates the path and applies a list of {search, replace} edits.
-    Returns the old and new content.
-    Raises ValueError if validation fails.
+    Validate a single edit and compute old/new content preview.
+
+    edit shape: {path, action, anchor, content}
+
+    Returns:
+      {
+        "path": relative path,
+        "old_content": full file before,
+        "new_content": full file after this edit,
+        "target_path": absolute resolved path
+      }
+
+    Raises ValueError on validation failure.
     """
+    relative_path = edit.get("path", "")
+    if not relative_path:
+        raise ValueError("Edit is missing 'path'.")
+
     target = (workspace_root / relative_path).resolve()
-    
+
     try:
         target.relative_to(workspace_root)
     except ValueError:
         raise ValueError("Access denied: path is outside the aiWorkspace folder.")
-        
+
     if target.is_symlink():
         raise ValueError("Access denied: symlinks not allowed.")
-        
+
+    action = edit.get("action", "replace")
     old_content = ""
-    if target.exists():
+
+    if action == "create":
+        # For create, file should not already exist (or we overwrite)
+        if target.exists():
+            try:
+                with target.open("r", encoding="utf-8") as f:
+                    old_content = f.read()
+            except Exception:
+                pass
+    else:
+        # For other actions, file must exist
+        if not target.exists():
+            raise ValueError(f"File not found: {relative_path}")
         if not target.is_file():
             raise ValueError("Access denied: target is not a file.")
-        
         try:
             with target.open("r", encoding="utf-8") as f:
                 old_content = f.read()
         except Exception as e:
             raise ValueError(f"Failed to read file: {e}")
-            
-    new_content = apply_edits(old_content, edits)
-        
+
+    new_content = _apply_single_edit(old_content, edit)
+
     return {
+        "path": relative_path,
         "old_content": old_content,
         "new_content": new_content,
-        "target_path": str(target)
+        "target_path": str(target),
     }

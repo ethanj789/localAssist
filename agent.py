@@ -5,6 +5,7 @@ import logging
 from types import SimpleNamespace
 from typing import AsyncGenerator
 import os
+from pathlib import Path
 from config import (
     CONFIG, MAX_HISTORY, SUMMARIZE_THRESHOLD, SUMMARIZE_KEEP_LAST,
     CODING_MODEL, SUMMARY_MODEL, THINKING_MODEL, load_memory,
@@ -16,13 +17,39 @@ import plans
 
 log = logging.getLogger(__name__)
 
-global_pending_edits: list[dict] = []
+# ─── Pending edits persistence ─────────────────────────────────────────────
+PENDING_EDITS_FILE = Path(__file__).parent / "pending_edits.json"
+
+def _load_pending_edits() -> list[dict]:
+    """Load pending edits from disk on startup."""
+    if PENDING_EDITS_FILE.exists():
+        try:
+            with PENDING_EDITS_FILE.open("r", encoding="utf-8") as f:
+                data = json.load(f)
+            if isinstance(data, list):
+                log.info("Loaded %d pending edit batch(es) from disk.", len(data))
+                return data
+        except Exception as e:
+            log.warning("Failed to load pending edits file: %s", e)
+    return []
+
+
+def _save_pending_edits() -> None:
+    """Persist pending edits to disk."""
+    try:
+        with PENDING_EDITS_FILE.open("w", encoding="utf-8") as f:
+            json.dump(global_pending_edits, f, ensure_ascii=False)
+    except Exception as e:
+        log.warning("Failed to save pending edits: %s", e)
+
+
+global_pending_edits: list[dict] = _load_pending_edits()
 global_edit_log: list[str] = []
 
 
-def _count_pending_files() -> int:
-    """Count total files across all pending edit batches."""
-    return sum(len(batch.get("files", [])) for batch in global_pending_edits)
+def _count_pending_edits() -> int:
+    """Count total individual edits across all pending batches."""
+    return sum(len(batch.get("edits", [])) for batch in global_pending_edits)
 
 
 def _sse(event: str, data: str) -> str:
@@ -282,7 +309,7 @@ async def agent_loop(user_message: str, mcp, model_override: str = "default", co
                             continue
                         if func_name == "save_user_preference" and memory_count >= max_memory:
                             continue
-                        if _count_pending_files() >= 5 and func_name == "propose_edit":
+                        if _count_pending_edits() >= 5 and func_name == "propose_edit":
                             continue
                         available_tools.append(t)
 
@@ -538,18 +565,22 @@ async def agent_loop(user_message: str, mcp, model_override: str = "default", co
                     yield _sse("searching", json.dumps(event_payload))
                     log.info("tool_call | %s | args=%s", name, json.dumps(args))
 
-                    # Intercept plan tools (they need conversation_id, not MCP)
-                    if name == "create_plan":
-                        plan = plans.create_plan(conversation_id, args["goal"], args["steps"])
-                        result = json.dumps({"status": "plan_created", "goal": plan["goal"], "steps": len(plan["steps"])})
-                        yield _sse("plan_update", json.dumps({"plan": plan}))
-                    elif name == "update_plan":
-                        plan = plans.update_plan(conversation_id, args.get("step_index"), args.get("status"), args.get("new_steps"))
-                        if plan:
-                            result = json.dumps({"status": "plan_updated", "plan": plans.format_plan_status(plan)})
+                    # Intercept plan tool (needs conversation_id, not MCP)
+                    if name == "plan":
+                        action = args.get("action")
+                        if action == "create":
+                            plan = plans.create_plan(conversation_id, args["goal"], args["steps"])
+                            result = json.dumps({"status": "plan_created", "goal": plan["goal"], "steps": len(plan["steps"])})
                             yield _sse("plan_update", json.dumps({"plan": plan}))
+                        elif action == "update":
+                            plan = plans.update_plan(conversation_id, args.get("step_index"), args.get("status"), args.get("new_steps"))
+                            if plan:
+                                result = json.dumps({"status": "plan_updated", "plan": plans.format_plan_status(plan)})
+                                yield _sse("plan_update", json.dumps({"plan": plan}))
+                            else:
+                                result = "No active plan for this conversation."
                         else:
-                            result = "No active plan for this conversation."
+                            result = f"Unknown plan action: {action}"
                     else:
                         result = await mcp.call_tool(name, args)
 
@@ -579,19 +610,23 @@ async def agent_loop(user_message: str, mcp, model_override: str = "default", co
                         try:
                             parsed = json.loads(result)
                             if parsed.get("status") == "pending_approval":
-                                batch_files = parsed.get("files", [])
+                                edits_list = parsed.get("edits", [])
                                 batch_entry = {
                                     "toolCallId": tc.id,
-                                    "files": batch_files,
+                                    "edits": edits_list,
                                     "summary": parsed.get("summary"),
                                     "conversation_id": conversation_id
                                 }
                                 global_pending_edits.append(batch_entry)
+                                _save_pending_edits()
                                 yield _sse("propose_edit", json.dumps(batch_entry))
                                 result = "edit pending approval. provide a short summary of the changes."
                         except Exception:
+                            # result already contains the REJECTED message from the tool — 
+                            # pass it through so the model sees the error details
                             yield _sse("status", "Edit proposed but failed validation. Agent will retry.")
-                            pass
+                            if "REJECTED" not in result:
+                                result = f"REJECTED: Edit failed validation. Error: {result}. Remember: every edit needs path, action, anchor (short — one line max), and content."
 
                     if use_remote_provider and name in ("web_search", "fetch_webpage"):
                         result = await _summarize_tool_result(resolved_provider, name, result)
@@ -604,7 +639,7 @@ async def agent_loop(user_message: str, mcp, model_override: str = "default", co
                     if name == "save_user_preference":
                         memory_count += 1
 
-                    if name not in ("create_plan", "update_plan"):
+                    if name not in ("plan",):
                         tool_count += 1
                     yield _sse("search_result", json.dumps({"tool": name, "count": tool_count}))
 

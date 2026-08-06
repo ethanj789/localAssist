@@ -241,6 +241,7 @@ async def clear_history():
     # db.clear_all_conversations()
     agent.global_edit_log.clear()
     agent.global_pending_edits.clear()
+    agent._save_pending_edits()
     return {"status": "cleared"}
 
 
@@ -261,13 +262,14 @@ async def delete_memory_slot(index: int):
     save_memory(data)
     return {"status": "ok"}
 
-class FileDecision(BaseModel):
-    path: str
+class EditDecision(BaseModel):
+    index: int  # index of the edit within the batch's edits array
     action: str  # "approve" | "reject"
 
 class ResolveEditRequest(BaseModel):
     toolCallId: str
-    decisions: list[FileDecision]
+    decisions: list[EditDecision] = []  # per-edit decisions
+    bulk_action: str = ""  # "approve_all" | "reject_all" | "" (use individual decisions)
 
 @app.post("/resolve_edit")
 async def resolve_edit(req: ResolveEditRequest):
@@ -287,41 +289,71 @@ async def resolve_edit(req: ResolveEditRequest):
     if not conv_id:
         raise HTTPException(status_code=400, detail="Pending edit batch does not have a conversation ID.")
 
-    # Process each file decision
-    approved_paths = []
-    rejected_paths = []
+    edits = batch.get("edits", [])
 
-    for decision in req.decisions:
-        # Find the matching file entry in the batch
-        file_entry = next((f for f in batch["files"] if f["path"] == decision.path), None)
-        if not file_entry:
-            continue
+    # Build decision map: index -> "approve" | "reject"
+    decision_map = {}
+    if req.bulk_action == "approve_all":
+        for i in range(len(edits)):
+            decision_map[i] = "approve"
+    elif req.bulk_action == "reject_all":
+        for i in range(len(edits)):
+            decision_map[i] = "reject"
+    else:
+        for d in req.decisions:
+            decision_map[d.index] = d.action
 
-        if decision.action == "approve":
-            target = Path(file_entry["target_path"])
+    # Process each edit
+    approved = []
+    rejected = []
+
+    for edit_entry in edits:
+        idx = edit_entry["index"]
+        action = decision_map.get(idx)
+        if not action:
+            continue  # no decision for this edit yet — skip (stays pending)
+
+        label = f"{edit_entry['path']} ({edit_entry['action']})"
+
+        if action == "approve":
+            target = Path(edit_entry["target_path"])
             target.parent.mkdir(parents=True, exist_ok=True)
             with target.open("w", encoding="utf-8") as f:
-                f.write(file_entry["new_content"])
-            approved_paths.append(decision.path)
-            agent.global_edit_log.append(f"{decision.path} — {batch['summary']} — APPROVED")
+                f.write(edit_entry["new_content"])
+            approved.append(label)
+            agent.global_edit_log.append(f"{label} — {batch['summary']} — APPROVED")
         else:
-            rejected_paths.append(decision.path)
-            agent.global_edit_log.append(f"{decision.path} — {batch['summary']} — REJECTED")
+            rejected.append(label)
+            agent.global_edit_log.append(f"{label} — {batch['summary']} — REJECTED")
 
-    # Build tool result message for the conversation
+    # Remove resolved edits from the batch
+    resolved_indices = set(decision_map.keys())
+    remaining_edits = [e for e in edits if e["index"] not in resolved_indices]
+
+    # Build tool result message
     parts = []
-    if approved_paths:
-        parts.append(f"Applied: {', '.join(approved_paths)}")
-    if rejected_paths:
-        parts.append(f"Rejected: {', '.join(rejected_paths)} (user rejected)")
-    content = ". ".join(parts) if parts else "No files processed."
+    if approved:
+        parts.append(f"Applied: {', '.join(approved)}")
+    if rejected:
+        parts.append(f"Rejected: {', '.join(rejected)} (user rejected)")
+    content = ". ".join(parts) if parts else "No edits processed."
 
-    db.update_message_content(conv_id, req.toolCallId, content)
+    if remaining_edits:
+        # Partial resolution — keep batch with remaining edits
+        batch["edits"] = remaining_edits
+    else:
+        # Fully resolved — remove batch and update DB message
+        agent.global_pending_edits.pop(batch_idx)
+        db.update_message_content(conv_id, req.toolCallId, content)
 
-    # Remove this batch from pending
-    agent.global_pending_edits.pop(batch_idx)
+    agent._save_pending_edits()
+    return {"status": "ok", "applied": approved, "rejected": rejected, "remaining": len(remaining_edits)}
 
-    return {"status": "ok", "applied": approved_paths, "rejected": rejected_paths}
+
+@app.get("/pending_edits")
+async def get_pending_edits():
+    """Return all currently pending edit batches (for frontend reload recovery)."""
+    return agent.global_pending_edits
 
 
 @app.get("/skills")

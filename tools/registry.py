@@ -14,7 +14,7 @@ from tools.events import _recent_events
 from tools.emails import _draft_email
 from tools.search import _search_semantic
 from tools.memory import _manage_memory
-from tools.edit import validate_and_apply_edit
+from tools.edit import validate_and_preview_edit
 from tools.files import WORKSPACE_ROOT
 import json
 
@@ -45,16 +45,19 @@ async def list_tools() -> list[types.Tool]:
         types.Tool(
             name="search_workspace",
             description=(
-                "Search the local project workspace for code, functions, classes, configs, prompts, APIs, logic, and files. "
-                "Use this as the primary discovery tool for coding and project-related requests before web search. "
-                "Returns exact keyword matches and semantic conceptual matches."
+                "List or search files in the workspace. "
+                "To list ALL files, omit 'query' or pass '*'. "
+                "To filter by extension, use glob patterns like '*.py', '*.txt', '**/*.js'. "
+                "To search file names and content by keyword, pass a plain word or phrase (e.g. 'greet', 'import math'). "
+                "Results include file names and matching content snippets. "
+                "Always start here to discover what files exist before trying to read them."
             ),
             inputSchema={
                 "type": "object",
                 "properties": {
                     "query": {
                         "type": "string",
-                        "description": "The search term or conceptual query. Omit to list all files."
+                        "description": "A glob pattern (e.g. *, *.py, **/*.txt) to filter files, or a keyword/phrase to search content. Omit to list all files."
                     }
                 },
                 "required": []
@@ -63,15 +66,16 @@ async def list_tools() -> list[types.Tool]:
         types.Tool(
             name="read_file",
             description=(
-                "Read the contents or structural outline of a file. "
-                "Pass a relative path like 'server.py' or 'utils/helpers.py'. "
-                "Set mode to 'skeleton' to get an overview of the file's architecture first."
+                "Read the contents of a file. "
+                "Pass the exact file name with extension (e.g. 'draft.txt', 'simpleHelper.py'). "
+                "Use search_workspace first to discover exact file names if unsure. "
+                "Set mode to 'skeleton' to get a structural overview of code files."
             ),
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "path": {"type": "string", "description": "Path to the file, relative to workspace root."},
-                    "mode": {"type": "string", "enum": ["content", "skeleton"], "description": "Whether to read the full content or just the outline."},
+                    "path": {"type": "string", "description": "Exact file name with extension, relative to workspace root (e.g. 'draft.txt', 'utils/helpers.py')."},
+                    "mode": {"type": "string", "enum": ["content", "skeleton"], "description": "Whether to read the full content or just the structural outline."},
                     "start": {"type": "integer", "minimum": 1, "description": "1-based line number to start reading from (inclusive). Defaults to 1."},
                     "count": {"type": "integer", "minimum": 1, "description": "Number of lines to read starting from 'start'."}
                 },
@@ -195,47 +199,28 @@ async def list_tools() -> list[types.Tool]:
         types.Tool(
             name="propose_edit",
             description=(
-                "Propose a file edit or creation (single or multi-file). "
-                "Always use read_file first to check the current content before editing an existing file. "
-                "SINGLE-FILE shape: pass 'path', 'edits', and 'summary' at the top level. "
-                "MULTI-FILE shape: pass 'files' (array of {path, edits}) and 'summary'. "
-                "Each entry in 'edits' has a 'search' field (exact text to find) and a 'replace' field (replacement text). "
-                "IMPORTANT: search for the smallest possible unique snippet that contains your change — "
-                "a single line, a few words, or even a single word if it is unambiguous. "
-                "Never search for large blocks or the entire file content unless you are replacing the whole file. "
-                "Smaller searches are more precise and less likely to fail due to whitespace or formatting differences. "
-                "To create a new file, pass a single entry with an empty 'search' and the full file content in 'replace'. "
-                "Matching is case-sensitive; if an exact match fails, case-insensitive and then whitespace-tolerant matches are attempted."
+                "Propose file edits or creations. Each edit targets one file with one action. "
+                "Always use read_file first to check current content before editing an existing file. "
+                "Pass an 'edits' array where EVERY entry must have: path, action, anchor, content. "
+                "Actions:\n"
+                "  - 'replace': find the anchor text and replace it with content.\n"
+                "  - 'insert_before': find the anchor text and insert content on a new line before it.\n"
+                "  - 'insert_after': find the anchor text and insert content on a new line after it.\n"
+                "  - 'create': create a new file; anchor is ignored, content is the full file.\n"
+                "IMPORTANT anchor rules:\n"
+                "  - Keep anchors SHORT: one line or a unique phrase (5-20 words). Never use multi-line anchors.\n"
+                "  - The anchor must appear exactly once in the file.\n"
+                "  - Use a unique fragment, not a whole paragraph.\n"
+                "  - Example good anchor: 'reducing memory usage by about 50%'\n"
+                "  - Example bad anchor: the entire paragraph (will fail to match due to whitespace differences).\n"
+                "For multiple changes to one file, use multiple edit entries with the same path but different short anchors."
             ),
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "path": {
-                        "type": "string",
-                        "description": "Path to the file, relative to the aiWorkspace folder. (Single-file shape only.)"
-                    },
                     "edits": {
                         "type": "array",
-                        "description": "List of search/replace pairs to apply in order. (Single-file shape only.)",
-                        "items": {
-                            "type": "object",
-                            "properties": {
-                                "search": {
-                                    "type": "string",
-                                    "description": "The exact text to find in the file. Leave empty to replace the entire file (new file creation)."
-                                },
-                                "replace": {
-                                    "type": "string",
-                                    "description": "The text to substitute in place of 'search'."
-                                }
-                            },
-                            "required": ["search", "replace"]
-                        },
-                        "minItems": 1
-                    },
-                    "files": {
-                        "type": "array",
-                        "description": "Array of file objects for multi-file edits. Each has 'path' and 'edits'.",
+                        "description": "List of edits to propose. Each is independently approved or rejected.",
                         "items": {
                             "type": "object",
                             "properties": {
@@ -243,82 +228,75 @@ async def list_tools() -> list[types.Tool]:
                                     "type": "string",
                                     "description": "Path to the file, relative to the aiWorkspace folder."
                                 },
-                                "edits": {
-                                    "type": "array",
-                                    "description": "List of search/replace pairs to apply in order.",
-                                    "items": {
-                                        "type": "object",
-                                        "properties": {
-                                            "search": {"type": "string"},
-                                            "replace": {"type": "string"}
-                                        },
-                                        "required": ["search", "replace"]
-                                    },
-                                    "minItems": 1
+                                "action": {
+                                    "type": "string",
+                                    "enum": ["replace", "insert_before", "insert_after", "create"],
+                                    "description": "The type of edit to perform."
+                                },
+                                "anchor": {
+                                    "type": "string",
+                                    "description": "Text to locate in the file. Used by replace, insert_before, insert_after. Ignored for create."
+                                },
+                                "content": {
+                                    "type": "string",
+                                    "description": "The new text: replacement text, insertion text, or full file content for create."
                                 }
                             },
-                            "required": ["path", "edits"]
+                            "required": ["path", "action", "content"]
                         },
                         "minItems": 1
                     },
                     "summary": {
                         "type": "string",
-                        "description": "A very short description of the change (max ~15 words)."
+                        "description": "A very short description of the overall change (max ~15 words)."
                     }
                 },
-                "required": ["summary"]
+                "required": ["edits", "summary"]
             }
         ),
         types.Tool(
-            name="create_plan",
+            name="plan",
             description=(
-                "Create a step-by-step plan for the current task. "
-                "Use this at the start of multi-step tasks to track progress. "
-                "Only one plan can be active per conversation — calling this again replaces the old plan."
+                "Manage a step-by-step plan for the current task. "
+                "Use 'create' at the start of multi-step tasks. "
+                "Use 'update' to mark steps done/failed or add new steps. "
+                "Only one plan can be active per conversation — 'create' replaces any existing plan."
             ),
             inputSchema={
                 "type": "object",
                 "properties": {
+                    "action": {
+                        "type": "string",
+                        "enum": ["create", "update"],
+                        "description": "Whether to create a new plan or update the existing one."
+                    },
                     "goal": {
                         "type": "string",
-                        "description": "A short description of what this plan accomplishes."
+                        "description": "Short description of what the plan accomplishes (required for 'create')."
                     },
                     "steps": {
                         "type": "array",
                         "items": {"type": "string"},
-                        "description": "Ordered list of step descriptions.",
+                        "description": "Ordered list of step descriptions (required for 'create').",
                         "minItems": 1
-                    }
-                },
-                "required": ["goal", "steps"]
-            }
-        ),
-        types.Tool(
-            name="update_plan",
-            description=(
-                "Update the active plan: mark a step done/failed, or add new steps. "
-                "Call this after completing or failing a step to keep the plan current."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
+                    },
                     "step_index": {
                         "type": "integer",
                         "minimum": 0,
-                        "description": "Zero-based index of the step to update."
+                        "description": "Zero-based index of the step to update (for 'update')."
                     },
                     "status": {
                         "type": "string",
                         "enum": ["done", "failed"],
-                        "description": "New status for the step at step_index."
+                        "description": "New status for the step at step_index (for 'update')."
                     },
                     "new_steps": {
                         "type": "array",
                         "items": {"type": "string"},
-                        "description": "Additional steps to append to the plan."
+                        "description": "Additional steps to append to the plan (for 'update')."
                     }
                 },
-                "required": []
+                "required": ["action"]
             }
         ),
     ]
@@ -357,6 +335,10 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
             combined_text += semantic_results[0].text
         else:
             combined_text += "No semantic matches found."
+
+        # If nothing found at all, add a hint
+        if not keyword_results and not semantic_results:
+            combined_text += "\n\nHint: try calling search_workspace with no query or with '*' to list all files."
         
         return [types.TextContent(type="text", text=combined_text)]
     elif name == "read_file":
@@ -374,39 +356,39 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
         return [types.TextContent(type="text", text=result)]
     elif name == "propose_edit":
         try:
-            # Detect single-file vs multi-file shape
-            if "files" in arguments:
-                # Multi-file shape: {files: [{path, edits}, ...], summary}
-                file_entries = arguments["files"]
-            elif "path" in arguments and "edits" in arguments:
-                # Single-file shape: {path, edits, summary} → normalize to list
-                file_entries = [{"path": arguments["path"], "edits": arguments["edits"]}]
-            else:
-                return [types.TextContent(type="text", text="REJECTED: Must provide either 'path'+'edits' or 'files' array.")]
+            edits = arguments.get("edits", [])
+            if not edits:
+                return [types.TextContent(type="text", text="REJECTED: 'edits' array is required and must not be empty.")]
 
-            # Validate and compute diffs for each file in the batch
-            batch_results = []
-            for entry in file_entries:
-                edit_data = validate_and_apply_edit(WORKSPACE_ROOT, entry["path"], entry["edits"])
-                batch_results.append({
-                    "path": entry["path"],
-                    "old_content": edit_data["old_content"],
-                    "new_content": edit_data["new_content"],
-                    "target_path": edit_data["target_path"],
-                })
+            # Validate and compute preview for each individual edit
+            edit_results = []
+            for i, edit in enumerate(edits):
+                try:
+                    preview = validate_and_preview_edit(WORKSPACE_ROOT, edit)
+                    edit_results.append({
+                        "index": i,
+                        "path": preview["path"],
+                        "action": edit.get("action", "replace"),
+                        "anchor": edit.get("anchor", ""),
+                        "content": edit.get("content", ""),
+                        "old_content": preview["old_content"],
+                        "new_content": preview["new_content"],
+                        "target_path": preview["target_path"],
+                    })
+                except ValueError as e:
+                    return [types.TextContent(type="text", text=f"REJECTED: Edit #{i+1} failed: {str(e)}")]
 
             result = {
                 "status": "pending_approval",
-                "files": batch_results,
-                "summary": arguments["summary"]
+                "edits": edit_results,
+                "summary": arguments.get("summary", "")
             }
             return [types.TextContent(type="text", text=json.dumps(result))]
         except Exception as e:
-            # If validation fails, return REJECTED immediately
             return [types.TextContent(type="text", text=f"REJECTED: {str(e)}")]
-    elif name in ("create_plan", "update_plan"):
-        # Plan tools are intercepted in agent.py (they need conversation_id).
-        # If they somehow reach here, return a no-op acknowledgment.
+    elif name == "plan":
+        # Plan tool is intercepted in agent.py (needs conversation_id).
+        # If it somehow reaches here, return a no-op acknowledgment.
         return [types.TextContent(type="text", text="OK (handled by agent)")]
     else:
         raise ValueError(f"Unknown tool: {name}")
