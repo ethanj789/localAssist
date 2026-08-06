@@ -5,3 +5,4 @@ aiWorkspace/
 update.bat
 *.db
 tool_apps/notes/data/*
+pending_edits.json

@@ -71,7 +71,7 @@ export async function deleteConversation(id) {
 
 export async function sendMessage(customText = null) {
     if (isStreaming) return;
-    
+
     let text = '';
     if (customText && typeof customText === 'string') {
         text = customText.trim();
@@ -128,7 +128,7 @@ export async function sendMessage(customText = null) {
         const resp = await fetch(`${API}/chat`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ 
+            body: JSON.stringify({
                 message: text,
                 model: model,
                 conversation_id: currentConversationId,
