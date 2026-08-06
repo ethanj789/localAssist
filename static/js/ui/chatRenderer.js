@@ -15,6 +15,8 @@ export function appendMsg(role, content, id) {
 }
 
 
+const PILL_COLLAPSE_THRESHOLD = 3;
+
 export function appendPill(msgDiv, text, state = 'active') {
     const pills = msgDiv.querySelector('.msg-pills');
     const pill = document.createElement('div');
@@ -22,8 +24,50 @@ export function appendPill(msgDiv, text, state = 'active') {
     pill.innerHTML = state === 'active'
         ? `<div class="spinner"></div>${text}`
         : `✓ ${text}`;
-    pills.appendChild(pill);
+
+    // Count existing visible pills (exclude the toggle and the collapsible wrapper)
+    const visiblePills = pills.querySelectorAll(':scope > .search-pill');
+    const count = visiblePills.length;
+
+    if (count < PILL_COLLAPSE_THRESHOLD) {
+        // Still under threshold — just append directly
+        pills.appendChild(pill);
+    } else {
+        // We need the collapsible container
+        let wrapper = pills.querySelector('.pills-collapsible');
+        let toggle = pills.querySelector('.pills-toggle');
+
+        if (!wrapper) {
+            // Create toggle button
+            toggle = document.createElement('button');
+            toggle.className = 'pills-toggle';
+            toggle.setAttribute('aria-expanded', 'false');
+            toggle.addEventListener('click', () => {
+                const expanded = wrapper.classList.toggle('open');
+                toggle.setAttribute('aria-expanded', String(expanded));
+                updateToggleLabel(toggle, wrapper);
+            });
+            pills.appendChild(toggle);
+
+            // Create collapsible wrapper
+            wrapper = document.createElement('div');
+            wrapper.className = 'pills-collapsible';
+            pills.appendChild(wrapper);
+        }
+
+        wrapper.appendChild(pill);
+        updateToggleLabel(toggle, wrapper);
+    }
+
     return pill;
+}
+
+function updateToggleLabel(toggle, wrapper) {
+    const count = wrapper.children.length;
+    const isOpen = wrapper.classList.contains('open');
+    toggle.innerHTML = isOpen
+        ? `▾ hide ${count} more`
+        : `▸ ${count} more steps…`;
 }
 
 export function renderLinkCard(container, card) {

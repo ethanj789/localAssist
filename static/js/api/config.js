@@ -9,6 +9,10 @@ function syncThinkingRowVisibility(isCloud) {
     // Sync chip toggles in the input bar
     const thinkingChip = document.getElementById('chip-thinking-toggle');
     if (thinkingChip) thinkingChip.style.display = isCloud ? 'none' : 'inline-flex';
+    const ollamaModelChip = document.getElementById('ollama-model-select-wrapper');
+    if (ollamaModelChip) ollamaModelChip.style.display = isCloud ? 'none' : '';
+    const modeSelector = document.getElementById('model-select-wrapper');
+    if (modeSelector) modeSelector.style.display = isCloud ? '' : 'none';
     const cloudChip = document.getElementById('chip-cloud-toggle');
     const cloudLabel = document.getElementById('cloud-chip-label');
     if (cloudChip) {
@@ -25,6 +29,24 @@ export async function loadConfig() {
 
         const modelEl = document.getElementById('cfg-model');
         if (modelEl) modelEl.value = cfg.model || 'gemma4:e2b';
+
+        // Sync the ollama model chip label with the loaded value
+        const ollamaModelLabel = document.getElementById('ollama-model-label');
+        const ollamaOptions = document.querySelectorAll('#ollama-model-options .chip-option');
+        if (ollamaModelLabel && ollamaOptions.length) {
+            const currentModel = cfg.model || 'gemma4:e2b';
+            let matched = false;
+            ollamaOptions.forEach(opt => {
+                if (opt.getAttribute('data-value') === currentModel) {
+                    ollamaModelLabel.textContent = opt.textContent.trim();
+                    opt.classList.add('active');
+                    matched = true;
+                } else {
+                    opt.classList.remove('active');
+                }
+            });
+            if (!matched) ollamaModelLabel.textContent = currentModel;
+        }
 
         const maxSearchesEl = document.getElementById('cfg-max-searches');
         if (maxSearchesEl) maxSearchesEl.value = cfg.max_searches || 5;

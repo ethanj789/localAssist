@@ -68,10 +68,6 @@
           <div class="section-label">Model</div>
           <div class="config-group">
             <div class="config-row">
-              <label>ollama model</label>
-              <input id="cfg-model" type="text" placeholder="gemma4:e2b">
-            </div>
-            <div class="config-row">
               <label>cloud model</label>
               <input id="cfg-cloud-model" type="text" placeholder="openai/gpt-oss-20b">
             </div>
@@ -174,7 +170,20 @@
     <div class="input-area">
       <div class="input-toolbar">
         <div class="input-toolbar-left">
-          <div class="chip-select" id="model-select-wrapper">
+          <button class="chip-toggle" id="chip-cloud-toggle" title="Toggle cloud/local model">
+            <span class="chip-icon">☁️</span> <span id="cloud-chip-label">Local</span>
+          </button>
+          <div class="chip-select" id="ollama-model-select-wrapper">
+            <button class="chip-trigger" id="ollama-model-trigger" title="Local model">
+              <span class="chip-icon">🖥</span> <span id="ollama-model-label">gemma4:e2b</span>
+            </button>
+            <div class="chip-dropdown" id="ollama-model-options">
+              <div class="chip-option active" data-value="gemma4:e2b">gemma4:e2b</div>
+              <div class="chip-option" data-value="gemma4:latest">gemma4:4b</div>
+            </div>
+            <input type="hidden" id="cfg-model" value="gemma4:e2b">
+          </div>
+          <div class="chip-select" id="model-select-wrapper" style="display:none;">
             <button class="chip-trigger" id="model-select-trigger" title="Response mode">
               <span class="chip-icon">⚡</span> Default
             </button>
@@ -185,9 +194,6 @@
             </div>
             <input type="hidden" id="model-selector" value="default">
           </div>
-          <button class="chip-toggle" id="chip-cloud-toggle" title="Toggle cloud/local model">
-            <span class="chip-icon">☁️</span> <span id="cloud-chip-label">Local</span>
-          </button>
           <button class="chip-toggle" id="chip-thinking-toggle" title="Enable extended thinking (local only)" style="display:none;">
             <span class="chip-icon">💭</span> Think
           </button>

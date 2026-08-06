@@ -173,7 +173,7 @@ function bindButtons() {
 function initCustomSelect() {
     const wrapper = document.getElementById('model-select-wrapper');
     const trigger = document.getElementById('model-select-trigger');
-    const options = document.querySelectorAll('.chip-option');
+    const options = wrapper ? wrapper.querySelectorAll('.chip-option') : [];
     const hiddenInput = document.getElementById('model-selector');
 
     if (!wrapper || !trigger) return;
@@ -203,10 +203,47 @@ function initCustomSelect() {
         wrapper.classList.remove('open');
     });
 
+    // ── Ollama model chip-select ──
+    const ollamaWrapper = document.getElementById('ollama-model-select-wrapper');
+    const ollamaTrigger = document.getElementById('ollama-model-trigger');
+    const ollamaOptions = ollamaWrapper ? ollamaWrapper.querySelectorAll('.chip-option') : [];
+    const ollamaHidden = document.getElementById('cfg-model');
+
+    if (ollamaWrapper && ollamaTrigger) {
+        ollamaTrigger.addEventListener('click', (e) => {
+            e.stopPropagation();
+            ollamaWrapper.classList.toggle('open');
+        });
+
+        ollamaOptions.forEach(opt => {
+            opt.addEventListener('click', () => {
+                const val = opt.getAttribute('data-value');
+                const label = opt.textContent.trim();
+
+                ollamaHidden.value = val;
+                document.getElementById('ollama-model-label').textContent = label;
+
+                ollamaOptions.forEach(o => o.classList.remove('active'));
+                opt.classList.add('active');
+
+                ollamaWrapper.classList.remove('open');
+
+                // Auto-apply the model change
+                applyConfig();
+            });
+        });
+
+        document.addEventListener('click', () => {
+            ollamaWrapper.classList.remove('open');
+        });
+    }
+
     // Cloud chip toggle
     const cloudChip = document.getElementById('chip-cloud-toggle');
     const cloudLabel = document.getElementById('cloud-chip-label');
     const thinkingChip = document.getElementById('chip-thinking-toggle');
+    const ollamaModelChip = document.getElementById('ollama-model-select-wrapper');
+    const modeSelector = document.getElementById('model-select-wrapper');
 
     if (cloudChip) {
         cloudChip.addEventListener('click', () => {
@@ -215,8 +252,11 @@ function initCustomSelect() {
             cfgCloud.checked = isNowCloud;
             cloudChip.classList.toggle('active', isNowCloud);
             cloudLabel.textContent = isNowCloud ? 'Cloud' : 'Local';
-            // Show/hide thinking chip (only for local)
+            // Show/hide thinking chip and ollama model selector (only for local)
             if (thinkingChip) thinkingChip.style.display = isNowCloud ? 'none' : 'inline-flex';
+            if (ollamaModelChip) ollamaModelChip.style.display = isNowCloud ? 'none' : '';
+            // Show/hide mode selector (only for cloud)
+            if (modeSelector) modeSelector.style.display = isNowCloud ? '' : 'none';
             // Auto-apply provider change
             applyConfig();
         });

@@ -173,6 +173,35 @@
     margin-bottom: 6px;
 }
 
+/* ── Collapsible pill overflow ── */
+.pills-toggle {
+    background: none;
+    border: 1px solid var(--border);
+    border-radius: 20px;
+    padding: 3px 10px;
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--muted);
+    cursor: pointer;
+    align-self: flex-start;
+    transition: color 0.15s, border-color 0.15s;
+}
+
+.pills-toggle:hover {
+    color: var(--accent);
+    border-color: var(--accent);
+}
+
+.pills-collapsible {
+    display: none;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.pills-collapsible.open {
+    display: flex;
+}
+
 /* ── Markdown content: sans for prose, mono for code only ── */
 .md-content {
     font-family: var(--sans);
