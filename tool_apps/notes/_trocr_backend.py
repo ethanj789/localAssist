@@ -172,8 +172,24 @@ class TrOCRBackend:
             return
         log.info("TrOCRBackend: loading %s (first run downloads ~350 MB)…", TROCR_MODEL)
         from transformers import TrOCRProcessor, VisionEncoderDecoderModel
-        self._processor = TrOCRProcessor.from_pretrained(TROCR_MODEL)
-        self._model = VisionEncoderDecoderModel.from_pretrained(TROCR_MODEL)
+
+        # Try online first; if the network is unreachable, fall back to the
+        # local HF cache so we don't block on retries when offline.
+        try:
+            self._processor = TrOCRProcessor.from_pretrained(TROCR_MODEL)
+            self._model = VisionEncoderDecoderModel.from_pretrained(TROCR_MODEL)
+        except (OSError, Exception) as exc:
+            log.warning(
+                "TrOCRBackend: online fetch failed (%s), falling back to local cache.",
+                exc,
+            )
+            self._processor = TrOCRProcessor.from_pretrained(
+                TROCR_MODEL, local_files_only=True
+            )
+            self._model = VisionEncoderDecoderModel.from_pretrained(
+                TROCR_MODEL, local_files_only=True
+            )
+
         self._model.eval()
         log.info("TrOCRBackend: ready.")
 
