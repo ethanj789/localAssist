@@ -166,11 +166,17 @@
     letter-spacing: .05em
 }
 
-.msg-pills {
+.msg-flow {
     display: flex;
     flex-direction: column;
     gap: 4px;
     margin-bottom: 6px;
+}
+
+.pill-group {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
 }
 
 /* ── Collapsible pill overflow ── */
@@ -485,7 +491,7 @@ pre:hover .copy-btn {
 
 /* ── Ollama thinking block ── */
 .thinking-block {
-    margin-bottom: 10px;
+    margin-bottom: 0;
     border: 1px solid var(--border);
     border-radius: 6px;
     background: var(--surface);

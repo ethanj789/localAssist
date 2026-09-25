@@ -434,8 +434,9 @@ function renderConversationHistory(messages) {
             const div = appendMsg('assistant', '');
             lastAssistantDiv = div;
             const body = div.querySelector('.msg-body');
+            const flow = div.querySelector('.msg-flow');
 
-            // Render thinking block if present
+            // Render thinking block if present — into the flow container
             if (msg.thinking_content) {
                 const details = document.createElement('details');
                 details.className = 'thinking-block';
@@ -450,16 +451,10 @@ function renderConversationHistory(messages) {
                 pre.textContent = msg.thinking_content;
                 details.appendChild(pre);
 
-                body.appendChild(details);
+                flow.appendChild(details);
             }
 
-            if (msg.content) {
-                const mdDiv = document.createElement('div');
-                mdDiv.className = 'md-content';
-                body.appendChild(mdDiv);
-                renderMarkdown(mdDiv, msg.content);
-            }
-
+            // Render tool calls as pills in the flow container
             if (msg.tool_calls && msg.tool_calls.length > 0) {
                 msg.tool_calls.forEach(tc => {
                     const fn = tc.function || tc;
@@ -482,6 +477,13 @@ function renderConversationHistory(messages) {
                     }
                     appendPill(div, label, 'done');
                 });
+            }
+
+            if (msg.content) {
+                const mdDiv = document.createElement('div');
+                mdDiv.className = 'md-content';
+                body.appendChild(mdDiv);
+                renderMarkdown(mdDiv, msg.content);
             }
         } else if (msg.role === 'tool') {
             if (lastAssistantDiv) {

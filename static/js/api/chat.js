@@ -1,6 +1,6 @@
 import { API } from '../constants.js';
 import { escHtml, setStatus, showToast, scrollToBottom } from '../utils/dom.js';
-import { appendMsg, appendPill, renderLinkCard, renderMarkdown, renderActionButton, ensureThinkingBlock, appendOllamaStats } from '../ui/chatRenderer.js';
+import { appendMsg, appendPill, renderLinkCard, renderMarkdown, renderActionButton, createThinkingBlock, appendOllamaStats } from '../ui/chatRenderer.js';
 import { handleProposeEdit } from '../ui/editPanel.js';
 
 export let isStreaming = false;
@@ -190,12 +190,15 @@ export function handleStreamEvent(event, data, state) {
     if (event === 'token') {
         state.fullText += data;
         renderMarkdown(mdDiv, state.fullText);
-        // Collapse the thinking block once when response starts, then leave it alone
-        if (state.thinkingBlock && !state._thinkingCollapsed) {
+        // Collapse all thinking blocks once when response content starts
+        if (!state._thinkingCollapsed) {
             state._thinkingCollapsed = true;
-            state.thinkingBlock.open = false;
-            const summary = state.thinkingBlock.querySelector('.thinking-summary');
-            if (summary) summary.textContent = '💭 thoughts';
+            const flow = aDiv.querySelector('.msg-flow');
+            flow.querySelectorAll('.thinking-block').forEach(block => {
+                block.open = false;
+                const summary = block.querySelector('.thinking-summary');
+                if (summary) summary.textContent = '💭 thoughts';
+            });
         }
     }
 
@@ -204,13 +207,18 @@ export function handleStreamEvent(event, data, state) {
         // Wipe the streamed text so we don't show stray pre-tool content.
         state.fullText = '';
         mdDiv.innerHTML = '';
+        // Reset so thinking blocks collapse properly when real content arrives later
+        state._thinkingCollapsed = false;
     }
 
     if (event === 'thinking_token') {
-        const aBody = aDiv.querySelector('.msg-body');
-        if (!state.thinkingBlock) {
-            state.thinkingBlock = ensureThinkingBlock(aBody);
+        const flow = aDiv.querySelector('.msg-flow');
+        // If there's no active thinking block (first time, or after a tool call),
+        // create a new one so thinking and tool pills interleave chronologically.
+        if (!state.thinkingBlock || state._thinkingInterrupted) {
+            state.thinkingBlock = createThinkingBlock(flow);
             state.thinkingBlock.open = true;
+            state._thinkingInterrupted = false;
         }
         state.thinkingBlock.contentEl.textContent += data;
         // Keep the thinking block scrolled to bottom while streaming
@@ -241,6 +249,16 @@ export function handleStreamEvent(event, data, state) {
         } else {
             label = `tool requested: ${info.tool}`;
         }
+        // Collapse the current thinking block if it's still open
+        if (state.thinkingBlock && state.thinkingBlock.open) {
+            state.thinkingBlock.open = false;
+            const summary = state.thinkingBlock.querySelector('.thinking-summary');
+            if (summary) summary.textContent = '💭 thoughts';
+        }
+        // Mark thinking as interrupted so next thinking_token creates a new block
+        if (state.thinkingBlock) {
+            state._thinkingInterrupted = true;
+        }
         appendPill(aDiv, label, 'done');
     }
 
@@ -249,6 +267,12 @@ export function handleStreamEvent(event, data, state) {
         const label = info.label || (info.tool === 'web_search'
             ? `searching: "${info.args?.query}" (${info.count}/${info.max})`
             : `fetching: ${info.args?.url?.slice(0, 40)}...`);
+        if (state.thinkingBlock && state.thinkingBlock.open) {
+            state.thinkingBlock.open = false;
+            const summary = state.thinkingBlock.querySelector('.thinking-summary');
+            if (summary) summary.textContent = '💭 thoughts';
+            state._thinkingInterrupted = true;
+        }
         state.currentPill = appendPill(aDiv, label, 'active');
     }
 
@@ -260,12 +284,19 @@ export function handleStreamEvent(event, data, state) {
     }
 
     if (event === 'status') {
-        appendPill(aDiv, data, 'done');
+        // If thinking was active, collapse it and mark interrupted
+        if (state.thinkingBlock && state.thinkingBlock.open) {
+            state.thinkingBlock.open = false;
+            const summary = state.thinkingBlock.querySelector('.thinking-summary');
+            if (summary) summary.textContent = '💭 thoughts';
+            state._thinkingInterrupted = true;
+        }
+        appendPill(aDiv, data, 'done', { collapsed: true });
     }
 
     if (event === 'model') {
         const info = JSON.parse(data);
-        appendPill(aDiv, `model: ${info.provider}/${info.model}`, 'done');
+        appendPill(aDiv, `model: ${info.provider}/${info.model}`, 'done', { collapsed: true });
     }
 
     if (event === 'link_card') {

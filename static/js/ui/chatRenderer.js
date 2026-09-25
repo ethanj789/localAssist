@@ -7,7 +7,7 @@ export function appendMsg(role, content, id) {
     if (id) div.id = id;
     div.innerHTML = `
         <div class="msg-role">${role}</div>
-        <div class="msg-pills"></div>
+        <div class="msg-flow"></div>
         <div class="msg-body">${content}</div>
     `;
     msgs.appendChild(div);
@@ -17,28 +17,40 @@ export function appendMsg(role, content, id) {
 
 const PILL_COLLAPSE_THRESHOLD = 3;
 
-export function appendPill(msgDiv, text, state = 'active') {
-    const pills = msgDiv.querySelector('.msg-pills');
+/**
+ * Append a pill into the .msg-flow container (interleaved with thinking blocks).
+ * Pills are grouped into a .pill-group — a new group is created after each thinking block.
+ *
+ * @param {HTMLElement} msgDiv - The .msg container
+ * @param {string} text - Pill label
+ * @param {string} state - 'active' or 'done'
+ * @param {object} [opts] - Options
+ * @param {boolean} [opts.collapsed] - If true, pill goes directly into collapsed section
+ */
+export function appendPill(msgDiv, text, state = 'active', opts = {}) {
+    const flow = msgDiv.querySelector('.msg-flow');
     const pill = document.createElement('div');
     pill.className = `search-pill ${state}`;
     pill.innerHTML = state === 'active'
         ? `<div class="spinner"></div>${text}`
         : `✓ ${text}`;
 
-    // Count existing visible pills (exclude the toggle and the collapsible wrapper)
-    const visiblePills = pills.querySelectorAll(':scope > .search-pill');
-    const count = visiblePills.length;
+    // Find or create the current pill-group (always the last .pill-group in flow)
+    let group = flow.querySelector('.pill-group:last-child');
+    if (!group || group.nextElementSibling) {
+        // No group yet, or the last child in flow isn't a pill-group (it's a thinking block)
+        group = document.createElement('div');
+        group.className = 'pill-group';
+        flow.appendChild(group);
+    }
 
-    if (count < PILL_COLLAPSE_THRESHOLD) {
-        // Still under threshold — just append directly
-        pills.appendChild(pill);
-    } else {
-        // We need the collapsible container
-        let wrapper = pills.querySelector('.pills-collapsible');
-        let toggle = pills.querySelector('.pills-toggle');
+    // If this pill should be collapsed by default (status/plumbing pills),
+    // always put it in the collapsible wrapper
+    if (opts.collapsed) {
+        let wrapper = group.querySelector('.pills-collapsible');
+        let toggle = group.querySelector('.pills-toggle');
 
-        if (!wrapper) {
-            // Create toggle button
+        if (!toggle) {
             toggle = document.createElement('button');
             toggle.className = 'pills-toggle';
             toggle.setAttribute('aria-expanded', 'false');
@@ -47,12 +59,48 @@ export function appendPill(msgDiv, text, state = 'active') {
                 toggle.setAttribute('aria-expanded', String(expanded));
                 updateToggleLabel(toggle, wrapper);
             });
-            pills.appendChild(toggle);
+            // Insert toggle before any visible pills if they exist, or just append
+            const firstVisible = group.querySelector(':scope > .search-pill');
+            if (firstVisible) {
+                group.insertBefore(toggle, firstVisible);
+            } else {
+                group.appendChild(toggle);
+            }
 
-            // Create collapsible wrapper
             wrapper = document.createElement('div');
             wrapper.className = 'pills-collapsible';
-            pills.appendChild(wrapper);
+            toggle.after(wrapper);
+        }
+
+        wrapper.appendChild(pill);
+        updateToggleLabel(toggle, wrapper);
+        return pill;
+    }
+
+    // Visible pills — count existing and collapse if over threshold
+    const visiblePills = group.querySelectorAll(':scope > .search-pill');
+    const count = visiblePills.length;
+
+    if (count < PILL_COLLAPSE_THRESHOLD) {
+        group.appendChild(pill);
+    } else {
+        let wrapper = group.querySelector('.pills-collapsible');
+        let toggle = group.querySelector('.pills-toggle');
+
+        if (!wrapper) {
+            toggle = document.createElement('button');
+            toggle.className = 'pills-toggle';
+            toggle.setAttribute('aria-expanded', 'false');
+            toggle.addEventListener('click', () => {
+                const expanded = wrapper.classList.toggle('open');
+                toggle.setAttribute('aria-expanded', String(expanded));
+                updateToggleLabel(toggle, wrapper);
+            });
+            group.appendChild(toggle);
+
+            wrapper = document.createElement('div');
+            wrapper.className = 'pills-collapsible';
+            group.appendChild(wrapper);
         }
 
         wrapper.appendChild(pill);
@@ -151,14 +199,14 @@ export function renderMarkdown(mdDiv, text) {
 }
 
 /**
- * Create (or return existing) a collapsible thinking block inside msgBody.
- * Call this once when the first thinking_token arrives; subsequent tokens
- * are appended to the returned inner <pre> element via `thinkingBlock.contentEl`.
+ * Create a NEW thinking block appended to the .msg-flow container.
+ * Each time thinking resumes after a tool call, a new block is created
+ * so that thinking and tool pills interleave chronologically.
+ *
+ * @param {HTMLElement} flowContainer  The .msg-flow element
+ * @returns {HTMLElement} The <details> element with a .contentEl property
  */
-export function ensureThinkingBlock(msgBody) {
-    let block = msgBody.querySelector('.thinking-block');
-    if (block) return block;
-
+export function createThinkingBlock(flowContainer) {
     const details = document.createElement('details');
     details.className = 'thinking-block';
 
@@ -171,12 +219,22 @@ export function ensureThinkingBlock(msgBody) {
     pre.className = 'thinking-content';
     details.appendChild(pre);
 
-    // Insert before the md-content div so thinking appears above the answer
-    const mdContent = msgBody.querySelector('.md-content');
-    msgBody.insertBefore(details, mdContent);
+    flowContainer.appendChild(details);
 
     details.contentEl = pre;
     return details;
+}
+
+/**
+ * Legacy compat: ensure at least one thinking block exists in a msg-body.
+ * Delegates to createThinkingBlock using the .msg-flow inside the parent msg.
+ */
+export function ensureThinkingBlock(msgBody) {
+    const msgDiv = msgBody.closest('.msg');
+    const flow = msgDiv.querySelector('.msg-flow');
+    let block = flow.querySelector('.thinking-block:last-child');
+    if (block) return block;
+    return createThinkingBlock(flow);
 }
 
 /**
