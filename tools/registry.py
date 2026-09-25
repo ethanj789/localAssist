@@ -200,19 +200,18 @@ async def list_tools() -> list[types.Tool]:
             name="propose_edit",
             description=(
                 "Propose file edits or creations. Each edit targets one file with one action. "
-                "Always use read_file first to check current content before editing an existing file. "
-                "Pass an 'edits' array where EVERY entry must have: path, action, anchor, content. "
+                "Always use read_file first to check current content before editing an existing file.\n"
+                "REQUIRED fields in every edit object: path, action, anchor, content.\n"
+                "Example: {\"path\": \"example.txt\", \"action\": \"replace\", \"anchor\": \"short unique phrase\", \"content\": \"new text\"}\n"
                 "Actions:\n"
                 "  - 'replace': find the anchor text and replace it with content.\n"
                 "  - 'insert_before': find the anchor text and insert content on a new line before it.\n"
                 "  - 'insert_after': find the anchor text and insert content on a new line after it.\n"
                 "  - 'create': create a new file; anchor is ignored, content is the full file.\n"
-                "IMPORTANT anchor rules:\n"
+                "Anchor rules:\n"
                 "  - Keep anchors SHORT: one line or a unique phrase (5-20 words). Never use multi-line anchors.\n"
                 "  - The anchor must appear exactly once in the file.\n"
                 "  - Use a unique fragment, not a whole paragraph.\n"
-                "  - Example good anchor: 'reducing memory usage by about 50%'\n"
-                "  - Example bad anchor: the entire paragraph (will fail to match due to whitespace differences).\n"
                 "For multiple changes to one file, use multiple edit entries with the same path but different short anchors."
             ),
             inputSchema={
@@ -251,7 +250,7 @@ async def list_tools() -> list[types.Tool]:
                         "description": "A very short description of the overall change (max ~15 words)."
                     }
                 },
-                "required": ["edits", "summary"]
+                "required": ["path", "edits", "summary"]
             }
         ),
         types.Tool(

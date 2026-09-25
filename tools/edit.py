@@ -214,7 +214,10 @@ def validate_and_preview_edit(workspace_root: Path, edit: dict) -> dict:
     """
     relative_path = edit.get("path", "")
     if not relative_path:
-        raise ValueError("Edit is missing 'path'.")
+        raise ValueError(
+            "Edit is missing required 'path' field. "
+            "Every edit must include 'path' (relative to workspace root, e.g. 'draft.txt' or 'subfolder/file.py')."
+        )
 
     target = (workspace_root / relative_path).resolve()
 
