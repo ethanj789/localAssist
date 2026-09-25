@@ -215,13 +215,15 @@ export function createThinkingBlock(flowContainer) {
     summary.textContent = '💭 thinking…';
     details.appendChild(summary);
 
-    const pre = document.createElement('pre');
-    pre.className = 'thinking-content';
-    details.appendChild(pre);
+    const content = document.createElement('div');
+    content.className = 'thinking-content md-content';
+    // Raw markdown source accumulates here as tokens stream in.
+    content._raw = '';
+    details.appendChild(content);
 
     flowContainer.appendChild(details);
 
-    details.contentEl = pre;
+    details.contentEl = content;
     return details;
 }
 

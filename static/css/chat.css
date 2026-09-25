@@ -531,19 +531,26 @@ details.thinking-block[open] .thinking-summary::before {
 }
 
 .thinking-content {
-    font-family: var(--mono);
     font-size: 11px;
     line-height: 1.6;
     color: var(--muted);
     padding: 10px 12px;
     margin: 0;
-    white-space: pre-wrap;
     word-break: break-word;
     max-height: 260px;
     overflow-y: auto;
     background: transparent;
     border: none;
 }
+
+/* Markdown rendered inside a thinking block: keep it compact and muted. */
+.thinking-content.md-content > *:first-child { margin-top: 0; }
+.thinking-content.md-content > *:last-child { margin-bottom: 0; }
+.thinking-content p { margin: 0 0 0.5em; }
+.thinking-content ul,
+.thinking-content ol { margin: 0.25em 0 0.5em; padding-left: 1.4em; }
+.thinking-content li { margin: 0.15em 0; }
+.thinking-content code { font-size: 10px; }
 
 .thinking-content::-webkit-scrollbar { width: 3px; }
 .thinking-content::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }

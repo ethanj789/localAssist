@@ -446,10 +446,10 @@ function renderConversationHistory(messages) {
                 summary.textContent = '💭 thoughts';
                 details.appendChild(summary);
 
-                const pre = document.createElement('pre');
-                pre.className = 'thinking-content';
-                pre.textContent = msg.thinking_content;
-                details.appendChild(pre);
+                const content = document.createElement('div');
+                content.className = 'thinking-content md-content';
+                renderMarkdown(content, msg.thinking_content);
+                details.appendChild(content);
 
                 flow.appendChild(details);
             }

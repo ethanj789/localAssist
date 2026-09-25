@@ -220,9 +220,11 @@ export function handleStreamEvent(event, data, state) {
             state.thinkingBlock.open = true;
             state._thinkingInterrupted = false;
         }
-        state.thinkingBlock.contentEl.textContent += data;
+        const contentEl = state.thinkingBlock.contentEl;
+        contentEl._raw = (contentEl._raw || '') + data;
+        renderMarkdown(contentEl, contentEl._raw);
         // Keep the thinking block scrolled to bottom while streaming
-        state.thinkingBlock.contentEl.scrollTop = state.thinkingBlock.contentEl.scrollHeight;
+        contentEl.scrollTop = contentEl.scrollHeight;
     }
 
     if (event === 'ollama_stats') {
