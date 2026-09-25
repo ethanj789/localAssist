@@ -169,6 +169,30 @@ export function renderActionButton(container, action) {
     container.appendChild(btn);
 }
 
+/**
+ * Run KaTeX auto-render over an already-rendered markdown element.
+ * Only $$...$$ (display) and \[...\] are treated as math — single $ is
+ * intentionally left alone to avoid mangling prose like "$5 to $10".
+ * Safe to call repeatedly; call it once rendering is final (not per-token)
+ * since typesetting the whole subtree on every streamed token is expensive.
+ */
+export function renderMath(el) {
+    if (typeof renderMathInElement !== 'function') return; // KaTeX not loaded
+    try {
+        renderMathInElement(el, {
+            delimiters: [
+                { left: '$$', right: '$$', display: true },
+                { left: '\\[', right: '\\]', display: true },
+            ],
+            throwOnError: false,
+            ignoredTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code'],
+        });
+    } catch (e) {
+        // Never let a math-parse failure break the whole message render.
+        console.warn('KaTeX render failed', e);
+    }
+}
+
 export function renderMarkdown(mdDiv, text) {
     mdDiv.innerHTML = marked.parse(text);
 

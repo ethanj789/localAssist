@@ -17,7 +17,7 @@ import {
 import { initWebSpeechVoice, bindWebSpeechButton } from './api/webSpeechVoice.js';
 import { initMemoryUI } from './ui/memory.js';
 import { initEditPanel, handleProposeEdit } from './ui/editPanel.js';
-import { appendMsg, appendPill, renderMarkdown } from './ui/chatRenderer.js';
+import { appendMsg, appendPill, renderMarkdown, renderMath } from './ui/chatRenderer.js';
 import { initSkillsAutocomplete, loadSkills, isDropdownVisible } from './ui/skillsAutocomplete.js';
 
 async function init() {
@@ -449,6 +449,7 @@ function renderConversationHistory(messages) {
                 const content = document.createElement('div');
                 content.className = 'thinking-content md-content';
                 renderMarkdown(content, msg.thinking_content);
+                renderMath(content);
                 details.appendChild(content);
 
                 flow.appendChild(details);
@@ -484,6 +485,7 @@ function renderConversationHistory(messages) {
                 mdDiv.className = 'md-content';
                 body.appendChild(mdDiv);
                 renderMarkdown(mdDiv, msg.content);
+                renderMath(mdDiv);
             }
         } else if (msg.role === 'tool') {
             if (lastAssistantDiv) {

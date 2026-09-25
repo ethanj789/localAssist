@@ -1,6 +1,6 @@
 import { API } from '../constants.js';
 import { escHtml, setStatus, showToast, scrollToBottom } from '../utils/dom.js';
-import { appendMsg, appendPill, renderLinkCard, renderMarkdown, renderActionButton, createThinkingBlock, appendOllamaStats } from '../ui/chatRenderer.js';
+import { appendMsg, appendPill, renderLinkCard, renderMarkdown, renderActionButton, createThinkingBlock, appendOllamaStats, renderMath } from '../ui/chatRenderer.js';
 import { handleProposeEdit } from '../ui/editPanel.js';
 
 export let isStreaming = false;
@@ -405,6 +405,11 @@ export function handleStreamEvent(event, data, state) {
         const info = JSON.parse(data);
         if (state.cursor && state.cursor.parentNode) state.cursor.remove();
         const aBody = aDiv.querySelector('.msg-body');
+
+        // Final math typeset pass — done once here rather than per-token.
+        if (mdDiv) renderMath(mdDiv);
+        // Also typeset any thinking blocks now that streaming is complete.
+        aDiv.querySelectorAll('.thinking-content').forEach(el => renderMath(el));
 
         const stats = [];
         if (info.searches_used > 0) stats.push(`${info.searches_used} search${info.searches_used !== 1 ? 'es' : ''}`);
