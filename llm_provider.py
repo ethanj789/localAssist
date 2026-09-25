@@ -203,7 +203,7 @@ def _build_ollama_payload(request_kwargs: dict, config_dict: dict, stream: bool 
         "messages": _normalize_messages_for_ollama(request_kwargs.get("messages", [])),
         "options": {
             "temperature": request_kwargs.get("temperature", 0.7),
-            "num_predict": request_kwargs.get("max_completion_tokens", 5000),
+            "num_predict": request_kwargs.get("max_completion_tokens", 50000),
         },
         "stream": stream,
     }

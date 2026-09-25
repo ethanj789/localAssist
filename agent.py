@@ -323,6 +323,7 @@ async def agent_loop(user_message: str, mcp, model_override: str = "default", co
         email_count = 0
         memory_count = 0
         tool_count = 0
+        last_read_path = ""
         max_searches = CONFIG["max_searches"]
         max_emails = CONFIG["max_emails"]
         max_tools = CONFIG["max_tools"]
@@ -330,7 +331,11 @@ async def agent_loop(user_message: str, mcp, model_override: str = "default", co
 
         while True:
             try:
-                trimmed_history = _prune_history(conversation_history[-MAX_HISTORY:])
+                # Skip pruning on local (ollama) to preserve KV cache prefix
+                if use_remote_provider:
+                    trimmed_history = _prune_history(conversation_history[-MAX_HISTORY:])
+                else:
+                    trimmed_history = conversation_history[-MAX_HISTORY:]
                 is_final_call = len(trimmed_history) > 0 and trimmed_history[-1]["role"] == "tool"
                 # current_model = answer_model if is_final_call else tool_model
                 current_model = answer_model # i give up trying to optimize this single call.
@@ -356,10 +361,13 @@ async def agent_loop(user_message: str, mcp, model_override: str = "default", co
                     "model": current_model if use_remote_provider else CONFIG["model"]
                 }))
 
-                available_tools = []
                 last_was_pending_edit = len(trimmed_history) > 0 and trimmed_history[-1].get("role") == "tool" and trimmed_history[-1].get("content") == "edit pending approval. provide a short summary of the changes."
-                
-                if not last_was_pending_edit:
+
+                if last_was_pending_edit:
+                    available_tools = []
+                elif use_remote_provider:
+                    # Remote: filter tools to save tokens (no KV cache to preserve)
+                    available_tools = []
                     for t in ollama_tools:
                         if tool_count >= max_tools:
                             break
@@ -370,9 +378,11 @@ async def agent_loop(user_message: str, mcp, model_override: str = "default", co
                             continue
                         if func_name == "save_user_preference" and memory_count >= max_memory:
                             continue
-                        if _count_pending_edits() >= 5 and func_name == "propose_edit":
-                            continue
                         available_tools.append(t)
+                else:
+                    # Local/Ollama: always pass full tool list to preserve KV cache.
+                    # Limits are enforced at execution time via error messages.
+                    available_tools = ollama_tools
 
                 request_kwargs = {
                     "model": current_model if use_remote_provider else CONFIG["model"],
@@ -612,6 +622,11 @@ async def agent_loop(user_message: str, mcp, model_override: str = "default", co
                         pending_tool_messages.append((tc.id, f"Memory management limit of {max_memory} reached. No more memory edits allowed this turn. Please proceed to answer the user."))
                         continue
 
+                    if name == "propose_edit" and _count_pending_edits() >= 5:
+                        yield _sse("status", "Pending edits cap (5) reached...")
+                        pending_tool_messages.append((tc.id, "Maximum pending edits (5) reached. The user must approve or reject existing edits before you can propose more. Please proceed to answer the user."))
+                        continue
+
                     if tool_count >= max_tools:
                         yield _sse("status", f"Total tool cap ({max_tools}) reached...")
                         pending_tool_messages.append((tc.id, f"Total tool limit of {max_tools} reached. No more tools can be called. Please proceed to answer the user with the information you already have."))
@@ -661,6 +676,18 @@ async def agent_loop(user_message: str, mcp, model_override: str = "default", co
                         else:
                             result = f"Unknown plan action: {action}"
                     else:
+                        # Track last read_file path for propose_edit fallback
+                        if name == "read_file" and args.get("path"):
+                            last_read_path = args["path"]
+
+                        # Auto-fill missing 'path' in propose_edit edits from last read_file
+                        if name == "propose_edit" and last_read_path:
+                            edits = args.get("edits", [])
+                            for edit in edits:
+                                if not edit.get("path"):
+                                    edit["path"] = last_read_path
+                                    log.info("propose_edit: auto-filled missing path with '%s'", last_read_path)
+
                         result = await mcp.call_tool(name, args)
 
                     if name == "fetch_webpage":
@@ -705,7 +732,11 @@ async def agent_loop(user_message: str, mcp, model_override: str = "default", co
                             # pass it through so the model sees the error details
                             yield _sse("status", "Edit proposed but failed validation. Agent will retry.")
                             if "REJECTED" not in result:
-                                result = f"REJECTED: Edit failed validation. Error: {result}. Remember: every edit needs path, action, anchor (short — one line max), and content."
+                                result = (
+                                    f"REJECTED: Edit failed validation. Error: {result}. "
+                                    f"Remember: every edit entry MUST include 'path' (e.g. 'draft.txt'), "
+                                    f"'action', 'anchor' (short — one line max), and 'content'."
+                                )
 
                     if use_remote_provider and name in ("web_search", "fetch_webpage"):
                         result = await _summarize_tool_result(resolved_provider, name, result)
