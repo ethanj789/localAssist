@@ -12,10 +12,16 @@ log = logging.getLogger(__name__)
 
 def _build_norm_map(text: str) -> tuple[str, list[int]]:
     """
-    Normalize text for whitespace-tolerant matching:
-      - Strip leading/trailing whitespace from each line.
-      - Collapse internal whitespace runs (spaces/tabs) to a single space.
-      - Preserve newlines as explicit boundary tokens.
+    Normalize text for whitespace-tolerant, newline-agnostic matching:
+      - Treat every whitespace char (space, tab, newline, carriage return)
+        as the same class.
+      - Collapse any run of whitespace to a single space.
+      - Strip leading/trailing whitespace.
+
+    Because newlines collapse to spaces, a single-line ("flat") anchor can
+    match a region of the file that spans multiple lines. This is the common
+    case: the model copies text it read as one line, but the file wraps that
+    text across several physical lines.
 
     Returns (normalized_text, position_map) where position_map[norm_idx]
     gives the index in the *original* text that produced that normalized char.
@@ -29,19 +35,11 @@ def _build_norm_map(text: str) -> tuple[str, list[int]]:
     while i < length:
         ch = text[i]
 
-        if ch == '\n':
-            # Strip any trailing space we may have just added
-            while norm and norm[-1] == ' ':
-                norm.pop()
-                pos_map.pop()
-            norm.append('\n')
-            pos_map.append(i)
-            line_start = True
-            i += 1
-        elif ch in (' ', '\t'):
+        if ch in (' ', '\t', '\n', '\r'):
             if line_start:
                 i += 1  # skip leading whitespace
             else:
+                # Collapse any whitespace run (including newlines) to one space
                 if not norm or norm[-1] != ' ':
                     norm.append(' ')
                     pos_map.append(i)
@@ -146,9 +144,10 @@ def _apply_single_edit(content: str, edit: dict) -> str:
     Apply a single edit to content.
 
     Edit shape: {action, anchor, content}
-      - action: "replace" | "insert_before" | "insert_after" | "create"
+      - action: "replace" | "delete" | "insert_before" | "insert_after" | "create"
       - anchor: text to locate in the file (ignored for "create")
-      - content: the new text (replacement or insertion content, or full file for "create")
+      - content: the new text (replacement or insertion content, or full file
+        for "create"; ignored for "delete")
 
     Returns the modified content.
     Raises ValueError on failure.
@@ -170,6 +169,18 @@ def _apply_single_edit(content: str, edit: dict) -> str:
     if action == "replace":
         return content[:start] + new_text + content[end:]
 
+    elif action == "delete":
+        # Remove exactly the anchored span. If the anchor sat on its own line
+        # (line boundary before start, newline right after end), consume one
+        # trailing newline so we don't leave a dangling blank line. This is
+        # conservative: it only collapses when start begins a line, to avoid
+        # merging two unrelated lines together.
+        del_end = end
+        at_line_start = start == 0 or content[start - 1] == '\n'
+        if at_line_start and del_end < len(content) and content[del_end] == '\n':
+            del_end += 1  # swallow the now-empty line's newline
+        return content[:start] + content[del_end:]
+
     elif action == "insert_before":
         # Insert content before the anchor. Ensure it ends with a newline
         # so the anchor stays on its own line.
@@ -189,7 +200,7 @@ def _apply_single_edit(content: str, edit: dict) -> str:
         return content[:line_end] + insertion + content[line_end:]
 
     else:
-        raise ValueError(f"Unknown action: '{action}'. Use replace, insert_before, insert_after, or create.")
+        raise ValueError(f"Unknown action: '{action}'. Use replace, delete, insert_before, insert_after, or create.")
 
 
 # ---------------------------------------------------------------------------

@@ -680,13 +680,10 @@ async def agent_loop(user_message: str, mcp, model_override: str = "default", co
                         if name == "read_file" and args.get("path"):
                             last_read_path = args["path"]
 
-                        # Auto-fill missing 'path' in propose_edit edits from last read_file
-                        if name == "propose_edit" and last_read_path:
-                            edits = args.get("edits", [])
-                            for edit in edits:
-                                if not edit.get("path"):
-                                    edit["path"] = last_read_path
-                                    log.info("propose_edit: auto-filled missing path with '%s'", last_read_path)
+                        # Auto-fill missing 'path' in propose_edit from last read_file
+                        if name == "propose_edit" and last_read_path and not args.get("path"):
+                            args["path"] = last_read_path
+                            log.info("propose_edit: auto-filled missing path with '%s'", last_read_path)
 
                         result = await mcp.call_tool(name, args)
 
@@ -734,8 +731,8 @@ async def agent_loop(user_message: str, mcp, model_override: str = "default", co
                             if "REJECTED" not in result:
                                 result = (
                                     f"REJECTED: Edit failed validation. Error: {result}. "
-                                    f"Remember: every edit entry MUST include 'path' (e.g. 'draft.txt'), "
-                                    f"'action', 'anchor' (short — one line max), and 'content'."
+                                    f"Remember: propose_edit takes a single edit with 'path' (e.g. 'draft.txt'), "
+                                    f"'action', 'anchor' (short — one line max, required unless action is 'create'), and 'content'."
                                 )
 
                     if use_remote_provider and name in ("web_search", "fetch_webpage"):

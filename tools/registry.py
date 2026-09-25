@@ -199,58 +199,60 @@ async def list_tools() -> list[types.Tool]:
         types.Tool(
             name="propose_edit",
             description=(
-                "Propose file edits or creations. Each edit targets one file with one action. "
+                "Propose a single file edit or creation. One call edits one file with one action. "
                 "Always use read_file first to check current content before editing an existing file.\n"
-                "REQUIRED fields in every edit object: path, action, anchor, content.\n"
-                "Example: {\"path\": \"example.txt\", \"action\": \"replace\", \"anchor\": \"short unique phrase\", \"content\": \"new text\"}\n"
+                "\n"
+                "HOW IT WORKS: 'anchor' is the EXACT existing text the action operates on. "
+                "For 'replace', the anchor text is deleted and 'content' is put in its place. "
+                "So 'content' must be the rewritten version of the anchored text — NOT a new unrelated block, "
+                "and NOT text you want to appear elsewhere. Think of it as: old text = anchor, new text = content.\n"
+                "\n"
+                "REPLACE EXAMPLE — to change 'reducing memory usage by about 50%' to '...by about 60%':\n"
+                "  anchor:  \"reducing memory usage by about 50%\"\n"
+                "  content: \"reducing memory usage by about 60%\"\n"
+                "The anchor and content cover THE SAME span of text. Do NOT put a 2-word anchor and a whole paragraph as content — "
+                "that deletes the 2 words and dumps the paragraph mid-sentence.\n"
+                "\n"
                 "Actions:\n"
-                "  - 'replace': find the anchor text and replace it with content.\n"
-                "  - 'insert_before': find the anchor text and insert content on a new line before it.\n"
-                "  - 'insert_after': find the anchor text and insert content on a new line after it.\n"
-                "  - 'create': create a new file; anchor is ignored, content is the full file.\n"
+                "  - 'replace': delete the anchor text, put 'content' in its place. content = rewrite of the anchor.\n"
+                "  - 'delete': remove the anchor text entirely. Use this to drop a redundant sentence, line, or block. 'content' is ignored.\n"
+                "  - 'insert_before': keep the anchor, add 'content' as new line(s) immediately before it.\n"
+                "  - 'insert_after': keep the anchor, add 'content' as new line(s) immediately after it.\n"
+                "  - 'create': make a new file; anchor is ignored, content is the ENTIRE file.\n"
+                "\n"
                 "Anchor rules:\n"
-                "  - Keep anchors SHORT: one line or a unique phrase (5-20 words). Never use multi-line anchors.\n"
-                "  - The anchor must appear exactly once in the file.\n"
-                "  - Use a unique fragment, not a whole paragraph.\n"
-                "For multiple changes to one file, use multiple edit entries with the same path but different short anchors."
+                "  - The anchor must match the file text exactly (whitespace and line breaks are ignored, so a single-line anchor may span wrapped lines).\n"
+                "  - Keep anchors focused: a unique phrase (roughly 5-20 words), just long enough to appear exactly once.\n"
+                "  - If the anchor appears more than once, the edit is rejected — add a few more words to make it unique.\n"
+                "\n"
+                "To make multiple changes, call propose_edit once per change."
             ),
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "edits": {
-                        "type": "array",
-                        "description": "List of edits to propose. Each is independently approved or rejected.",
-                        "items": {
-                            "type": "object",
-                            "properties": {
-                                "path": {
-                                    "type": "string",
-                                    "description": "Path to the file, relative to the aiWorkspace folder."
-                                },
-                                "action": {
-                                    "type": "string",
-                                    "enum": ["replace", "insert_before", "insert_after", "create"],
-                                    "description": "The type of edit to perform."
-                                },
-                                "anchor": {
-                                    "type": "string",
-                                    "description": "Text to locate in the file. Used by replace, insert_before, insert_after. Ignored for create."
-                                },
-                                "content": {
-                                    "type": "string",
-                                    "description": "The new text: replacement text, insertion text, or full file content for create."
-                                }
-                            },
-                            "required": ["path", "action", "content"]
-                        },
-                        "minItems": 1
+                    "path": {
+                        "type": "string",
+                        "description": "Path to the file, relative to the aiWorkspace folder."
+                    },
+                    "action": {
+                        "type": "string",
+                        "enum": ["replace", "delete", "insert_before", "insert_after", "create"],
+                        "description": "The type of edit to perform."
+                    },
+                    "anchor": {
+                        "type": "string",
+                        "description": "The EXACT existing text to act on. For 'replace' this is the text that gets deleted; for 'delete' it is the text removed; for insert it is the reference point. A unique phrase (~5-20 words), appearing exactly once. Required for replace/delete/insert_before/insert_after. Ignored for create."
+                    },
+                    "content": {
+                        "type": "string",
+                        "description": "For 'replace': the rewritten version of the anchored text that takes its place (same span, edited). For insert: the new line(s) to add. For 'create': the entire file contents. Ignored for 'delete'."
                     },
                     "summary": {
                         "type": "string",
-                        "description": "A very short description of the overall change (max ~15 words)."
+                        "description": "A very short description of the change (max ~15 words)."
                     }
                 },
-                "required": ["path", "edits", "summary"]
+                "required": ["path", "action", "summary"]
             }
         ),
         types.Tool(
@@ -355,27 +357,31 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
         return [types.TextContent(type="text", text=result)]
     elif name == "propose_edit":
         try:
-            edits = arguments.get("edits", [])
-            if not edits:
-                return [types.TextContent(type="text", text="REJECTED: 'edits' array is required and must not be empty.")]
+            # Single edit built from the flat arguments.
+            edit = {
+                "path": arguments.get("path", ""),
+                "action": arguments.get("action", "replace"),
+                "anchor": arguments.get("anchor", ""),
+                "content": arguments.get("content", ""),
+            }
 
-            # Validate and compute preview for each individual edit
-            edit_results = []
-            for i, edit in enumerate(edits):
-                try:
-                    preview = validate_and_preview_edit(WORKSPACE_ROOT, edit)
-                    edit_results.append({
-                        "index": i,
-                        "path": preview["path"],
-                        "action": edit.get("action", "replace"),
-                        "anchor": edit.get("anchor", ""),
-                        "content": edit.get("content", ""),
-                        "old_content": preview["old_content"],
-                        "new_content": preview["new_content"],
-                        "target_path": preview["target_path"],
-                    })
-                except ValueError as e:
-                    return [types.TextContent(type="text", text=f"REJECTED: Edit #{i+1} failed: {str(e)}")]
+            try:
+                preview = validate_and_preview_edit(WORKSPACE_ROOT, edit)
+            except ValueError as e:
+                return [types.TextContent(type="text", text=f"REJECTED: Edit failed: {str(e)}")]
+
+            # Wrap the single edit in a one-element array so downstream
+            # (agent storage, /resolve_edit, frontend) keeps its batch shape.
+            edit_results = [{
+                "index": 0,
+                "path": preview["path"],
+                "action": edit["action"],
+                "anchor": edit["anchor"],
+                "content": edit["content"],
+                "old_content": preview["old_content"],
+                "new_content": preview["new_content"],
+                "target_path": preview["target_path"],
+            }]
 
             result = {
                 "status": "pending_approval",
