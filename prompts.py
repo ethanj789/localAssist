@@ -29,6 +29,11 @@ SYSTEM_PROMPT = (
     "Output rules: "
     "Report what you found, note gaps, and cite sources when available. "
     "For news, show the majority of non-duplicate headlines with summaries, then bullet-point links at the end. "
+    "When writing mathematical expressions, use LaTeX: $ ... $ for inline math and $$ ... $$ for display/block math. "
+    "CRITICAL: any dollar sign that means money, NOT math, MUST be escaped as \\$ — always. "
+    "This is required because unescaped $ signs are parsed as math delimiters and will corrupt the rendered output. "
+    "Examples: write 'it costs \\$10 versus \\$20' and 'a \\$1,000.00 fee', but write inline math normally as '$5x = 1$'. "
+    "If a sentence mixes money and math, escape every currency $ and leave the math $ unescaped. "
     "Be concise but complete. No filler."
     
     "When you call propose_edit and receive 'edit pending approval', that means SUCCESS — the edit was proposed and is waiting for the user to accept or reject it in the UI. "

@@ -141,6 +141,16 @@
     color: var(--accent);
 }
 
+.chip-toggle.disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+}
+
+.chip-toggle.disabled:hover {
+    border-color: var(--border);
+    color: var(--muted);
+}
+
 /* ── Input wrap ── */
 .input-wrap {
     position: relative;

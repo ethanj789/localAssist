@@ -1,7 +1,7 @@
 import { API } from './constants.js';
 import { showToast, setInputDisplay, scrollToBottom, escHtml } from './utils/dom.js';
 import { initThemes } from './ui/theme.js';
-import { loadConfig, applyConfig, bindReindexButtons } from './api/config.js';
+import { loadConfig, applyConfig, bindReindexButtons, reflectProvider, setProviderLocked, providerLocked } from './api/config.js';
 import {
     sendMessage,
     cancelStream,
@@ -39,6 +39,9 @@ async function init() {
     // Hook up custom events
     document.addEventListener('conversations-updated', loadConversations);
     document.addEventListener('conversation-id-updated', (e) => {
+        // A message just created/continued a conversation — pin the provider so
+        // it can't be switched mid-chat.
+        setProviderLocked(true);
         loadConversations();
     });
     document.addEventListener('conversation-cleared', startNewChat);
@@ -247,6 +250,10 @@ function initCustomSelect() {
 
     if (cloudChip) {
         cloudChip.addEventListener('click', () => {
+            if (providerLocked) {
+                showToast('Provider is locked for this chat — start a new chat to switch');
+                return;
+            }
             const cfgCloud = document.getElementById('cfg-use-cloud');
             const isNowCloud = !cfgCloud.checked;
             cfgCloud.checked = isNowCloud;
@@ -403,6 +410,13 @@ async function selectConversation(id) {
         const details = await getConversationDetails(id);
         setCurrentConversationId(id);
 
+        // Pin the UI to whichever provider this conversation was created with,
+        // and lock switching. The backend already routes this conversation to
+        // its stored provider regardless of the global toggle.
+        const convProvider = details.conversation?.provider || 'ollama';
+        reflectProvider(convProvider);
+        setProviderLocked(true);
+
         renderConversationHistory(details.messages);
 
         document.querySelectorAll('.conversation-item').forEach(item => {
@@ -513,6 +527,10 @@ function startNewChat(showToast = true) {
     document.querySelectorAll('.conversation-item').forEach(item => {
         item.classList.remove('active');
     });
+
+    // Fresh chat: unlock provider switching and reset to Local default.
+    setProviderLocked(false);
+    reflectProvider('ollama');
 
     if (showToast) {
         showToast('Started new conversation');

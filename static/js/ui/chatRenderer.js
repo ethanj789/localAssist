@@ -181,8 +181,12 @@ export function renderMath(el) {
     try {
         renderMathInElement(el, {
             delimiters: [
+                // Display math first so $$...$$ wins over $...$.
                 { left: '$$', right: '$$', display: true },
                 { left: '\\[', right: '\\]', display: true },
+                // Inline math.
+                { left: '$', right: '$', display: false },
+                { left: '\\(', right: '\\)', display: false },
             ],
             throwOnError: false,
             ignoredTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code'],

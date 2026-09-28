@@ -723,7 +723,7 @@ async def agent_loop(user_message: str, mcp, model_override: str = "default", co
                                 global_pending_edits.append(batch_entry)
                                 _save_pending_edits()
                                 yield _sse("propose_edit", json.dumps(batch_entry))
-                                result = "edit pending approval. provide a short summary of the changes."
+                                result = "edit pending approval. provide a short summary of the changes for the user."
                         except Exception:
                             # result already contains the REJECTED message from the tool — 
                             # pass it through so the model sees the error details
