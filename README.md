@@ -1,55 +1,42 @@
-# local-search-agent
+# localAssist
 
-A local MCP-based agentic search tool. Gemma 4 (via Ollama) decides when
-to search, calls a real MCP server for web search + page fetch, and streams
-answers back to a browser UI.
+A self-hosted AI assistant that runs on your own machine. A chat UI in the
+browser drives an agent that can actually do things — search the web, work with
+your files, remember what matters, and more — with your data staying local by
+default.
 
-```
-[index.html]  →  HTTP/SSE  →  [server.py]  →  MCP stdio  →  [mcp_server.py]
-  browser           API         FastAPI          protocol     tavily
-                              + Ollama loop
-```
+It's local-first: point it at a model running locally through Ollama and
+nothing leaves your machine. Cloud models (Groq, OpenRouter) are supported too
+if you'd rather trade privacy for speed, and you can switch between them per
+conversation.
 
-## Setup
+## What it can do
 
-```bash
-# 1. Install deps
-pip install -r requirements.txt
+- **Chat with tools** — the agent decides when to reach for a tool and streams
+  its answer back as it works.
+- **Web search** — looks things up and pulls in current information.
+- **Files** — reads, searches, and edits files in a sandboxed workspace. Edits
+  are proposed for you to approve before anything is written.
+- **Memory** — remembers facts about you across conversations.
+- **Plans** — breaks bigger requests into steps and tracks its progress.
+- **News & weather** — quick current info without leaving the chat.
+- **Email drafts** — opens a prefilled compose window.
+- **Skills** — slash commands (`/briefing`, `/research`, `/notes`) that chain a
+  few steps into one action.
+- **Voice input** — talk to it instead of typing.
+- **Semantic search** — finds things by meaning, not just keywords, across your
+  workspace.
 
-# 2. Pull model
-ollama pull gemma4:e2b
+## Notes
 
-# 3. Start MCP + API server
-python server.py
-# uvicorn server:app --reload --port 8000
+There's a built-in handwriting notes app — write on a canvas, and it runs OCR
+on your pages in the background. The transcribed text gets indexed alongside
+the rest of your workspace, so the assistant can search and reference your
+handwritten notes right in chat.
 
-# 4. Open index.html in your browser (just open the file directly)
-```
+## Local-first
 
-## Config
-
-Everything is configurable from the sidebar in the UI at runtime.
-You can also set env vars before starting the server:
-
-| Env var        | Default                  | Description                    |
-|----------------|--------------------------|--------------------------------|
-| MODEL          | gemma4:2b                | Ollama model name              |
-| MAX_SEARCHES   | 5                        | Max searches per turn          |
-| TEMPERATURE    | 0.7                      | Generation temperature         |
-| MAX_TOKENS     | 1024                     | Max tokens per response        |
-| OLLAMA_URL     | http://localhost:11434   | Ollama base URL                |
-| BRAVE_API_KEY  | (empty)                  | Optional Brave Search fallback |
-
-## Resume blurb
-
-> Built a local agentic search assistant using the Model Context Protocol (MCP).
-> Implemented an MCP server (stdio transport, JSON-RPC 2.0) exposing web search
-> and page extraction tools, with a FastAPI client running an Ollama agentic loop
-> (Gemma 4 2B). Features a streaming browser UI with live search status and
-> runtime config — fully offline, zero cloud APIs.
-
-
-## running
-
-.venv\Scripts\activate
-python server.py
+The default posture is private: run a local model with Ollama and your prompts,
+files, and memory never touch a third party. Web search and news reach out to
+their APIs when you use those tools, but the model itself can stay entirely on
+your machine. Cloud providers are there when you want them, not required.
