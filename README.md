@@ -29,10 +29,14 @@ conversation.
 
 ## Notes
 
-There's a built-in handwriting notes app — write on a canvas, and it runs OCR
-on your pages in the background. The transcribed text gets indexed alongside
-the rest of your workspace, so the assistant can search and reference your
-handwritten notes right in chat.
+There's a built-in handwriting notes app — write on a canvas, and it transcribes
+your pages in the background using native Windows Ink handwriting recognition
+(see `winink/`). The recognized text gets indexed alongside the rest of your
+workspace, so the assistant can search and reference your handwritten notes. Recognition is fully local via the OS.
+
+The Windows Ink tool is a small C# CLI. Build it once with
+`pwsh winink/build.ps1`; the notes app invokes it automatically. See
+`winink/README.md` for details.
 
 ## Local-first
 

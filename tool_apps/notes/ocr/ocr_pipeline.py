@@ -28,12 +28,15 @@ from PIL import Image, ImageDraw
 log = logging.getLogger(__name__)
 
 # ── Output root ────────────────────────────────────────────────────────────────
+# This module lives at tool_apps/notes/ocr/, so the workspace root is four
+# parents up (ocr -> notes -> tool_apps -> localAssist).
 OUTPUT_ROOT = (
-    Path(__file__).resolve().parent.parent.parent / "aiWorkspace" / "notesAppText"
+    Path(__file__).resolve().parent.parent.parent.parent / "aiWorkspace" / "notesAppText"
 )
 
-# Notes data root — used to resolve meta.json for title lookup
-_NOTES_DATA_ROOT = Path(__file__).resolve().parent / "data"
+# Notes data root — used to resolve meta.json for title lookup.
+# From tool_apps/notes/ocr/ the data dir is one level up: tool_apps/notes/data.
+_NOTES_DATA_ROOT = Path(__file__).resolve().parent.parent / "data"
 
 
 # ── Title-slug resolution ──────────────────────────────────────────────────────
@@ -240,7 +243,7 @@ def process_page(
     Writes to notesAppText/<title-slug>/<blob_idx>.txt (plain text, no header).
     Incremental: blobs whose hash_strokes matches the .hash sidecar are skipped.
     """
-    from tool_apps.notes.ocr_backends import get_backend
+    from tool_apps.notes.ocr.ocr_backends import get_backend
 
     if output_dir is None:
         output_dir = OUTPUT_ROOT

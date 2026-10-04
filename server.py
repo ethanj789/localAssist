@@ -66,14 +66,14 @@ async def lifespan(app: FastAPI):
         except Exception as exc:
             logging.error(f"[index] Startup index build failed: {exc}")
 
-        # After indexing, backfill OCR for any pages not yet processed.
+        # After indexing, run Windows Ink recognition over any changed pages.
         try:
             from tool_apps.notes.api import backfill_ocr_for_existing_pages
             loop = asyncio.get_running_loop()
             await loop.run_in_executor(None, backfill_ocr_for_existing_pages)
-            print("[ocr] Startup OCR backfill complete.")
+            print("[ink] Startup Ink recognition backfill complete.")
         except Exception as exc:
-            logging.error(f"[ocr] Startup OCR backfill failed: {exc}")
+            logging.error(f"[ink] Startup Ink recognition backfill failed: {exc}")
 
     asyncio.get_event_loop().create_task(_background_index())
 
@@ -172,7 +172,7 @@ async def reindex_files():
 
 @app.post("/reindex/ocr")
 async def reindex_ocr():
-    """Wipe existing OCR output and re-run OCR backfill for all notes pages."""
+    """Wipe existing recognized-text output and re-run Ink recognition for all pages."""
     import shutil
     from tool_apps.notes.api import backfill_ocr_for_existing_pages, OUTPUT_DIR
     # Clear existing output so backfill processes everything fresh
@@ -182,7 +182,7 @@ async def reindex_ocr():
     async def _run():
         try:
             await asyncio.get_running_loop().run_in_executor(None, backfill_ocr_for_existing_pages)
-            logging.info("[reindex] OCR backfill complete.")
+            logging.info("[reindex] Ink recognition backfill complete.")
             # Re-run note blob scan to update the vector DB
             from tools.index import scan_note_blobs
             import tools.vector_db as vector_db
@@ -191,9 +191,9 @@ async def reindex_ocr():
             await asyncio.get_running_loop().run_in_executor(None, scan_note_blobs)
             logging.info("[reindex] Note blob scan complete.")
         except Exception as exc:
-            logging.error(f"[reindex] OCR re-index failed: {exc}")
+            logging.error(f"[reindex] Ink re-index failed: {exc}")
     asyncio.get_event_loop().create_task(_run())
-    return {"status": "ok", "message": "OCR re-index started in background."}
+    return {"status": "ok", "message": "Ink recognition re-index started in background."}
 
 class ChatRequest(BaseModel):
     message: str

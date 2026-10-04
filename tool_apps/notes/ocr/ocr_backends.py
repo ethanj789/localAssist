@@ -201,10 +201,10 @@ def get_backend() -> OCRBackend:
     if OCR_BACKEND == "moondream":
         backend: OCRBackend = MoondreamBackend()
     elif OCR_BACKEND == "easyocr":
-        from tool_apps.notes._easyocr_backend import EasyOCRBackend
+        from tool_apps.notes.ocr._easyocr_backend import EasyOCRBackend
         backend = EasyOCRBackend()
     elif OCR_BACKEND == "trocr":
-        from tool_apps.notes._trocr_backend import TrOCRBackend
+        from tool_apps.notes.ocr._trocr_backend import TrOCRBackend
         backend = TrOCRBackend()
     else:
         raise ValueError(f"Unknown OCR_BACKEND: {OCR_BACKEND!r}")

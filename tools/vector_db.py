@@ -314,6 +314,15 @@ def delete_note_blobs_for_page(page_id: str) -> None:
         _write_manifest()
 
 
+def delete_note_blob(blob_id: str) -> None:
+    """Remove a single blob row by its composite id (page_id__blob_idx)."""
+    conn = _require_conn()
+    with _write_lock:
+        conn.execute("DELETE FROM note_blobs WHERE id = ?", (blob_id,))
+        conn.commit()
+        _write_manifest()
+
+
 def search_note_blobs(query_vec: np.ndarray, k: int = 5) -> list[dict]:
     """
     Brute-force cosine similarity over all note_blob vectors.

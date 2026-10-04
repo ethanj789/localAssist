@@ -78,43 +78,18 @@ def _rename_ocr_dir(page_id: str, old_title: str, new_title: str) -> None:
             log.warning("Failed to rename OCR dir %s → %s: %s", old_slug, new_slug, exc)
 
 
-# ── OCR helpers ───────────────────────────────────────────────────────────────
-
-def _decode_strokes_for_ocr(strokes_data: dict) -> list[dict]:
-    """
-    Expand the v3 compact stroke format [{id, points: [x,y,p], color, ...}]
-    into the fuller {x, y, pressure} dict form that ocr_pipeline expects.
-    Handles both dict-point and [x,y,p]-list-point formats defensively.
-    """
-    result: list[dict] = []
-    for stroke in strokes_data.get("strokes", []):
-        expanded_points: list[dict] = []
-        for p in stroke.get("points", []):
-            if isinstance(p, dict):
-                expanded_points.append({
-                    "x": float(p.get("x", 0)),
-                    "y": float(p.get("y", 0)),
-                    "pressure": float(p.get("pressure", p.get("p", 0.5))),
-                })
-            elif isinstance(p, (list, tuple)) and len(p) >= 2:
-                expanded_points.append({
-                    "x": float(p[0]),
-                    "y": float(p[1]),
-                    "pressure": float(p[2]) if len(p) > 2 else 0.5,
-                })
-        result.append({**stroke, "points": expanded_points})
-    return result
-
+# ── Recognition helpers ───────────────────────────────────────────────────────
 
 def backfill_ocr_for_existing_pages() -> None:
     """
     Synchronous backfill — called once at startup (in a thread-pool executor)
-    to OCR any page whose notesAppText directory doesn't exist yet or is empty.
+    to run Windows Ink recognition on every page's stored strokes.
 
-    Reads strokes.json.gz directly; no save required from the user.
-    Processes both 'notes' and 'art' page types.
+    Passes the strokes.json.gz path straight to the recognizer, which reads it
+    directly and skips pages whose source strokes are unchanged (via its .hash
+    sidecar). Processes both 'notes' and 'art' page types.
     """
-    from tool_apps.notes.ocr_pipeline import process_page
+    from tool_apps.notes.winink_recognizer import process_page_winink
 
     for type_dir in ("notes", "art"):
         base = WORKSPACE_DIR / type_dir
@@ -125,39 +100,25 @@ def backfill_ocr_for_existing_pages() -> None:
                 continue
             page_id = page_dir.name
 
-            # Skip if output dir already has .txt files (already OCR'd)
-            out_dir = OUTPUT_DIR / page_id
-            if out_dir.exists() and any(out_dir.glob("*.txt")):
+            gz_path = page_dir / "strokes.json.gz"
+            if not gz_path.exists():
                 continue
 
-            gz_path = page_dir / "strokes.json.gz"
-            json_path = page_dir / "strokes.json"
             try:
-                if gz_path.exists():
-                    with gzip.open(gz_path, "rt", encoding="utf-8") as f:
-                        strokes_data = json.load(f)
-                elif json_path.exists():
-                    with open(json_path, "r", encoding="utf-8") as f:
-                        strokes_data = json.load(f)
-                else:
-                    continue
-
-                strokes = _decode_strokes_for_ocr(strokes_data)
-                if not strokes:
-                    continue
-
-                log.info("OCR backfill: processing page %s", page_id)
-                process_page(page_id, strokes, OUTPUT_DIR)
-
+                log.info("Ink backfill: processing page %s", page_id)
+                process_page_winink(page_id, gz_path, OUTPUT_DIR, page_type=type_dir)
             except Exception as exc:
-                log.error("OCR backfill failed for page %s: %s", page_id, exc)
+                log.error("Ink backfill failed for page %s: %s", page_id, exc)
 
 
-async def _schedule_ocr(page_id: str, strokes_data: dict) -> None:
+async def _schedule_ocr(page_id: str, gz_path: Path, page_type: str) -> None:
     """
-    Cancel any pending OCR task for this page and schedule a new one with
-    OCR_DEBOUNCE_SECS of delay.  The actual OCR runs in the thread-pool
-    executor so it never blocks the event loop.
+    Cancel any pending recognition task for this page and schedule a new one
+    with OCR_DEBOUNCE_SECS of delay.  The actual Windows Ink recognition runs
+    in the thread-pool executor so it never blocks the event loop.
+
+    Takes the strokes.json.gz path (written by save_page just before this call);
+    the recognizer reads it directly.
     """
     # Cancel existing debounce task for this page if one is pending
     existing = _ocr_tasks.get(page_id)
@@ -168,21 +129,21 @@ async def _schedule_ocr(page_id: str, strokes_data: dict) -> None:
     async def _run() -> None:
         try:
             await asyncio.sleep(OCR_DEBOUNCE_SECS)
-            strokes = _decode_strokes_for_ocr(strokes_data)
             loop = asyncio.get_running_loop()
-            from tool_apps.notes.ocr_pipeline import process_page
+            from tool_apps.notes.winink_recognizer import process_page_winink
             await loop.run_in_executor(
                 _ocr_executor,
-                process_page,
+                process_page_winink,
                 page_id,
-                strokes,
+                gz_path,
                 OUTPUT_DIR,
+                page_type,
             )
-            log.info("OCR complete for page %s", page_id)
+            log.info("Ink recognition complete for page %s", page_id)
         except asyncio.CancelledError:
-            log.debug("OCR task cancelled for page %s (superseded by newer save)", page_id)
+            log.debug("Recognition task cancelled for page %s (superseded by newer save)", page_id)
         except Exception as exc:
-            log.error("OCR failed for page %s: %s", page_id, exc)
+            log.error("Recognition failed for page %s: %s", page_id, exc)
         finally:
             _ocr_tasks.pop(page_id, None)
 
@@ -403,10 +364,10 @@ async def save_page(type: str, page_id: str, req: SavePageRequest):
         except Exception as e:
             print(f"Failed to save page.png: {e}")
 
-    # Schedule background OCR for any save that has strokes (debounced 30s).
-    # We don't require pageDataUrl — the strokes dict is all the pipeline needs.
+    # Schedule background recognition for any save that has strokes (debounced 30s).
+    # The recognizer reads the strokes.json.gz we just wrote.
     if req.strokes.get("strokes"):
-        await _schedule_ocr(page_id, req.strokes)
+        await _schedule_ocr(page_id, page_dir / "strokes.json.gz", type)
 
     return {"status": "ok", "updatedAt": now}
 

@@ -138,6 +138,7 @@ def scan_note_blobs() -> None:
 
     stored_hashes = vector_db.get_note_blob_hashes()
     seen_page_ids: set[str] = set()
+    seen_blob_ids: set[str] = set()
     upserted = skipped = 0
 
     for page_dir in sorted(NOTES_TEXT_DIR.iterdir()):
@@ -152,6 +153,7 @@ def scan_note_blobs() -> None:
 
             seen_page_ids.add(parsed["page_id"])
             blob_id = f"{parsed['page_id']}__{parsed['blob_idx']}"
+            seen_blob_ids.add(blob_id)
 
             if stored_hashes.get(blob_id) == parsed["content_hash"]:
                 skipped += 1
@@ -184,19 +186,36 @@ def scan_note_blobs() -> None:
             vector_db.upsert_note_blob(blob_row, vec)
             upserted += 1
 
-    # Remove rows for page_ids no longer on disk
+    # Remove stale rows. Two cases:
+    #   1. whole page gone  — delete every row for that page_id
+    #   2. page present but a specific blob file gone (e.g. the old multi-blob
+    #      pipeline left 1.txt behind and Ink now writes only 0.txt) — delete
+    #      just that orphaned blob row.
     all_stored = vector_db.get_note_blob_hashes()
     stored_page_ids: set[str] = set()
     for blob_id in all_stored:
         if "__" in blob_id:
             stored_page_ids.add(blob_id.split("__")[0])
 
+    removed_pages = 0
+    removed_blobs = 0
     for gone_page_id in stored_page_ids - seen_page_ids:
-        log.info("scan_note_blobs: removing rows for deleted page %s", gone_page_id)
         vector_db.delete_note_blobs_for_page(gone_page_id)
+        removed_pages += 1
 
-    if upserted or skipped:
-        log.info("scan_note_blobs: %d upserted, %d unchanged.", upserted, skipped)
+    for stale_blob_id in set(all_stored) - seen_blob_ids:
+        # Skip blobs belonging to a page we already deleted wholesale above.
+        page_id = stale_blob_id.split("__")[0] if "__" in stale_blob_id else stale_blob_id
+        if page_id not in seen_page_ids:
+            continue
+        vector_db.delete_note_blob(stale_blob_id)
+        removed_blobs += 1
+
+    if upserted or skipped or removed_pages or removed_blobs:
+        log.info(
+            "scan_note_blobs: %d upserted, %d unchanged, %d page(s) removed, %d stale blob(s) removed.",
+            upserted, skipped, removed_pages, removed_blobs,
+        )
 
 
 def build_index(force: bool = False) -> None:
