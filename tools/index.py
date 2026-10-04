@@ -6,7 +6,7 @@ import numpy as np
 from datetime import datetime
 from pathlib import Path
 from tools.files import get_file_chunks, WORKSPACE_ROOT, SKIP_DIRS
-from tools.ollama import get_embeddings
+from tools.embeddings import get_embeddings
 import tools.vector_db as vector_db
 
 # OCR blob output lives here — included in indexing, not in SKIP_DIRS

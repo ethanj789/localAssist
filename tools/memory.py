@@ -3,7 +3,7 @@ import logging
 from pathlib import Path
 import numpy as np
 from config import get_raw_memory, save_memory
-from tools.ollama import get_embeddings
+from tools.embeddings import get_embeddings
 
 log = logging.getLogger(__name__)
 

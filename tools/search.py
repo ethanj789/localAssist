@@ -3,7 +3,7 @@ import logging
 import numpy as np
 from pathlib import Path
 from tools.index import build_index, DB_FILE, NOTES_TEXT_DIR
-from tools.ollama import get_embeddings
+from tools.embeddings import get_embeddings
 import tools.vector_db as vector_db
 from mcp import types
 

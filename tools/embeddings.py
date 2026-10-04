@@ -1,4 +1,8 @@
-#not really ollama any more from hf now
+"""
+tools/embeddings.py — Text embedding via sentence-transformers (Hugging Face).
+Loads a SentenceTransformer model once at module level and batches inputs.
+(Formerly ollama.py — embeddings no longer come from Ollama.)
+"""
 import logging
 from sentence_transformers import SentenceTransformer
 
