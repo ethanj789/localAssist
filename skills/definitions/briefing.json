@@ -3,7 +3,7 @@
     "command": "/briefing",
     "description": "Get weather and news summary for your day",
     "inputs": [
-        {"name": "location", "type": "string", "required": false, "default": "Seattle", "placeholder": "your city"}
+        {"name": "location", "type": "string", "required": false, "default": "{current_location}", "fallback": "Atlanta", "placeholder": "your city"}
     ],
     "steps": [
         {

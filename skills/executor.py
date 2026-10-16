@@ -84,6 +84,21 @@ def _parse_skill_inputs(skill: dict, raw_args: str) -> dict:
     return result
 
 
+def _resolve_current_location() -> str | None:
+    """
+    Read the user's current location from the manual section of memory.json.
+    Returns the stored location string, or None if it isn't set.
+    """
+    try:
+        from config import get_raw_memory
+        manual = get_raw_memory().get("manual", {}) or {}
+        location = str(manual.get("location", "")).strip()
+        return location or None
+    except Exception as e:
+        log.warning("skill_executor: reading location from memory failed: %s", e)
+        return None
+
+
 async def run_skill(
     skill: dict,
     raw_args: str,
@@ -101,12 +116,29 @@ async def run_skill(
 
     # Parse inputs
     user_inputs = _parse_skill_inputs(skill, raw_args)
-    
+
+    # Resolve the user's current location from memory (manual section), so inputs
+    # can fall back to the user's stored city instead of a hardcoded default.
+    current_location = _resolve_current_location()
+
+    # If an input was left empty or explicitly asks for the current location,
+    # substitute the stored location when we have one.
+    for inp in skill.get("inputs", []):
+        name = inp["name"]
+        value = user_inputs.get(name, "")
+        if current_location and (not value or value == "{current_location}"):
+            user_inputs[name] = current_location
+        elif value == "{current_location}":
+            # No stored location to resolve the sentinel — fall back to the
+            # input's static fallback so the sentinel never leaks downstream.
+            user_inputs[name] = inp.get("fallback", "Atlanta")
+
     # Build interpolation context with built-in variables
     context = {
         "date": date.today().isoformat(),
         "time": datetime.now().strftime("%H:%M"),
         "day": datetime.now().strftime("%A"),
+        "current_location": current_location or "",
         **user_inputs,
     }
 
