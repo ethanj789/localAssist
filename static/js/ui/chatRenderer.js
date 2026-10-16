@@ -30,19 +30,72 @@ export function appendMsgImages(msgDiv, sources) {
     const strip = document.createElement('div');
     strip.className = 'msg-images';
     sources.forEach(src => {
+        // Anchor is kept (href = full image) so middle-click / ctrl-click and
+        // "open in new tab" keep working natively. Left click is intercepted
+        // to open the in-window lightbox instead of navigating.
         const a = document.createElement('a');
         a.href = src;
         a.target = '_blank';
         a.rel = 'noopener';
         a.className = 'msg-image';
+
         const img = document.createElement('img');
         img.src = src;
         img.alt = 'attached image';
         img.loading = 'lazy';
         a.appendChild(img);
+
+        a.addEventListener('click', (e) => {
+            // Let the browser handle modified clicks (ctrl/cmd/shift/middle) so
+            // "open in new tab" still works. Plain left click → lightbox.
+            if (e.button !== 0 || e.ctrlKey || e.metaKey || e.shiftKey || e.altKey) return;
+            e.preventDefault();
+            openImageLightbox(src);
+        });
+
         strip.appendChild(a);
     });
     body.insertBefore(strip, body.firstChild);
+}
+
+/**
+ * Open a fullscreen, in-window lightbox showing the given image.
+ * Click the backdrop or press Escape to close. A single reusable overlay
+ * element is kept in the DOM.
+ *
+ * @param {string} src - image URL to display
+ */
+export function openImageLightbox(src) {
+    let overlay = document.getElementById('image-lightbox');
+    if (!overlay) {
+        overlay = document.createElement('div');
+        overlay.id = 'image-lightbox';
+        overlay.className = 'image-lightbox';
+        overlay.innerHTML = `
+            <button class="image-lightbox-close" aria-label="Close">×</button>
+            <img class="image-lightbox-img" alt="attached image" />
+        `;
+        document.body.appendChild(overlay);
+
+        const close = () => overlay.classList.remove('open');
+
+        // Clicking the backdrop (but not the image) closes it.
+        overlay.addEventListener('click', (e) => {
+            if (e.target === overlay || e.target.classList.contains('image-lightbox-close')) {
+                close();
+            }
+        });
+
+        // Escape closes while the overlay is open.
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape' && overlay.classList.contains('open')) close();
+        });
+
+        overlay._close = close;
+    }
+
+    overlay.querySelector('.image-lightbox-img').src = src;
+    overlay.classList.add('open');
 }
 
 

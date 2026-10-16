@@ -579,10 +579,60 @@ details.thinking-block[open] .thinking-summary::before {
     border-radius: 8px;
     overflow: hidden;
     border: 1px solid var(--border);
+    cursor: zoom-in;
 }
 
 .msg-image img {
     display: block;
     max-width: 100%;
     height: auto;
+}
+
+/* ── Fullscreen in-window image lightbox ── */
+.image-lightbox {
+    display: none;
+    position: fixed;
+    inset: 0;
+    z-index: 9999;
+    background: rgba(0, 0, 0, 0.85);
+    align-items: center;
+    justify-content: center;
+    cursor: zoom-out;
+    padding: 32px;
+}
+
+.image-lightbox.open {
+    display: flex;
+}
+
+.image-lightbox-img {
+    max-width: 100%;
+    max-height: 100%;
+    object-fit: contain;
+    border-radius: 6px;
+    box-shadow: 0 8px 40px rgba(0, 0, 0, 0.6);
+    cursor: default;
+}
+
+.image-lightbox-close {
+    position: absolute;
+    top: 16px;
+    right: 20px;
+    width: 40px;
+    height: 40px;
+    border: none;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.12);
+    color: #fff;
+    font-size: 26px;
+    line-height: 1;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.15s ease;
+}
+
+.image-lightbox-close:hover {
+    background: rgba(255, 255, 255, 0.25);
 }
