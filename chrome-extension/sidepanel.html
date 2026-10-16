@@ -9,6 +9,25 @@
 </head>
 
 <body>
+  <!-- Hover-reveal panel toolbar. A thin invisible zone pinned to the top of
+       the panel; hovering it (or the toolbar) slides the toolbar down. Moving
+       away slides it back out of sight, so no chrome persists over the app.
+       Add future actions as more .toolbar-btn children. -->
+  <div id="toolbar-zone" class="toolbar-zone hidden">
+    <!-- Subtle affordance shown when the toolbar is hidden; hints you can
+         hover here to reveal it. Fades out once the toolbar slides down. -->
+    <div class="toolbar-hint" aria-hidden="true"></div>
+    <div id="panel-toolbar" class="panel-toolbar">
+      <button
+        id="screenshot-btn"
+        class="toolbar-btn"
+        type="button"
+        title="Screenshot the current page and attach it"
+        aria-label="Screenshot the current page and attach it"
+      >📷</button>
+    </div>
+  </div>
+
   <!-- Assistant UI, loaded from the local server -->
   <iframe
     id="assistant-frame"

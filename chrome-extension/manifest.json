@@ -4,11 +4,8 @@
   "version": "1.0.0",
   "description": "loads localAssist chat UI into the Chrome side panel.",
   "minimum_chrome_version": "114",
-  "permissions": ["sidePanel", "storage"],
-  "host_permissions": [
-    "http://localhost/*",
-    "http://127.0.0.1/*"
-  ],
+  "permissions": ["sidePanel", "storage", "tabs"],
+  "host_permissions": ["<all_urls>"],
   "action": {
     "default_title": "Open localAssist",
     "default_icon": {

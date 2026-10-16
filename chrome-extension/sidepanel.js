@@ -5,6 +5,12 @@ const offline = document.getElementById("offline");
 const urlInput = document.getElementById("server-url");
 const retryBtn = document.getElementById("retry-btn");
 const hint = document.getElementById("offline-hint");
+const toolbarZone = document.getElementById("toolbar-zone");
+const screenshotBtn = document.getElementById("screenshot-btn");
+
+// The origin the assistant iframe is currently loaded from. Used as the strict
+// postMessage target so we never leak a screenshot to another origin.
+let activeOrigin = null;
 
 // Saved server URL, or the default if none has been stored yet.
 function getServerUrl() {
@@ -38,6 +44,12 @@ function showAssistant(baseUrl) {
   frame.src = baseUrl;
   frame.classList.remove("hidden");
   offline.classList.add("hidden");
+  try {
+    activeOrigin = new URL(baseUrl).origin;
+  } catch {
+    activeOrigin = null;
+  }
+  if (toolbarZone) toolbarZone.classList.remove("hidden");
 }
 
 function showOffline(baseUrl, message) {
@@ -45,6 +57,38 @@ function showOffline(baseUrl, message) {
   offline.classList.remove("hidden");
   urlInput.value = baseUrl;
   hint.textContent = message || "";
+  activeOrigin = null;
+  if (toolbarZone) toolbarZone.classList.add("hidden");
+}
+
+// Ask the service worker to screenshot the visible browser tab, then hand the
+// resulting PNG data URL to the assistant app inside the iframe. The app treats
+// it exactly like a pasted image.
+function captureAndAttach() {
+  if (!activeOrigin) return;
+  if (screenshotBtn) screenshotBtn.disabled = true;
+
+  chrome.runtime.sendMessage({ type: "localassist:capture-tab" }, (resp) => {
+    if (screenshotBtn) screenshotBtn.disabled = false;
+
+    if (chrome.runtime.lastError) {
+      console.error("[localAssist] capture error:", chrome.runtime.lastError);
+      return;
+    }
+    if (!resp || !resp.ok || !resp.dataUrl) {
+      console.error("[localAssist] capture failed:", resp && resp.error);
+      return;
+    }
+    // Deliver to the iframe, scoped strictly to the loaded server origin.
+    frame.contentWindow.postMessage(
+      { type: "localassist:screenshot", dataUrl: resp.dataUrl },
+      activeOrigin
+    );
+  });
+}
+
+if (screenshotBtn) {
+  screenshotBtn.addEventListener("click", captureAndAttach);
 }
 
 async function connect() {

@@ -521,7 +521,7 @@ function renderConversationHistory(messages) {
     scrollToBottom(msgs);
 }
 
-function startNewChat(showToast = true) {
+function startNewChat(showNotification = true) {
     setCurrentConversationId(null);
     const messagesEl = document.getElementById('messages');
     if (messagesEl) messagesEl.innerHTML = '';
@@ -540,7 +540,10 @@ function startNewChat(showToast = true) {
     setProviderLocked(false);
     reflectProvider('ollama');
 
-    if (showToast) {
+    // Only show the toast when this is a deliberate "New Chat" action, not the
+    // click Event (the button handler passes the event as the first arg) and
+    // not the initial startup call that passes false.
+    if (showNotification === true) {
         showToast('Started new conversation');
     }
 }

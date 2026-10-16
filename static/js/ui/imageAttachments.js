@@ -116,6 +116,21 @@ export function initImageAttachments(onError) {
         });
     }
 
+    // Screenshots from the Chrome side panel arrive via postMessage from the
+    // extension (sidepanel.js). The panel captures the visible browser tab,
+    // then hands us a PNG data URL — we treat it exactly like a pasted image.
+    // The data URL is validated by addDataUrl (must start with "data:image/"),
+    // and we ignore any message that isn't our expected shape.
+    window.addEventListener('message', (e) => {
+        const data = e.data;
+        if (!data || data.type !== 'localassist:screenshot') return;
+        if (typeof data.dataUrl !== 'string') return;
+        const added = addDataUrl(data.dataUrl, 'screenshot.png');
+        if (!added && onError) {
+            onError('could not attach screenshot (too many images or bad format)');
+        }
+    });
+
     if (textarea) {
         textarea.addEventListener('paste', async (e) => {
             const items = e.clipboardData && e.clipboardData.items;
