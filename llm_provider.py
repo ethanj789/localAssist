@@ -228,6 +228,10 @@ def _build_ollama_payload(request_kwargs: dict, config_dict: dict, stream: bool 
         "options": {
             "temperature": request_kwargs.get("temperature", 0.7),
             "num_predict": request_kwargs.get("max_completion_tokens", 50000),
+            # Explicit context window. Without this Ollama defaults to 2048 tokens,
+            # which truncates image tokens on vision turns (system prompt + tool
+            # schemas + image overflow it) and makes the model hallucinate the image.
+            "num_ctx": request_kwargs.get("num_ctx", config_dict.get("ollama_num_ctx", 32768)),
         },
         "stream": stream,
     }

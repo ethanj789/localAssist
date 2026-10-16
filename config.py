@@ -146,6 +146,10 @@ CONFIG = {
     "groq_model":       os.getenv("GROQ_MODEL", get_model_value("tool", "model", "openai/gpt-oss-20b")),
     "ollama_base_url":  os.getenv("OLLAMA_URL", "http://localhost:11434"),
     "model":            os.getenv("MODEL", get_model_value("default", "model", "gemma4:e2b")),
+    # Ollama context window. Default (2048) is far too small for vision turns:
+    # system prompt + full tool schemas + ~hundreds of image tokens overflow it,
+    # the image tokens get truncated, and the model hallucinates the picture.
+    "ollama_num_ctx":   int(os.getenv("OLLAMA_NUM_CTX", "32768")),
     "max_searches":     int(os.getenv("MAX_SEARCHES", "2")),
     "max_emails":       int(os.getenv("MAX_EMAILS", "1")),
     "max_tools":        int(os.getenv("MAX_TOOLS", "10")),
