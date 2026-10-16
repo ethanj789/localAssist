@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>localAssist</title>
+  <link rel="stylesheet" href="sidepanel.css" />
+</head>
+
+<body>
+  <!-- Assistant UI, loaded from the local server -->
+  <iframe
+    id="assistant-frame"
+    title="localAssist"
+    allow="microphone; clipboard-read; clipboard-write"
+  ></iframe>
+
+  <!-- Fallback shown when the server can't be reached -->
+  <div id="offline" class="offline hidden">
+    <div class="offline-card">
+      <div class="offline-logo">local<span>assist</span></div>
+      <p class="offline-msg">Can't reach your assistant.</p>
+      <p class="offline-sub">
+        Make sure the server is running, then retry:
+      </p>
+      <pre class="offline-cmd">python server.py</pre>
+      <div class="offline-row">
+        <input id="server-url" type="text" spellcheck="false" />
+        <button id="retry-btn">Retry</button>
+      </div>
+      <p class="offline-hint" id="offline-hint"></p>
+    </div>
+  </div>
+
+  <script src="sidepanel.js"></script>
+</body>
+
+</html>
