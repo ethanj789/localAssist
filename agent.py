@@ -57,6 +57,29 @@ def _sse(event: str, data: str) -> str:
     return f"data: {payload}\n\n"
 
 
+def _rehydrate_history_images(history: list[dict]) -> None:
+    """Replace stored image *path* refs on reloaded user messages with the
+    actual base64, loaded from disk, so the model re-sees past images on every
+    turn (full multi-turn visual context).
+
+    get_messages() returns a user message's `images` as a list of relative file
+    paths. Ollama needs bare base64, so we load each path and swap it in place.
+    Paths that fail to load are dropped so a missing file can't break the turn.
+    An image is ~280 image tokens per turn — cheap enough to always re-feed."""
+    import image_store
+    for msg in history:
+        if msg.get("role") != "user":
+            continue
+        paths = msg.get("images")
+        if not paths:
+            continue
+        b64s = [b64 for b64 in (image_store.load_as_base64(p) for p in paths) if b64]
+        if b64s:
+            msg["images"] = b64s
+        else:
+            msg.pop("images", None)
+
+
 def _extract_tool_call_from_text(content: str, available_tools: list[dict]) -> SimpleNamespace | None:
     """Detect when a model emits a tool call as plain text instead of a structured
     tool_call.  Handles patterns like:
@@ -249,19 +272,41 @@ async def generate_and_save_title(conversation_id: str, first_message: str):
         log.error(f"Failed to generate title for {conversation_id}: {e}")
 
 
-async def agent_loop(user_message: str, mcp, model_override: str = "default", conversation_id: str = None, ollama_thinking: bool = False) -> AsyncGenerator[str, None]:
+async def agent_loop(user_message: str, mcp, model_override: str = "default", conversation_id: str = None, ollama_thinking: bool = False, images: list = None) -> AsyncGenerator[str, None]:
     global global_pending_edits
     import db
+    import image_store
     try:
         if conversation_id:
             yield _sse("conversation_id", conversation_id)
         yield _sse("status", "loop started")
         clean_message = user_message.replace("<thinking>", "").replace("<coding>", "").strip()
-        
+
+        # Persist any attached images to disk as files and keep only path refs in
+        # the DB. The raw base64 is fed to the model on THIS turn only (below),
+        # so stale images never re-enter the context window on later turns.
+        image_paths = image_store.save_data_urls(conversation_id, images or []) if images else []
+        image_b64s = [b64 for b64 in (image_store.load_as_base64(p) for p in image_paths) if b64]
+
         # Load history and save new user message
         conversation_history = db.get_messages(conversation_id)
-        db.add_message(conversation_id, "user", clean_message)
-        conversation_history.append({"role": "user", "content": clean_message})
+        db.add_message(conversation_id, "user", clean_message, images=image_paths or None)
+
+        user_msg = {"role": "user", "content": clean_message}
+        if image_b64s:
+            # Ollama /api/chat accepts a bare-base64 `images` list on a message
+            # (same shape the OCR MoondreamBackend uses).
+            user_msg["images"] = image_b64s
+            if not clean_message:
+                user_msg["content"] = "[The user sent an image with no text.]"
+        conversation_history.append(user_msg)
+
+        # Re-attach images for OLDER user messages reloaded from history: swap
+        # their stored path refs for the actual base64 (loaded from disk) so the
+        # model keeps full image context across the whole conversation. An image
+        # only costs ~280 image tokens per turn, so this is cheap and preserves
+        # multi-turn visual recall (e.g. "what about the error in that screenshot").
+        _rehydrate_history_images(conversation_history[:-1])
         yield _sse("status", "history appended")
 
         # Background title generation if it's currently a new chat

@@ -14,6 +14,37 @@ export function appendMsg(role, content, id) {
     return div;
 }
 
+/**
+ * Render image thumbnails inside a message's body. Accepts a list of image
+ * sources — either data URLs (freshly sent) or /chat-image/<path> URLs
+ * (restored from history). Thumbnails are prepended above any text content.
+ *
+ * @param {HTMLElement} msgDiv - the .msg container returned by appendMsg
+ * @param {string[]} sources - image URLs/data URLs to render
+ */
+export function appendMsgImages(msgDiv, sources) {
+    if (!msgDiv || !sources || !sources.length) return;
+    const body = msgDiv.querySelector('.msg-body');
+    if (!body) return;
+
+    const strip = document.createElement('div');
+    strip.className = 'msg-images';
+    sources.forEach(src => {
+        const a = document.createElement('a');
+        a.href = src;
+        a.target = '_blank';
+        a.rel = 'noopener';
+        a.className = 'msg-image';
+        const img = document.createElement('img');
+        img.src = src;
+        img.alt = 'attached image';
+        img.loading = 'lazy';
+        a.appendChild(img);
+        strip.appendChild(a);
+    });
+    body.insertBefore(strip, body.firstChild);
+}
+
 
 const PILL_COLLAPSE_THRESHOLD = 3;
 

@@ -1,7 +1,8 @@
 import { API } from '../constants.js';
 import { escHtml, setStatus, showToast, scrollToBottom } from '../utils/dom.js';
-import { appendMsg, appendPill, renderLinkCard, renderMarkdown, renderActionButton, createThinkingBlock, appendOllamaStats, renderMath } from '../ui/chatRenderer.js';
+import { appendMsg, appendMsgImages, appendPill, renderLinkCard, renderMarkdown, renderActionButton, createThinkingBlock, appendOllamaStats, renderMath } from '../ui/chatRenderer.js';
 import { handleProposeEdit } from '../ui/editPanel.js';
+import { getPendingImages, hasPendingImages, clearPendingImages } from '../ui/imageAttachments.js';
 
 export let isStreaming = false;
 export let currentConversationId = null;
@@ -82,13 +83,19 @@ export async function sendMessage(customText = null) {
         input.value = '';
         input.style.height = 'auto';
     }
-    if (!text) return;
+
+    // Capture any staged image attachments, then clear the composer strip so a
+    // follow-up message doesn't re-send them.
+    const images = hasPendingImages() ? getPendingImages() : [];
+    if (!text && images.length === 0) return;
+    clearPendingImages();
 
     setIsStreaming(true);
     document.getElementById('send-btn').disabled = true;
     setStatus(true, 'thinking...');
 
-    appendMsg('user', escHtml(text));
+    const userDiv = appendMsg('user', escHtml(text));
+    if (images.length) appendMsgImages(userDiv, images);
     scrollToBottom(document.getElementById('messages'), true);
 
     const aId = 'msg-' + Date.now();
@@ -133,6 +140,7 @@ export async function sendMessage(customText = null) {
                 model: model,
                 conversation_id: currentConversationId,
                 ollama_thinking: ollamaThinking,
+                images: images,
             }),
             signal,
         });

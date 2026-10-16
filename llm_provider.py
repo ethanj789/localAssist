@@ -175,6 +175,30 @@ def _normalize_messages_for_ollama(messages: list) -> list:
     """
     normalized = []
     for msg in messages:
+        # Drop internal-only keys that aren't part of Ollama's message schema.
+        # `thinking_content` is a DB/UI field; `images` is kept but normalised
+        # below so it's always a clean list of bare-base64 strings.
+        msg = {k: v for k, v in msg.items() if k != "thinking_content"}
+
+        # Ollama expects `images` to be a list of bare base64 strings (no data:
+        # URL prefix). The agent already strips the prefix via image_store, but
+        # guard here so a stray data URL or non-list can't break the request.
+        imgs = msg.get("images")
+        if imgs is not None:
+            if isinstance(imgs, str):
+                imgs = [imgs]
+            cleaned = []
+            for img in imgs:
+                if not isinstance(img, str):
+                    continue
+                if img.startswith("data:") and "base64," in img:
+                    img = img.split("base64,", 1)[1]
+                cleaned.append(img)
+            if cleaned:
+                msg["images"] = cleaned
+            else:
+                msg.pop("images", None)
+
         tool_calls = msg.get("tool_calls")
         if not tool_calls:
             normalized.append(msg)

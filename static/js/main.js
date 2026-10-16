@@ -17,8 +17,9 @@ import {
 import { initWebSpeechVoice, bindWebSpeechButton } from './api/webSpeechVoice.js';
 import { initMemoryUI } from './ui/memory.js';
 import { initEditPanel, handleProposeEdit } from './ui/editPanel.js';
-import { appendMsg, appendPill, renderMarkdown, renderMath } from './ui/chatRenderer.js';
+import { appendMsg, appendMsgImages, appendPill, renderMarkdown, renderMath } from './ui/chatRenderer.js';
 import { initSkillsAutocomplete, loadSkills, isDropdownVisible } from './ui/skillsAutocomplete.js';
+import { initImageAttachments } from './ui/imageAttachments.js';
 
 async function init() {
     initThemes();
@@ -35,6 +36,7 @@ async function init() {
     initSkillsAutocomplete();
     bindReindexButtons();
     bindSettingsAccordion();
+    initImageAttachments(showToast);
 
     // Hook up custom events
     document.addEventListener('conversations-updated', loadConversations);
@@ -442,7 +444,13 @@ function renderConversationHistory(messages) {
 
     messages.forEach(msg => {
         if (msg.role === 'user') {
-            appendMsg('user', escHtml(msg.content));
+            const userDiv = appendMsg('user', escHtml(msg.content));
+            // Restore attached images from their stored relative paths. Served
+            // from disk via /chat-image/<path>; the model is NOT re-fed these.
+            if (msg.images && msg.images.length) {
+                const srcs = msg.images.map(p => `/chat-image/${p}`);
+                appendMsgImages(userDiv, srcs);
+            }
             lastAssistantDiv = null;
         } else if (msg.role === 'assistant') {
             const div = appendMsg('assistant', '');

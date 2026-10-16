@@ -564,3 +564,25 @@ details.thinking-block[open] .thinking-summary::before {
     margin-top: 4px;
     opacity: 0.7;
 }
+
+/* ── Attached images rendered inside a message bubble ── */
+.msg-images {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 8px;
+}
+
+.msg-image {
+    display: block;
+    max-width: 240px;
+    border-radius: 8px;
+    overflow: hidden;
+    border: 1px solid var(--border);
+}
+
+.msg-image img {
+    display: block;
+    max-width: 100%;
+    height: auto;
+}

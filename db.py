@@ -44,6 +44,12 @@ def init_db():
             conn.execute("ALTER TABLE messages ADD COLUMN thinking_content TEXT")
         except Exception:
             pass  # column already exists
+        # Migrate: add images column — stores a JSON list of relative paths to
+        # image files saved on disk (NOT inline base64). See image_store.py.
+        try:
+            conn.execute("ALTER TABLE messages ADD COLUMN images TEXT")
+        except Exception:
+            pass  # column already exists
         conn.commit()
 
 def create_conversation(title="New Chat", provider: str | None = None) -> str:
@@ -118,7 +124,7 @@ def get_conversation_title(conversation_id: str) -> str | None:
 def get_messages(conversation_id: str) -> list[dict]:
     with get_db_connection() as conn:
         rows = conn.execute(
-            "SELECT role, content, tool_calls, tool_call_id, thinking_content FROM messages WHERE conversation_id = ? ORDER BY id ASC",
+            "SELECT role, content, tool_calls, tool_call_id, thinking_content, images FROM messages WHERE conversation_id = ? ORDER BY id ASC",
             (conversation_id,)
         ).fetchall()
         
@@ -134,16 +140,26 @@ def get_messages(conversation_id: str) -> list[dict]:
                 msg["tool_call_id"] = r["tool_call_id"]
             if r["thinking_content"]:
                 msg["thinking_content"] = r["thinking_content"]
+            # images is a JSON list of relative file paths (see image_store.py).
+            # Kept as a separate key so it never pollutes the text sent to the model.
+            if r["images"]:
+                try:
+                    paths = json.loads(r["images"])
+                    if paths:
+                        msg["images"] = paths
+                except (json.JSONDecodeError, TypeError):
+                    pass
             messages.append(msg)
         return messages
 
-def add_message(conversation_id: str, role: str, content: str | None, tool_calls: list | None = None, tool_call_id: str | None = None, thinking_content: str | None = None):
+def add_message(conversation_id: str, role: str, content: str | None, tool_calls: list | None = None, tool_call_id: str | None = None, thinking_content: str | None = None, images: list | None = None):
     now = datetime.utcnow().isoformat()
     tool_calls_str = json.dumps(tool_calls) if tool_calls else None
+    images_str = json.dumps(images) if images else None
     with get_db_connection() as conn:
         conn.execute(
-            "INSERT INTO messages (conversation_id, role, content, tool_calls, tool_call_id, thinking_content, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (conversation_id, role, content, tool_calls_str, tool_call_id, thinking_content, now)
+            "INSERT INTO messages (conversation_id, role, content, tool_calls, tool_call_id, thinking_content, images, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (conversation_id, role, content, tool_calls_str, tool_call_id, thinking_content, images_str, now)
         )
         conn.execute(
             "UPDATE conversations SET updated_at = ? WHERE id = ?",
@@ -181,11 +197,22 @@ def delete_conversation(conversation_id: str):
     with get_db_connection() as conn:
         conn.execute("DELETE FROM conversations WHERE id = ?", (conversation_id,))
         conn.commit()
+    # Remove the conversation's stored images so they don't orphan on disk.
+    try:
+        import image_store
+        image_store.delete_conversation_images(conversation_id)
+    except Exception:
+        pass
 
 def clear_all_conversations():
     with get_db_connection() as conn:
         conn.execute("DELETE FROM conversations")
         conn.commit()
+    try:
+        import image_store
+        image_store.delete_all_images()
+    except Exception:
+        pass
 
 def cleanup_old_conversations(days=30):
     import datetime as dt
@@ -193,3 +220,10 @@ def cleanup_old_conversations(days=30):
     with get_db_connection() as conn:
         conn.execute("DELETE FROM conversations WHERE updated_at < ?", (cutoff,))
         conn.commit()
+    # Prune image folders whose conversation no longer exists in the DB.
+    try:
+        import image_store
+        remaining_ids = [r["id"] for r in get_conversations()]
+        image_store.prune_orphaned_images(remaining_ids)
+    except Exception:
+        pass

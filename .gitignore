@@ -11,6 +11,7 @@ update.bat
 *.db
 tool_apps/notes/data/*
 pending_edits.json
+chat_images/
 
 winink/**/bin/
 winink/**/obj/

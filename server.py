@@ -200,6 +200,9 @@ class ChatRequest(BaseModel):
     model: str = "default"
     conversation_id: str | None = None
     ollama_thinking: bool = False
+    # List of base64 data URLs (data:image/png;base64,...) attached by the user.
+    # Stored as files on disk; only fed to the model on the sending turn.
+    images: list[str] = []
 
 
 # DEAD CODE — VoiceChatResponse no longer used (browser Web Speech API handles transcription)
@@ -392,10 +395,23 @@ async def chat(req: ChatRequest):
 
     # Normal chat flow
     return StreamingResponse(
-        agent_loop(req.message, mcp, model_override=req.model, conversation_id=conv_id, ollama_thinking=req.ollama_thinking),
+        agent_loop(req.message, mcp, model_override=req.model, conversation_id=conv_id, ollama_thinking=req.ollama_thinking, images=req.images),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
+
+@app.get("/chat-image/{rel_path:path}")
+async def get_chat_image(rel_path: str):
+    """Serve a stored chat image by its relative path (used to restore images
+    when reopening an old conversation). Path traversal is blocked in
+    image_store._resolve."""
+    import image_store
+    data = image_store.load_bytes(rel_path)
+    if data is None:
+        raise HTTPException(status_code=404, detail="Image not found")
+    from fastapi.responses import Response
+    return Response(content=data, media_type=image_store.guess_mime(rel_path))
 
 
 class RenameConversationRequest(BaseModel):
