@@ -128,15 +128,21 @@ body {
 .toolbar-zone {
   position: fixed;
   top: 0;
-  left: 0;
-  right: 0;
+  /* Centered narrow strip rather than full-width, so the corners (e.g. the
+     app's top-left hamburger) stay clickable. Width only needs to cover the
+     hint pill / toolbar, which are centered. */
+  left: 50%;
+  transform: translateX(-50%);
+  width: 120px;
   height: 14px;        /* hover target when the toolbar is hidden */
   z-index: 10;
 }
 
 /* While hovered, grow the zone's hit area to cover the revealed toolbar so it
-   doesn't flicker shut when the pointer moves onto the buttons. */
+   doesn't flicker shut when the pointer moves onto the buttons. Widen just
+   enough to wrap the toolbar; the sides stay clear for the app's own buttons. */
 .toolbar-zone:hover {
+  width: 180px;
   height: 66px;
 }
 

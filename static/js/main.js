@@ -153,10 +153,7 @@ function bindButtons() {
             overlay.classList.toggle('active');
         });
 
-        overlay.addEventListener('click', () => {
-            aside.classList.remove('open');
-            overlay.classList.remove('active');
-        });
+        overlay.addEventListener('click', closeSidebar);
     }
 
     const userInput = document.getElementById('user-input');
@@ -406,7 +403,12 @@ function startRename(itemEl, id, titleEl) {
 }
 
 async function selectConversation(id) {
-    if (id === currentConversationId) return;
+    if (id === currentConversationId) {
+        closeSidebar();
+        return;
+    }
+
+    closeSidebar();
 
     try {
         const details = await getConversationDetails(id);
@@ -521,7 +523,17 @@ function renderConversationHistory(messages) {
     scrollToBottom(msgs);
 }
 
+// Collapse the slide-in sidebar (mobile / narrow side-panel layout). No-op on
+// desktop where the sidebar is always docked and these classes aren't used.
+function closeSidebar() {
+    const aside = document.querySelector('aside');
+    const overlay = document.getElementById('sidebar-overlay');
+    if (aside) aside.classList.remove('open');
+    if (overlay) overlay.classList.remove('active');
+}
+
 function startNewChat(showNotification = true) {
+    closeSidebar();
     setCurrentConversationId(null);
     const messagesEl = document.getElementById('messages');
     if (messagesEl) messagesEl.innerHTML = '';
