@@ -370,6 +370,17 @@ async def _ollama_stream_chat_completion(request_kwargs: dict, config_dict: dict
             f"{config_dict['ollama_base_url']}/api/chat",
             json=payload,
         ) as resp:
+            if resp.status_code >= 400:
+                # On a streamed response the body hasn't been read yet, so
+                # raise_for_status() would leave e.response.text inaccessible
+                # (httpx ResponseNotRead). Read it now so the error detail from
+                # Ollama is captured and surfaced by the caller's handler.
+                body = await resp.aread()
+                log.error(
+                    "Ollama /api/chat %s: %s",
+                    resp.status_code,
+                    body.decode(errors="replace"),
+                )
             resp.raise_for_status()
             async for line in resp.aiter_lines():
                 if not line.strip():

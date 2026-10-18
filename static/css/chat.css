@@ -588,6 +588,47 @@ details.thinking-block[open] .thinking-summary::before {
     height: auto;
 }
 
+/* ── Attachments block (page thumbnails + non-image file chips) ── */
+.msg-attachments {
+    margin-bottom: 8px;
+}
+
+.msg-file-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 6px;
+}
+
+.msg-file-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    max-width: 260px;
+    padding: 6px 10px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: var(--surface);
+    text-decoration: none;
+    color: var(--text);
+}
+
+a.msg-file-chip:hover {
+    border-color: var(--accent, var(--border));
+}
+
+.msg-file-chip-icon {
+    font-size: 16px;
+    flex: 0 0 auto;
+}
+
+.msg-file-chip-name {
+    font-size: 13px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
 /* ── Fullscreen in-window image lightbox ── */
 .image-lightbox {
     display: none;

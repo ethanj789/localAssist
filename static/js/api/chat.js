@@ -1,6 +1,6 @@
 import { API } from '../constants.js';
 import { escHtml, setStatus, showToast, scrollToBottom } from '../utils/dom.js';
-import { appendMsg, appendMsgImages, appendPill, renderLinkCard, renderMarkdown, renderActionButton, createThinkingBlock, appendOllamaStats, renderMath } from '../ui/chatRenderer.js';
+import { appendMsg, appendMsgAttachments, appendPill, renderLinkCard, renderMarkdown, renderActionButton, createThinkingBlock, appendOllamaStats, renderMath, upgradeFileChipLinks } from '../ui/chatRenderer.js';
 import { handleProposeEdit } from '../ui/editPanel.js';
 import { getPendingImages, hasPendingImages, clearPendingImages } from '../ui/imageAttachments.js';
 
@@ -84,8 +84,8 @@ export async function sendMessage(customText = null) {
         input.style.height = 'auto';
     }
 
-    // Capture any staged image attachments, then clear the composer strip so a
-    // follow-up message doesn't re-send them.
+    // Capture any staged attachments, then clear the composer strip so a
+    // follow-up message doesn't re-send them. Each is a {name, dataUrl} object.
     const images = hasPendingImages() ? getPendingImages() : [];
     if (!text && images.length === 0) return;
     clearPendingImages();
@@ -95,7 +95,7 @@ export async function sendMessage(customText = null) {
     setStatus(true, 'thinking...');
 
     const userDiv = appendMsg('user', escHtml(text));
-    if (images.length) appendMsgImages(userDiv, images);
+    if (images.length) appendMsgAttachments(userDiv, images);
     scrollToBottom(document.getElementById('messages'), true);
 
     const aId = 'msg-' + Date.now();
@@ -112,6 +112,7 @@ export async function sendMessage(customText = null) {
 
     const state = {
         aDiv,
+        userDiv,   // so files_prepared can upgrade this turn's optimistic chips
         mdDiv,
         fullText: '',
         currentPill: null,
@@ -193,6 +194,18 @@ export function handleStreamEvent(event, data, state) {
     if (event === 'conversation_id') {
         setCurrentConversationId(data);
         document.dispatchEvent(new CustomEvent('conversation-id-updated', { detail: data }));
+    }
+
+    if (event === 'files_prepared') {
+        // The server persisted this turn's attachments. Upgrade the optimistic
+        // (link-less) file chips into real links to the stored originals so they
+        // open in a new tab immediately, without waiting for a reload.
+        try {
+            const payload = typeof data === 'string' ? JSON.parse(data) : data;
+            if (state.userDiv && payload && payload.conversation_id) {
+                upgradeFileChipLinks(state.userDiv, payload.conversation_id, payload.files || []);
+            }
+        } catch (_) { /* non-fatal: chip still links after reload */ }
     }
 
     if (event === 'token') {

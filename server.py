@@ -200,9 +200,13 @@ class ChatRequest(BaseModel):
     model: str = "default"
     conversation_id: str | None = None
     ollama_thinking: bool = False
-    # List of base64 data URLs (data:image/png;base64,...) attached by the user.
-    # Stored as files on disk; only fed to the model on the sending turn.
-    images: list[str] = []
+    # List of attachments the user added. Each item is either a bare
+    # `data:<mime>;base64,...` URL (images AND PDFs — not image-only anymore) or
+    # a `{name, dataUrl}` object carrying the original filename. The agent runs
+    # each through prep_file (render pages + extract text), persists them under
+    # chat_files/, and feeds page images on the sending turn. The field keeps
+    # the name `images` for FE/BE contract compatibility.
+    images: list[str | dict] = []
 
 
 # DEAD CODE — VoiceChatResponse no longer used (browser Web Speech API handles transcription)
@@ -401,11 +405,24 @@ async def chat(req: ChatRequest):
     )
 
 
+@app.get("/chat-file/{rel_path:path}")
+async def get_chat_file(rel_path: str):
+    """Serve a stored chat file (rendered page image, original, or text) by its
+    relative path, used to restore attachments when reopening a conversation.
+    Path traversal is blocked in file_store._resolve."""
+    import file_store
+    data = file_store.load_bytes(rel_path)
+    if data is None:
+        raise HTTPException(status_code=404, detail="File not found")
+    from fastapi.responses import Response
+    return Response(content=data, media_type=file_store.guess_mime(rel_path))
+
+
 @app.get("/chat-image/{rel_path:path}")
 async def get_chat_image(rel_path: str):
-    """Serve a stored chat image by its relative path (used to restore images
-    when reopening an old conversation). Path traversal is blocked in
-    image_store._resolve."""
+    """LEGACY: serve a stored chat image from the old chat_images/ layout. Kept
+    so any un-migrated conversation still renders. New uploads use /chat-file.
+    Path traversal is blocked in image_store._resolve."""
     import image_store
     data = image_store.load_bytes(rel_path)
     if data is None:

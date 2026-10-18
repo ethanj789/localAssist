@@ -17,7 +17,7 @@ import {
 import { initWebSpeechVoice, bindWebSpeechButton } from './api/webSpeechVoice.js';
 import { initMemoryUI } from './ui/memory.js';
 import { initEditPanel, handleProposeEdit } from './ui/editPanel.js';
-import { appendMsg, appendMsgImages, appendPill, renderMarkdown, renderMath } from './ui/chatRenderer.js';
+import { appendMsg, appendMsgAttachments, appendPill, renderMarkdown, renderMath } from './ui/chatRenderer.js';
 import { initSkillsAutocomplete, loadSkills, isDropdownVisible } from './ui/skillsAutocomplete.js';
 import { initImageAttachments } from './ui/imageAttachments.js';
 
@@ -421,7 +421,7 @@ async function selectConversation(id) {
         reflectProvider(convProvider);
         setProviderLocked(true);
 
-        renderConversationHistory(details.messages);
+        renderConversationHistory(details.messages, id);
 
         document.querySelectorAll('.conversation-item').forEach(item => {
             if (item.dataset.id === id) {
@@ -438,7 +438,38 @@ async function selectConversation(id) {
     }
 }
 
-function renderConversationHistory(messages) {
+/**
+ * Convert a stored file object {type, path:<file_id>, name, pages, hasText, ext}
+ * into the attachment descriptor appendMsgAttachments expects, building the
+ * per-page /chat-file/ URLs for the rendered pages and a download link to the
+ * stored original (raw/<file_id>.<ext>) when we know the extension.
+ */
+function fileObjectToAttachment(f, conversationId) {
+    const fileId = f.path;
+    const pages = f.pages || 0;
+    // Only ACTUAL images show thumbnail previews. For documents (PDF, etc.) the
+    // rendered page PNGs exist on disk but are model-only context — the UI shows
+    // just a named chip, not page thumbnails.
+    const imageUrls = [];
+    if (f.type === 'image') {
+        for (let i = 1; i <= pages; i++) {
+            imageUrls.push(`/chat-file/${conversationId}/${fileId}/${i}.png`);
+        }
+    }
+    // Link the chip to the real stored original rather than a base64 data URL.
+    const originalUrl = f.ext
+        ? `/chat-file/${conversationId}/raw/${fileId}.${f.ext}`
+        : null;
+    return {
+        type: f.type,
+        name: f.name,
+        pages,
+        imageUrls,
+        originalUrl,
+    };
+}
+
+function renderConversationHistory(messages, conversationId) {
     const msgs = document.getElementById('messages');
     msgs.innerHTML = '';
 
@@ -447,11 +478,18 @@ function renderConversationHistory(messages) {
     messages.forEach(msg => {
         if (msg.role === 'user') {
             const userDiv = appendMsg('user', escHtml(msg.content));
-            // Restore attached images from their stored relative paths. Served
-            // from disk via /chat-image/<path>; the model is NOT re-fed these.
-            if (msg.images && msg.images.length) {
+            // Restore attached files from their stored file objects. Page images
+            // are served from disk via /chat-file/<conv>/<file_id>/<n>.png; the
+            // model is NOT re-fed from this render (the agent rehydrates
+            // server-side). Non-image files also get a chip linking to the
+            // original. The extracted text already lives in msg.content.
+            if (msg.files && msg.files.length) {
+                const items = msg.files.map(f => fileObjectToAttachment(f, conversationId));
+                appendMsgAttachments(userDiv, items);
+            } else if (msg.images && msg.images.length) {
+                // LEGACY: un-migrated image path list served from /chat-image/.
                 const srcs = msg.images.map(p => `/chat-image/${p}`);
-                appendMsgImages(userDiv, srcs);
+                appendMsgAttachments(userDiv, srcs);
             }
             lastAssistantDiv = null;
         } else if (msg.role === 'assistant') {

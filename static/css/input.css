@@ -339,3 +339,36 @@
 .image-chip-remove:hover {
     background: var(--warn);
 }
+
+/* Non-image attachment pill in the composer (e.g. PDF): name only, no preview. */
+.file-chip {
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    max-width: 200px;
+    height: 64px;
+    padding: 0 28px 0 10px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: var(--surface);
+}
+
+.file-chip-icon {
+    font-size: 20px;
+    flex: 0 0 auto;
+}
+
+.file-chip-name {
+    font-size: 12px;
+    line-height: 1.3;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--text);
+}
+
+.file-chip .image-chip-remove {
+    top: 2px;
+    right: 2px;
+}

@@ -57,19 +57,112 @@ def _sse(event: str, data: str) -> str:
     return f"data: {payload}\n\n"
 
 
-def _rehydrate_history_images(history: list[dict]) -> None:
-    """Replace stored image *path* refs on reloaded user messages with the
-    actual base64, loaded from disk, so the model re-sees past images on every
-    turn (full multi-turn visual context).
+def _file_page_b64s(conversation_id: str, file_objs: list[dict]) -> list[str]:
+    """Build the ordered bare-base64 page images for a turn's file attachments.
 
-    get_messages() returns a user message's `images` as a list of relative file
-    paths. Ollama needs bare base64, so we load each path and swap it in place.
-    Paths that fail to load are dropped so a missing file can't break the turn.
-    An image is ~280 image tokens per turn — cheap enough to always re-feed."""
+    Deterministic ordering (critical for KV-cache reuse): iterate the turn's
+    files in stored order; within each file iterate pages 1..N. The page
+    identity is carried by the text labels already spliced into the message
+    content, so even multi-file turns map correctly. Missing page files are
+    skipped so a deleted file can't break the turn."""
+    import file_store
+
+    b64s: list[str] = []
+    for obj in file_objs or []:
+        if not isinstance(obj, dict):
+            continue
+        file_id = obj.get("path")
+        pages = obj.get("pages", 0)
+        if not file_id or not pages:
+            continue
+        for rel in file_store.page_rel_paths(conversation_id, file_id, pages):
+            b64 = file_store.load_as_base64(rel)
+            if b64:
+                b64s.append(b64)
+    return b64s
+
+
+def _file_text_block(conversation_id: str, file_objs: list[dict]) -> str:
+    """Build the page-labeled text block for a turn's file attachments, read
+    from each file's ``text.txt`` on disk (in stored order).
+
+    This is MODEL-ONLY context: it is appended to the message content sent to
+    the model, but never stored in the DB `content` (which holds only the user's
+    typed text, for display). Reconstructed deterministically from the same
+    on-disk `text.txt` every turn so the KV-cache prefix stays byte-identical.
+    Mirrors how page images are rebuilt from disk in _file_page_b64s."""
+    import file_store
+
+    blocks: list[str] = []
+    for obj in file_objs or []:
+        if not isinstance(obj, dict) or not obj.get("hasText"):
+            continue
+        file_id = obj.get("path")
+        if not file_id:
+            continue
+        text = file_store.load_text(conversation_id, file_id)
+        if text and text.strip():
+            blocks.append(text.strip())
+    return "\n\n".join(blocks)
+
+
+def _apply_file_context(conversation_id: str, msg: dict) -> None:
+    """Fold a user message's attachment page-images AND extracted text into the
+    message as MODEL-ONLY context, leaving the stored `content` (display text)
+    untouched. Used for both the current turn and rehydrated history so the two
+    paths build an identical model message. Keeps the rebuild deterministic for
+    KV-cache reuse."""
+    file_objs = msg.get("files")
+    if not file_objs:
+        return
+    # Append the attachment text block to the content the model sees.
+    text_block = _file_text_block(conversation_id, file_objs)
+    if text_block:
+        base = (msg.get("content") or "").strip()
+        msg["content"] = f"{base}\n\n{text_block}" if base else text_block
+    elif not (msg.get("content") or "").strip():
+        # A file with no text layer and no user text — give the model a hint
+        # rather than an empty content string.
+        msg["content"] = "[The user sent a file attachment with no text.]"
+
+
+def _rehydrate_history_files(conversation_id: str, history: list[dict]) -> None:
+    """Re-attach page images for OLDER user messages reloaded from history.
+
+    get_messages() returns a user message's attachments as a list of lean file
+    objects under `files`. For each, we rebuild the rendered page images (bare
+    base64, loaded from disk, in deterministic page order) and set them on the
+    message's `images` field — the channel Ollama consumes. The attachment's
+    extracted TEXT is NOT re-injected here: it was spliced into the message
+    `content` at upload time and is already present, pinned to its own turn.
+
+    Legacy rows that still carry a raw `images` path list (migration couldn't
+    move the source) are tolerated via the old image_store loader.
+
+    Keeping this rebuild byte-identical turn to turn is what lets Ollama /
+    llama.cpp keep the longest-unchanged-prefix KV cache valid."""
     import image_store
+
     for msg in history:
         if msg.get("role") != "user":
             continue
+
+        file_objs = msg.get("files")
+        if file_objs:
+            # Fold the attachment's extracted TEXT into the model-visible content
+            # (read from disk; never stored in the DB `content`, which is the
+            # user's typed text for display only).
+            _apply_file_context(conversation_id, msg)
+            b64s = _file_page_b64s(conversation_id, file_objs)
+            if b64s:
+                msg["images"] = b64s
+            else:
+                msg.pop("images", None)
+            # `files` is an internal DB/UI field, not part of Ollama's schema.
+            msg.pop("files", None)
+            continue
+
+        # Legacy fallback: un-migrated `images` path list.
         paths = msg.get("images")
         if not paths:
             continue
@@ -273,40 +366,94 @@ async def generate_and_save_title(conversation_id: str, first_message: str):
 
 
 async def agent_loop(user_message: str, mcp, model_override: str = "default", conversation_id: str = None, ollama_thinking: bool = False, images: list = None) -> AsyncGenerator[str, None]:
+    # `images` is the attachment list from the request (kept named for FE/BE
+    # contract compatibility). Each item is a `data:<mime>;base64,...` URL (or a
+    # {name, dataUrl} object) — not necessarily an image; PDFs flow here too.
     global global_pending_edits
     import db
-    import image_store
+    import file_store
     try:
         if conversation_id:
             yield _sse("conversation_id", conversation_id)
         yield _sse("status", "loop started")
         clean_message = user_message.replace("<thinking>", "").replace("<coding>", "").strip()
 
-        # Persist any attached images to disk as files and keep only path refs in
-        # the DB. The raw base64 is fed to the model on THIS turn only (below),
-        # so stale images never re-enter the context window on later turns.
-        image_paths = image_store.save_data_urls(conversation_id, images or []) if images else []
-        image_b64s = [b64 for b64 in (image_store.load_as_base64(p) for p in image_paths) if b64]
+        # Prepare any attached files (PDF → page images + text, images → one
+        # page no text). prep_file renders/extracts ONCE and writes everything
+        # to disk under chat_files/<conv>/<file_id>/; it returns a lean DB object
+        # plus a page-labeled text block. The extracted text is spliced into THIS
+        # turn's message content (and stored in the DB content) so it is pinned
+        # to the upload turn and never re-injected later. Page images are fed to
+        # the model this turn and re-attached deterministically on later turns.
+        import prep_file as prep_file_mod
 
-        # Load history and save new user message
+        prepared = []
+        for item in images or []:
+            name = None
+            data_url = item
+            if isinstance(item, dict):
+                # Allow a richer FE payload {name, dataUrl} without breaking the
+                # bare-string (data URL) contract.
+                name = item.get("name")
+                data_url = item.get("dataUrl") or item.get("data_url") or item.get("url")
+            if not data_url:
+                continue
+            pf = prep_file_mod.prep_file(conversation_id, name or "attachment", data_url)
+            if pf:
+                prepared.append(pf)
+
+        file_objs = [pf.db_object for pf in prepared]
+
+        # Tell the UI about the freshly-persisted files so it can upgrade the
+        # optimistic chips (shown at send time with no link) into real links to
+        # the stored originals. Without this, a chip only becomes clickable after
+        # a full conversation reload. Carries the conversation id so the frontend
+        # can build /chat-file/<conv>/raw/<file_id>.<ext> URLs.
+        if file_objs:
+            yield _sse("files_prepared", json.dumps({
+                "conversation_id": conversation_id,
+                "files": file_objs,
+            }))
+
+        current_page_b64s: list[str] = []
+        for pf in prepared:
+            for rel in pf.page_rel_paths:
+                b64 = file_store.load_as_base64(rel)
+                if b64:
+                    current_page_b64s.append(b64)
+
+        # The DB `content` stores ONLY the user's typed text — that is what the
+        # UI renders in the user bubble. The attachment's page-labeled text is
+        # MODEL-ONLY context: it's appended to the message the model sees (below
+        # and, for past turns, in _rehydrate_history_files), rebuilt from disk
+        # each turn. This keeps the extracted PDF/doc text out of the visible
+        # chat bubble while still feeding it to the model.
+        display_content = clean_message
+
+        # Load history and save the new user message (user text + file objects
+        # only; NO base64 and NO attachment text in the DB).
         conversation_history = db.get_messages(conversation_id)
-        db.add_message(conversation_id, "user", clean_message, images=image_paths or None)
+        db.add_message(conversation_id, "user", display_content, files=file_objs or None)
 
-        user_msg = {"role": "user", "content": clean_message}
-        if image_b64s:
+        user_msg = {"role": "user", "content": display_content}
+        if file_objs:
+            # Carry the file objects so _apply_file_context can fold in the
+            # extracted text (and so the shape matches rehydrated history).
+            user_msg["files"] = file_objs
+            _apply_file_context(conversation_id, user_msg)
+            user_msg.pop("files", None)
+        if current_page_b64s:
             # Ollama /api/chat accepts a bare-base64 `images` list on a message
             # (same shape the OCR MoondreamBackend uses).
-            user_msg["images"] = image_b64s
-            if not clean_message:
-                user_msg["content"] = "[The user sent an image with no text.]"
+            user_msg["images"] = current_page_b64s
         conversation_history.append(user_msg)
 
-        # Re-attach images for OLDER user messages reloaded from history: swap
-        # their stored path refs for the actual base64 (loaded from disk) so the
-        # model keeps full image context across the whole conversation. An image
-        # only costs ~280 image tokens per turn, so this is cheap and preserves
-        # multi-turn visual recall (e.g. "what about the error in that screenshot").
-        _rehydrate_history_images(conversation_history[:-1])
+        # Re-attach page images for OLDER user messages reloaded from history so
+        # the model keeps full visual context across the whole conversation.
+        # Extracted text is already in each message's content (pinned at upload),
+        # so only the images are rebuilt here — deterministically, to keep the
+        # KV-cache prefix byte-identical turn to turn.
+        _rehydrate_history_files(conversation_id, conversation_history[:-1])
         yield _sse("status", "history appended")
 
         # Background title generation if it's currently a new chat
@@ -569,8 +716,19 @@ async def agent_loop(user_message: str, mcp, model_override: str = "default", co
 
                     log.info("agent_loop: LLM responded")
                 except Exception as e:
-                    if hasattr(e, 'response'):
-                        log.error("Provider 400 body: %s", e.response.text)
+                    resp = getattr(e, "response", None)
+                    if resp is not None:
+                        try:
+                            body = resp.text
+                        except Exception:
+                            # Streamed responses raise ResponseNotRead on .text
+                            # unless the body was already read. Fall back to the
+                            # raw (possibly already-read) content.
+                            try:
+                                body = resp.content.decode(errors="replace")
+                            except Exception:
+                                body = f"<unreadable response body; status={getattr(resp, 'status_code', '?')}>"
+                        log.error("Provider error body: %s", body)
                     raise
 
                 tool_calls = msg.tool_calls or []
@@ -870,6 +1028,25 @@ async def agent_loop(user_message: str, mcp, model_override: str = "default", co
                 raise
 
     except Exception as e:
-        log.error("agent_loop error: %s", traceback.format_exc())
+        # Log one clear line naming the actual cause, then keep the full
+        # traceback at debug level so it doesn't bury the real error.
+        resp = getattr(e, "response", None)
+        if resp is not None:
+            try:
+                body = resp.text
+            except Exception:
+                try:
+                    body = resp.content.decode(errors="replace")
+                except Exception:
+                    body = "<unreadable body>"
+            status = getattr(resp, "status_code", "?")
+            log.error(
+                "agent_loop FAILED: HTTP %s from provider — %s",
+                status,
+                (body or "<empty body>").strip()[:1000],
+            )
+        else:
+            log.error("agent_loop FAILED: %s: %s", type(e).__name__, e)
+        log.debug("agent_loop traceback:\n%s", traceback.format_exc())
         yield _sse("error", traceback.format_exc())
         yield _sse("done", "{}")

@@ -12,6 +12,9 @@ update.bat
 tool_apps/notes/data/*
 pending_edits.json
 chat_images/
+chat_files/
+docs/
+.kiro/
 
 winink/**/bin/
 winink/**/obj/

@@ -59,6 +59,171 @@ export function appendMsgImages(msgDiv, sources) {
 }
 
 /**
+ * Render a thumbnail strip of image sources into a message body (shared by the
+ * image-thumbnail paths). `sources` is an array of image URLs/data URLs.
+ * Returns the created strip element (or null) so callers can group content.
+ */
+function buildImageStrip(sources) {
+    const strip = document.createElement('div');
+    strip.className = 'msg-images';
+    sources.forEach(src => {
+        const a = document.createElement('a');
+        a.href = src;
+        a.target = '_blank';
+        a.rel = 'noopener';
+        a.className = 'msg-image';
+
+        const img = document.createElement('img');
+        img.src = src;
+        img.alt = 'attached page';
+        img.loading = 'lazy';
+        a.appendChild(img);
+
+        a.addEventListener('click', (e) => {
+            if (e.button !== 0 || e.ctrlKey || e.metaKey || e.shiftKey || e.altKey) return;
+            e.preventDefault();
+            openImageLightbox(src);
+        });
+        strip.appendChild(a);
+    });
+    return strip;
+}
+
+/**
+ * Render chat attachments (images AND non-image files like PDFs) above a
+ * message's text. Generalizes appendMsgImages. Each item describes one
+ * attachment and comes in one of two shapes:
+ *
+ *   Optimistic send (from the composer):
+ *     { name, dataUrl, isImage }
+ *   Restored from history (a stored file object, enriched with URLs by main.js):
+ *     { type, name, pages, imageUrls: [url,...], originalUrl }
+ *
+ * Images render as thumbnails; non-image files render as a named chip linking
+ * to the original (download). For PDFs restored from history, the rendered page
+ * images are shown as thumbnails and the chip links to the original PDF.
+ *
+ * @param {HTMLElement} msgDiv
+ * @param {Array<Object|string>} items
+ */
+export function appendMsgAttachments(msgDiv, items) {
+    if (!msgDiv || !items || !items.length) return;
+    const body = msgDiv.querySelector('.msg-body');
+    if (!body) return;
+
+    const container = document.createElement('div');
+    container.className = 'msg-attachments';
+
+    const imageSources = [];   // thumbnails to show
+    const fileChips = [];      // {name, href}
+
+    items.forEach(item => {
+        // Plain string = an image URL/data URL (back-compat).
+        if (typeof item === 'string') {
+            imageSources.push(item);
+            return;
+        }
+        if (!item || typeof item !== 'object') return;
+
+        const isImage = item.isImage === true || item.type === 'image'
+            || (typeof item.dataUrl === 'string' && item.dataUrl.startsWith('data:image/'));
+
+        // Thumbnails only for actual images: optimistic image dataUrl, or
+        // restored page image URLs. Document page renders (PDF, etc.) are NOT
+        // shown as thumbnails — those files get a named chip only.
+        if (item.dataUrl && isImage) {
+            imageSources.push(item.dataUrl);
+        }
+        if (isImage && Array.isArray(item.imageUrls)) {
+            item.imageUrls.forEach(u => imageSources.push(u));
+        }
+
+        // Non-image files get a named chip. Link only to a real stored-file
+        // URL (originalUrl) — never to a raw base64 data URL, which is huge and
+        // not a meaningful link. On optimistic send the file isn't persisted
+        // yet, so the chip is just a label until the conversation is reopened.
+        if (!isImage) {
+            fileChips.push({
+                name: item.name || 'file',
+                href: item.originalUrl || null,
+                pages: item.pages,
+            });
+        }
+    });
+
+    if (imageSources.length) {
+        container.appendChild(buildImageStrip(imageSources));
+    }
+
+    if (fileChips.length) {
+        const row = document.createElement('div');
+        row.className = 'msg-file-chips';
+        fileChips.forEach(fc => {
+            const el = fc.href ? document.createElement('a') : document.createElement('div');
+            el.className = 'msg-file-chip';
+            // Tag with the file name so an optimistic (link-less) chip can be
+            // upgraded to a real link once the server reports the stored file.
+            el.dataset.fileName = fc.name || 'file';
+            if (fc.href) {
+                el.href = fc.href;
+                el.target = '_blank';
+                el.rel = 'noopener';
+            }
+            const icon = document.createElement('span');
+            icon.className = 'msg-file-chip-icon';
+            icon.textContent = '📄';
+            el.appendChild(icon);
+
+            const label = document.createElement('span');
+            label.className = 'msg-file-chip-name';
+            label.textContent = fc.name;
+            label.title = fc.name;
+            el.appendChild(label);
+
+            row.appendChild(el);
+        });
+        container.appendChild(row);
+    }
+
+    if (container.childNodes.length) {
+        body.insertBefore(container, body.firstChild);
+    }
+}
+
+/**
+ * Upgrade a message's optimistic (link-less) file chips into real links once
+ * the server reports the persisted file objects. Matches chips to file objects
+ * by name and replaces the placeholder <div> with an <a> that opens the stored
+ * original in a new tab — the same behavior a reloaded conversation gives.
+ *
+ * @param {HTMLElement} msgDiv  the user message div holding the chips
+ * @param {string} conversationId
+ * @param {Array<{name, path, ext}>} files  stored file objects from the server
+ */
+export function upgradeFileChipLinks(msgDiv, conversationId, files) {
+    if (!msgDiv || !conversationId || !Array.isArray(files)) return;
+    const chips = msgDiv.querySelectorAll('.msg-file-chip');
+    files.forEach(f => {
+        if (!f || !f.ext || !f.path) return;
+        const url = `/chat-file/${conversationId}/raw/${f.path}.${f.ext}`;
+        // Find a not-yet-linked chip with a matching name.
+        for (const chip of chips) {
+            if (chip.tagName === 'A') continue; // already linked
+            if (chip.dataset.fileName !== (f.name || 'file')) continue;
+            const a = document.createElement('a');
+            a.className = chip.className;
+            a.dataset.fileName = chip.dataset.fileName;
+            a.href = url;
+            a.target = '_blank';
+            a.rel = 'noopener';
+            while (chip.firstChild) a.appendChild(chip.firstChild);
+            chip.replaceWith(a);
+            break;
+        }
+    });
+}
+
+/**
  * Open a fullscreen, in-window lightbox showing the given image.
  * Click the backdrop or press Escape to close. A single reusable overlay
  * element is kept in the DOM.
