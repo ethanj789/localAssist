@@ -181,8 +181,8 @@ def _normalize_messages_for_ollama(messages: list) -> list:
         msg = {k: v for k, v in msg.items() if k != "thinking_content"}
 
         # Ollama expects `images` to be a list of bare base64 strings (no data:
-        # URL prefix). The agent already strips the prefix via image_store, but
-        # guard here so a stray data URL or non-list can't break the request.
+        # URL prefix). The agent already supplies bare base64, but guard here so
+        # a stray data URL or non-list can't break the request.
         imgs = msg.get("images")
         if imgs is not None:
             if isinstance(imgs, str):

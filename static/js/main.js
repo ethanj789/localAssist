@@ -486,10 +486,6 @@ function renderConversationHistory(messages, conversationId) {
             if (msg.files && msg.files.length) {
                 const items = msg.files.map(f => fileObjectToAttachment(f, conversationId));
                 appendMsgAttachments(userDiv, items);
-            } else if (msg.images && msg.images.length) {
-                // LEGACY: un-migrated image path list served from /chat-image/.
-                const srcs = msg.images.map(p => `/chat-image/${p}`);
-                appendMsgAttachments(userDiv, srcs);
             }
             lastAssistantDiv = null;
         } else if (msg.role === 'assistant') {

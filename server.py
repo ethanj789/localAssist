@@ -418,19 +418,6 @@ async def get_chat_file(rel_path: str):
     return Response(content=data, media_type=file_store.guess_mime(rel_path))
 
 
-@app.get("/chat-image/{rel_path:path}")
-async def get_chat_image(rel_path: str):
-    """LEGACY: serve a stored chat image from the old chat_images/ layout. Kept
-    so any un-migrated conversation still renders. New uploads use /chat-file.
-    Path traversal is blocked in image_store._resolve."""
-    import image_store
-    data = image_store.load_bytes(rel_path)
-    if data is None:
-        raise HTTPException(status_code=404, detail="Image not found")
-    from fastapi.responses import Response
-    return Response(content=data, media_type=image_store.guess_mime(rel_path))
-
-
 class RenameConversationRequest(BaseModel):
     title: str
 

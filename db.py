@@ -44,10 +44,9 @@ def init_db():
             conn.execute("ALTER TABLE messages ADD COLUMN thinking_content TEXT")
         except Exception:
             pass  # column already exists
-        # Migrate: add images column — stores a JSON list of relative paths to
-        # image files saved on disk (NOT inline base64). See image_store.py.
-        # LEGACY: superseded by the generalized `files` column below. Kept only
-        # so the one-time data migration (migrate_images_to_files) can read it.
+        # LEGACY: the `images` column is superseded by the generalized `files`
+        # column below and is no longer read or written. Kept as a harmless
+        # empty column (dropping it would force a SQLite table rebuild).
         try:
             conn.execute("ALTER TABLE messages ADD COLUMN images TEXT")
         except Exception:
@@ -60,62 +59,7 @@ def init_db():
         except Exception:
             pass  # column already exists
         conn.commit()
-    # One-time data migration: fold any legacy `images` rows into `files` and
-    # restructure the on-disk files from chat_images/ into chat_files/.
-    migrate_images_to_files()
 
-
-def migrate_images_to_files():
-    """Convert legacy ``messages.images`` rows (flat JSON path lists pointing at
-    ``chat_images/``) into the new ``messages.files`` object shape, moving each
-    image into the ``chat_files/<conv>/<file_id>/`` layout.
-
-    Idempotent: only touches rows that still have ``images`` set and no ``files``
-    yet. A row whose images all fail to migrate is cleared of ``images`` anyway
-    so it isn't retried forever (the source files are gone)."""
-    import file_store
-
-    with get_db_connection() as conn:
-        try:
-            rows = conn.execute(
-                "SELECT id, conversation_id, images FROM messages "
-                "WHERE images IS NOT NULL AND images != '' "
-                "AND (files IS NULL OR files = '')"
-            ).fetchall()
-        except Exception:
-            return  # columns not present yet (shouldn't happen post-init)
-
-        migrated_rows = 0
-        for r in rows:
-            try:
-                legacy_paths = json.loads(r["images"])
-            except (json.JSONDecodeError, TypeError):
-                legacy_paths = None
-            if not legacy_paths:
-                # Nothing usable — clear so we don't rescan it next boot.
-                conn.execute("UPDATE messages SET images = NULL WHERE id = ?", (r["id"],))
-                continue
-
-            conv_id = r["conversation_id"]
-            file_objs = []
-            for p in legacy_paths:
-                obj = file_store.migrate_legacy_image(conv_id, p)
-                if obj:
-                    file_objs.append(obj)
-
-            files_str = json.dumps(file_objs) if file_objs else None
-            # Clear legacy images regardless so the migration is one-shot.
-            conn.execute(
-                "UPDATE messages SET files = ?, images = NULL WHERE id = ?",
-                (files_str, r["id"]),
-            )
-            migrated_rows += 1
-        if migrated_rows:
-            conn.commit()
-            import logging
-            logging.getLogger(__name__).info(
-                "db: migrated %d message row(s) from images → files", migrated_rows
-            )
 
 def create_conversation(title="New Chat", provider: str | None = None) -> str:
     conv_id = str(uuid.uuid4())
@@ -276,31 +220,21 @@ def delete_conversation(conversation_id: str):
         conn.execute("DELETE FROM conversations WHERE id = ?", (conversation_id,))
         conn.commit()
     # Remove the conversation's stored files so they don't orphan on disk.
-    # Both the new file store and the legacy image store (for any un-migrated
-    # chat_images/ folders) are cleaned.
-    for mod in ("file_store", "image_store"):
-        try:
-            store = __import__(mod)
-            if mod == "file_store":
-                store.delete_conversation_files(conversation_id)
-            else:
-                store.delete_conversation_images(conversation_id)
-        except Exception:
-            pass
+    try:
+        import file_store
+        file_store.delete_conversation_files(conversation_id)
+    except Exception:
+        pass
 
 def clear_all_conversations():
     with get_db_connection() as conn:
         conn.execute("DELETE FROM conversations")
         conn.commit()
-    for mod in ("file_store", "image_store"):
-        try:
-            store = __import__(mod)
-            if mod == "file_store":
-                store.delete_all_files()
-            else:
-                store.delete_all_images()
-        except Exception:
-            pass
+    try:
+        import file_store
+        file_store.delete_all_files()
+    except Exception:
+        pass
 
 def cleanup_old_conversations(days=30):
     import datetime as dt
@@ -308,17 +242,13 @@ def cleanup_old_conversations(days=30):
     with get_db_connection() as conn:
         conn.execute("DELETE FROM conversations WHERE updated_at < ?", (cutoff,))
         conn.commit()
-    # Prune file/image folders whose conversation no longer exists in the DB.
+    # Prune file folders whose conversation no longer exists in the DB.
     try:
         remaining_ids = [r["id"] for r in get_conversations()]
     except Exception:
         remaining_ids = []
-    for mod in ("file_store", "image_store"):
-        try:
-            store = __import__(mod)
-            if mod == "file_store":
-                store.prune_orphaned_files(remaining_ids)
-            else:
-                store.prune_orphaned_images(remaining_ids)
-        except Exception:
-            pass
+    try:
+        import file_store
+        file_store.prune_orphaned_files(remaining_ids)
+    except Exception:
+        pass

@@ -130,19 +130,15 @@ def _rehydrate_history_files(conversation_id: str, history: list[dict]) -> None:
     """Re-attach page images for OLDER user messages reloaded from history.
 
     get_messages() returns a user message's attachments as a list of lean file
-    objects under `files`. For each, we rebuild the rendered page images (bare
-    base64, loaded from disk, in deterministic page order) and set them on the
-    message's `images` field — the channel Ollama consumes. The attachment's
-    extracted TEXT is NOT re-injected here: it was spliced into the message
-    `content` at upload time and is already present, pinned to its own turn.
-
-    Legacy rows that still carry a raw `images` path list (migration couldn't
-    move the source) are tolerated via the old image_store loader.
+    objects under `files`. For each, we rebuild both the model-only context:
+    the rendered page images (bare base64, loaded from disk in deterministic
+    page order) set on the message's `images` field — the channel Ollama
+    consumes — and the extracted text, folded back into the message content via
+    _apply_file_context (read from disk; the DB `content` holds only the user's
+    typed display text).
 
     Keeping this rebuild byte-identical turn to turn is what lets Ollama /
     llama.cpp keep the longest-unchanged-prefix KV cache valid."""
-    import image_store
-
     for msg in history:
         if msg.get("role") != "user":
             continue
@@ -160,17 +156,6 @@ def _rehydrate_history_files(conversation_id: str, history: list[dict]) -> None:
                 msg.pop("images", None)
             # `files` is an internal DB/UI field, not part of Ollama's schema.
             msg.pop("files", None)
-            continue
-
-        # Legacy fallback: un-migrated `images` path list.
-        paths = msg.get("images")
-        if not paths:
-            continue
-        b64s = [b64 for b64 in (image_store.load_as_base64(p) for p in paths) if b64]
-        if b64s:
-            msg["images"] = b64s
-        else:
-            msg.pop("images", None)
 
 
 def _extract_tool_call_from_text(content: str, available_tools: list[dict]) -> SimpleNamespace | None:

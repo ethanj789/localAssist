@@ -41,7 +41,6 @@ pipeline:
 from __future__ import annotations
 
 import base64
-import io
 import logging
 import re
 import shutil
@@ -281,55 +280,3 @@ def prune_orphaned_files(valid_conversation_ids) -> int:
     return removed
 
 
-# --------------------------------------------------------------------------- #
-# Migration: old image-only layout → new per-file layout
-# --------------------------------------------------------------------------- #
-
-def migrate_legacy_image(conversation_id: str, legacy_rel_path: str) -> dict | None:
-    """Move one legacy image (``chat_images/<conv>/<uuid>.<ext>``) into the new
-    ``chat_files`` per-file layout and return the new lean file object.
-
-    The legacy file becomes a one-page, no-text "image" file:
-      * ``chat_files/<conv>/<file_id>/1.png``  (the rendered page == the image),
-      * ``chat_files/<conv>/raw/<file_id>.<ext>`` (the original, a duplicate).
-
-    Returns ``None`` (and leaves the legacy file untouched) if the source is
-    missing or can't be read, so a bad row can't abort the whole migration.
-    """
-    import image_store  # legacy store, still present for the old chat_images dir
-
-    raw = image_store.load_bytes(legacy_rel_path)
-    if raw is None:
-        return None
-
-    # Preserve the original extension for raw/, default png.
-    ext = legacy_rel_path.rsplit(".", 1)[-1].lower() if "." in legacy_rel_path else "png"
-    # Derive a display name from the original filename.
-    name = legacy_rel_path.rsplit("/", 1)[-1] if "/" in legacy_rel_path else legacy_rel_path
-
-    file_id = new_file_id()
-    write_original(conversation_id, file_id, raw, ext)
-    # The rendered page must be a real PNG (reader + /chat-file serve pages as
-    # <index>.png). If the legacy image wasn't PNG, transcode it so the bytes
-    # match the .png name; fall back to the raw bytes if transcoding fails
-    # (browsers content-sniff, so a mislabelled image still renders).
-    page_bytes = raw
-    if ext != "png":
-        try:
-            import pymupdf
-
-            pix = pymupdf.Pixmap(io.BytesIO(raw))
-            if pix.alpha:
-                pix = pymupdf.Pixmap(pymupdf.csRGB, pix)
-            page_bytes = pix.tobytes("png")
-        except Exception:  # noqa: BLE001
-            page_bytes = raw
-    write_page_png(conversation_id, file_id, 1, page_bytes)
-
-    return {
-        "type": "image",
-        "path": file_id,
-        "name": name or "image",
-        "pages": 1,
-        "hasText": False,
-    }
