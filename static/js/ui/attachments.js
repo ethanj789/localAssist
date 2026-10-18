@@ -33,17 +33,17 @@ function mimeFromDataUrl(dataUrl) {
 }
 
 /** Returns the attachments to send: {name, dataUrl} objects, in insertion order. */
-export function getPendingImages() {
+export function getPendingAttachments() {
     return pending.map(p => ({ name: p.name, dataUrl: p.dataUrl }));
 }
 
 /** True if the user has at least one attachment staged. */
-export function hasPendingImages() {
+export function hasPendingAttachments() {
     return pending.length > 0;
 }
 
 /** Clear staged attachments and the preview strip (call after a message sends). */
-export function clearPendingImages() {
+export function clearPendingAttachments() {
     pending = [];
     renderPreview();
 }
@@ -142,7 +142,7 @@ export async function addFiles(fileList, onError) {
  * Wire up the attach button, hidden file input, and clipboard paste on the
  * message textarea. `onError` is an optional toast-style callback.
  */
-export function initImageAttachments(onError) {
+export function initAttachments(onError) {
     const btn = document.getElementById('attach-image-btn');
     const fileInput = document.getElementById('image-file-input');
     const textarea = document.getElementById('user-input');

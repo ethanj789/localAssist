@@ -19,7 +19,7 @@ import { initMemoryUI } from './ui/memory.js';
 import { initEditPanel, handleProposeEdit } from './ui/editPanel.js';
 import { appendMsg, appendMsgAttachments, appendPill, renderMarkdown, renderMath } from './ui/chatRenderer.js';
 import { initSkillsAutocomplete, loadSkills, isDropdownVisible } from './ui/skillsAutocomplete.js';
-import { initImageAttachments } from './ui/imageAttachments.js';
+import { initAttachments } from './ui/attachments.js';
 
 async function init() {
     initThemes();
@@ -36,7 +36,7 @@ async function init() {
     initSkillsAutocomplete();
     bindReindexButtons();
     bindSettingsAccordion();
-    initImageAttachments(showToast);
+    initAttachments(showToast);
 
     // Hook up custom events
     document.addEventListener('conversations-updated', loadConversations);

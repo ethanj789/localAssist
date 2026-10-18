@@ -200,13 +200,13 @@ class ChatRequest(BaseModel):
     model: str = "default"
     conversation_id: str | None = None
     ollama_thinking: bool = False
-    # List of attachments the user added. Each item is either a bare
-    # `data:<mime>;base64,...` URL (images AND PDFs — not image-only anymore) or
-    # a `{name, dataUrl}` object carrying the original filename. The agent runs
-    # each through prep_file (render pages + extract text), persists them under
-    # chat_files/, and feeds page images on the sending turn. The field keeps
-    # the name `images` for FE/BE contract compatibility.
-    images: list[str | dict] = []
+    # List of attachments the user added (images, PDFs, and future doc types —
+    # the whole attachment bucket, not image-only). Each item is either a bare
+    # `data:<mime>;base64,...` URL or a `{name, dataUrl}` object carrying the
+    # original filename. The agent runs each through prep_file (render pages +
+    # extract text), persists them under chat_files/, and feeds page images on
+    # the sending turn.
+    attachments: list[str | dict] = []
 
 
 # DEAD CODE — VoiceChatResponse no longer used (browser Web Speech API handles transcription)
@@ -399,7 +399,7 @@ async def chat(req: ChatRequest):
 
     # Normal chat flow
     return StreamingResponse(
-        agent_loop(req.message, mcp, model_override=req.model, conversation_id=conv_id, ollama_thinking=req.ollama_thinking, images=req.images),
+        agent_loop(req.message, mcp, model_override=req.model, conversation_id=conv_id, ollama_thinking=req.ollama_thinking, attachments=req.attachments),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )

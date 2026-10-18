@@ -2,7 +2,7 @@ import { API } from '../constants.js';
 import { escHtml, setStatus, showToast, scrollToBottom } from '../utils/dom.js';
 import { appendMsg, appendMsgAttachments, appendPill, renderLinkCard, renderMarkdown, renderActionButton, createThinkingBlock, appendOllamaStats, renderMath, upgradeFileChipLinks } from '../ui/chatRenderer.js';
 import { handleProposeEdit } from '../ui/editPanel.js';
-import { getPendingImages, hasPendingImages, clearPendingImages } from '../ui/imageAttachments.js';
+import { getPendingAttachments, hasPendingAttachments, clearPendingAttachments } from '../ui/attachments.js';
 
 export let isStreaming = false;
 export let currentConversationId = null;
@@ -86,16 +86,16 @@ export async function sendMessage(customText = null) {
 
     // Capture any staged attachments, then clear the composer strip so a
     // follow-up message doesn't re-send them. Each is a {name, dataUrl} object.
-    const images = hasPendingImages() ? getPendingImages() : [];
-    if (!text && images.length === 0) return;
-    clearPendingImages();
+    const attachments = hasPendingAttachments() ? getPendingAttachments() : [];
+    if (!text && attachments.length === 0) return;
+    clearPendingAttachments();
 
     setIsStreaming(true);
     document.getElementById('send-btn').disabled = true;
     setStatus(true, 'thinking...');
 
     const userDiv = appendMsg('user', escHtml(text));
-    if (images.length) appendMsgAttachments(userDiv, images);
+    if (attachments.length) appendMsgAttachments(userDiv, attachments);
     scrollToBottom(document.getElementById('messages'), true);
 
     const aId = 'msg-' + Date.now();
@@ -141,7 +141,7 @@ export async function sendMessage(customText = null) {
                 model: model,
                 conversation_id: currentConversationId,
                 ollama_thinking: ollamaThinking,
-                images: images,
+                attachments: attachments,
             }),
             signal,
         });

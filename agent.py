@@ -365,10 +365,10 @@ async def generate_and_save_title(conversation_id: str, first_message: str):
         log.error(f"Failed to generate title for {conversation_id}: {e}")
 
 
-async def agent_loop(user_message: str, mcp, model_override: str = "default", conversation_id: str = None, ollama_thinking: bool = False, images: list = None) -> AsyncGenerator[str, None]:
-    # `images` is the attachment list from the request (kept named for FE/BE
-    # contract compatibility). Each item is a `data:<mime>;base64,...` URL (or a
-    # {name, dataUrl} object) — not necessarily an image; PDFs flow here too.
+async def agent_loop(user_message: str, mcp, model_override: str = "default", conversation_id: str = None, ollama_thinking: bool = False, attachments: list = None) -> AsyncGenerator[str, None]:
+    # `attachments` is the whole attachment bucket from the request. Each item
+    # is a `data:<mime>;base64,...` URL (or a {name, dataUrl} object) — images,
+    # PDFs, and future doc types all flow here.
     global global_pending_edits
     import db
     import file_store
@@ -388,7 +388,7 @@ async def agent_loop(user_message: str, mcp, model_override: str = "default", co
         import prep_file as prep_file_mod
 
         prepared = []
-        for item in images or []:
+        for item in attachments or []:
             name = None
             data_url = item
             if isinstance(item, dict):
