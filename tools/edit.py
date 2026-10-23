@@ -207,9 +207,14 @@ def _apply_single_edit(content: str, edit: dict) -> str:
 # Public API
 # ---------------------------------------------------------------------------
 
-def validate_and_preview_edit(workspace_root: Path, edit: dict) -> dict:
+def resolve_edit(workspace_root: Path, edit: dict) -> dict:
     """
     Validate a single edit and compute old/new content preview.
+
+    Renamed from validate_and_preview_edit — "preview" vs "apply" is purely
+    what the caller does with the result (render the diff vs write new_content
+    to target_path). This function just resolves the edit against the file as
+    it is NOW.
 
     edit shape: {path, action, anchor, content}
 

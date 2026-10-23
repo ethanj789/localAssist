@@ -255,9 +255,8 @@ async def update_config(updates: dict):
 @app.delete("/history")
 async def clear_history():
     # db.clear_all_conversations()
-    agent.global_edit_log.clear()
-    agent.global_pending_edits.clear()
-    agent._save_pending_edits()
+    # Pending edits are now DB truth (no in-memory globals to clear). Clearing
+    # chat history would remove any dangling confirm tool calls along with it.
     return {"status": "cleared"}
 
 
@@ -278,98 +277,83 @@ async def delete_memory_slot(index: int):
     save_memory(data)
     return {"status": "ok"}
 
-class EditDecision(BaseModel):
-    index: int  # index of the edit within the batch's edits array
-    action: str  # "approve" | "reject"
+# ============ EDIT CONFIRMATION (break-and-resume) ============
+#
+# The old decoupled model (propose → separate /resolve_edit write + placeholder
+# rewrite, with in-memory global_pending_edits) is gone. Pending edits are now
+# DB truth: a conversation is "pending" iff its last assistant tool_calls
+# message has an unanswered confirm-required call (db.get_pending_tool_call).
+#
+# Contract endpoints: GET /pending_edit/{conversation_id}, POST /respond.
+# /chat has a 409 backstop. The old /resolve_edit and /pending_edits endpoints
+# have been removed — the frontend uses the break-and-resume contract.
 
-class ResolveEditRequest(BaseModel):
+
+def _pending_edit_payload(conversation_id: str) -> dict | None:
+    """Build the GET /pending_edit contract payload for a conversation, or None
+    if nothing is pending. Recomputes the preview against the CURRENT file."""
+    pending = db.get_pending_tool_call(conversation_id)
+    if not pending:
+        return None
+
+    raw_args = pending.get("arguments") or "{}"
+    if isinstance(raw_args, str):
+        try:
+            edit_args = json.loads(raw_args) if raw_args and raw_args != "null" else {}
+        except json.JSONDecodeError:
+            edit_args = {}
+    else:
+        edit_args = raw_args or {}
+
+    edit_inputs = {
+        "path": edit_args.get("path", ""),
+        "action": edit_args.get("action", "replace"),
+        "anchor": edit_args.get("anchor", ""),
+        "content": edit_args.get("content", ""),
+        "summary": edit_args.get("summary", ""),
+    }
+    preview = agent._resolve_preview(edit_inputs)
+    return {
+        "toolCallId": pending["tool_call_id"],
+        "conversation_id": conversation_id,
+        "tool": pending["name"],
+        "edit": {
+            "path": edit_inputs["path"],
+            "action": edit_inputs["action"],
+            "anchor": edit_inputs["anchor"],
+            "summary": edit_inputs["summary"],
+        },
+        "preview": preview,
+    }
+
+
+@app.get("/pending_edit/{conversation_id}")
+async def get_pending_edit(conversation_id: str):
+    """Return the conversation's current pending edit (for rendering the modal
+    on chat open / reload), recomputing the preview against the CURRENT file, or
+    `null` (HTTP 200) when there is no pending edit."""
+    return _pending_edit_payload(conversation_id)
+
+
+class RespondRequest(BaseModel):
+    conversation_id: str
     toolCallId: str
-    decisions: list[EditDecision] = []  # per-edit decisions
-    bulk_action: str = ""  # "approve_all" | "reject_all" | "" (use individual decisions)
-
-@app.post("/resolve_edit")
-async def resolve_edit(req: ResolveEditRequest):
-    # Find the pending batch by toolCallId
-    batch = None
-    batch_idx = None
-    for i, b in enumerate(agent.global_pending_edits):
-        if b["toolCallId"] == req.toolCallId:
-            batch = b
-            batch_idx = i
-            break
-
-    if batch is None:
-        raise HTTPException(status_code=400, detail="No matching pending edit batch.")
-
-    conv_id = batch.get("conversation_id")
-    if not conv_id:
-        raise HTTPException(status_code=400, detail="Pending edit batch does not have a conversation ID.")
-
-    edits = batch.get("edits", [])
-
-    # Build decision map: index -> "approve" | "reject"
-    decision_map = {}
-    if req.bulk_action == "approve_all":
-        for i in range(len(edits)):
-            decision_map[i] = "approve"
-    elif req.bulk_action == "reject_all":
-        for i in range(len(edits)):
-            decision_map[i] = "reject"
-    else:
-        for d in req.decisions:
-            decision_map[d.index] = d.action
-
-    # Process each edit
-    approved = []
-    rejected = []
-
-    for edit_entry in edits:
-        idx = edit_entry["index"]
-        action = decision_map.get(idx)
-        if not action:
-            continue  # no decision for this edit yet — skip (stays pending)
-
-        label = f"{edit_entry['path']} ({edit_entry['action']})"
-
-        if action == "approve":
-            target = Path(edit_entry["target_path"])
-            target.parent.mkdir(parents=True, exist_ok=True)
-            with target.open("w", encoding="utf-8") as f:
-                f.write(edit_entry["new_content"])
-            approved.append(label)
-            agent.global_edit_log.append(f"{label} — {batch['summary']} — APPROVED")
-        else:
-            rejected.append(label)
-            agent.global_edit_log.append(f"{label} — {batch['summary']} — REJECTED")
-
-    # Remove resolved edits from the batch
-    resolved_indices = set(decision_map.keys())
-    remaining_edits = [e for e in edits if e["index"] not in resolved_indices]
-
-    # Build tool result message
-    parts = []
-    if approved:
-        parts.append(f"Applied: {', '.join(approved)}")
-    if rejected:
-        parts.append(f"Rejected: {', '.join(rejected)} (user rejected)")
-    content = ". ".join(parts) if parts else "No edits processed."
-
-    if remaining_edits:
-        # Partial resolution — keep batch with remaining edits
-        batch["edits"] = remaining_edits
-    else:
-        # Fully resolved — remove batch and update DB message
-        agent.global_pending_edits.pop(batch_idx)
-        db.update_message_content(conv_id, req.toolCallId, content)
-
-    agent._save_pending_edits()
-    return {"status": "ok", "applied": approved, "rejected": rejected, "remaining": len(remaining_edits)}
+    decision: str  # "approve" | "reject"
 
 
-@app.get("/pending_edits")
-async def get_pending_edits():
-    """Return all currently pending edit batches (for frontend reload recovery)."""
-    return agent.global_pending_edits
+@app.post("/respond")
+async def respond(req: RespondRequest):
+    """Resolve a pending edit and resume the agent. Returns a streaming SSE
+    response (same shape as /chat) — the resumed turn streams back here."""
+    pending = db.get_pending_tool_call(req.conversation_id)
+    if not pending or pending["tool_call_id"] != req.toolCallId:
+        raise HTTPException(status_code=409, detail="No matching pending edit.")
+
+    return StreamingResponse(
+        agent.resume_after_confirmation(req.conversation_id, req.toolCallId, req.decision, mcp),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 @app.get("/skills")
@@ -384,6 +368,12 @@ async def chat(req: ChatRequest):
     conv_id = req.conversation_id
     if not conv_id:
         conv_id = db.create_conversation(provider=current_provider)
+    else:
+        # Backstop: refuse a new message while a confirm-required edit is still
+        # pending for this conversation. The FE should already disable input;
+        # this is the safety net. (A fresh conv_id can't be pending.)
+        if db.get_pending_tool_call(conv_id):
+            raise HTTPException(status_code=409, detail="Resolve the pending edit before sending a new message.")
 
     # Detect slash commands → route to skill executor
     message = req.message.strip()

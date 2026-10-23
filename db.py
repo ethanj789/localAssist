@@ -174,6 +174,67 @@ def get_messages(conversation_id: str) -> list[dict]:
             messages.append(msg)
         return messages
 
+# Tools whose tool call must be confirmed by the user before it is answered.
+# Kept here (not imported from agent) to avoid a db<-agent import cycle; the
+# canonical copy lives in agent.REQUIRES_CONFIRMATION and must match this set.
+REQUIRES_CONFIRMATION = {"propose_edit"}
+
+
+def get_pending_tool_call(conversation_id: str) -> dict | None:
+    """Return the conversation's single pending (unanswered) confirm-required
+    tool call, or None.
+
+    The pending invariant (DB truth): a conversation has a pending edit iff its
+    last message is an ``assistant`` message carrying ``tool_calls`` for a
+    confirm-required tool that has NO matching ``tool`` result for that id.
+    This is the single source of truth for "show the modal", "disable input",
+    and "what to apply on approve", and it survives restart because it lives in
+    the DB.
+
+    Returns ``{"tool_call_id", "name", "arguments"}`` for the first
+    confirm-required call in that dangling assistant message (there is at most
+    one pending per conversation under Option P), else ``None``.
+    """
+    messages = get_messages(conversation_id)
+    # Collect every tool_call_id that already has a tool result answering it.
+    answered_ids = {
+        m.get("tool_call_id")
+        for m in messages
+        if m.get("role") == "tool" and m.get("tool_call_id")
+    }
+
+    # Walk from the end: the pending call must belong to the LAST assistant
+    # tool_calls message. If that message's confirm-required call is answered,
+    # there is no pending edit.
+    for msg in reversed(messages):
+        if msg.get("role") != "assistant":
+            continue
+        tool_calls = msg.get("tool_calls") or []
+        if not tool_calls:
+            continue
+        # This is the most recent assistant tool_calls message.
+        for tc in tool_calls:
+            if not isinstance(tc, dict):
+                continue
+            func = tc.get("function") or {}
+            name = func.get("name")
+            tc_id = tc.get("id")
+            if (
+                name in REQUIRES_CONFIRMATION
+                and tc_id
+                and tc_id not in answered_ids
+            ):
+                return {
+                    "tool_call_id": tc_id,
+                    "name": name,
+                    "arguments": func.get("arguments") or "{}",
+                }
+        # Most recent assistant tool_calls message had no unanswered
+        # confirm-required call → nothing pending.
+        return None
+    return None
+
+
 def add_message(conversation_id: str, role: str, content: str | None, tool_calls: list | None = None, tool_call_id: str | None = None, thinking_content: str | None = None, files: list | None = None):
     now = datetime.utcnow().isoformat()
     tool_calls_str = json.dumps(tool_calls) if tool_calls else None

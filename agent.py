@@ -17,55 +17,37 @@ import plans
 
 log = logging.getLogger(__name__)
 
-# ─── Pending edits persistence ─────────────────────────────────────────────
-PENDING_EDITS_FILE = Path(__file__).parent / "pending_edits.json"
+# Tools whose call must be confirmed by the user (break-and-resume): when one
+# is called, the turn ends with the tool call left UNANSWERED in the DB and the
+# UI surfaces a pending approval derived from DB truth. See
+# db.get_pending_tool_call (which keeps a matching copy of this set to avoid an
+# import cycle).
+REQUIRES_CONFIRMATION = {"propose_edit"}
 
-def _load_pending_edits() -> list[dict]:
-    """Load pending edits from disk on startup."""
-    if PENDING_EDITS_FILE.exists():
-        try:
-            with PENDING_EDITS_FILE.open("r", encoding="utf-8") as f:
-                data = json.load(f)
-            if isinstance(data, list):
-                log.info("Loaded %d pending edit batch(es) from disk.", len(data))
-                return data
-        except Exception as e:
-            log.warning("Failed to load pending edits file: %s", e)
-    return []
-
-
-def _save_pending_edits() -> None:
-    """Persist pending edits to disk."""
-    try:
-        with PENDING_EDITS_FILE.open("w", encoding="utf-8") as f:
-            json.dump(global_pending_edits, f, ensure_ascii=False)
-    except Exception as e:
-        log.warning("Failed to save pending edits: %s", e)
+# Contract strings (frozen — see design doc). Kept as module constants so the
+# propose/resume paths and the endpoints stay byte-identical.
+AUTO_REJECT_EXTRA_EDIT = (
+    "Only one edit can be pending approval at a time. This additional edit was "
+    "NOT queued or saved. After the current pending edit is approved or "
+    "rejected, propose this edit again. (Note: edits are resolved one at a time "
+    "as the user approves them, not once per user message.)"
+)
 
 
-global_pending_edits: list[dict] = _load_pending_edits()
-global_edit_log: list[str] = []
-
-
-def _count_pending_edits() -> int:
-    """Count total individual edits across all pending batches."""
-    return sum(len(batch.get("edits", [])) for batch in global_pending_edits)
-
-
-def build_system_prompt(edit_log: list[str] | None = None) -> str:
+def build_system_prompt() -> str:
     """Assemble the system prompt exactly as a live turn does.
 
     Single source of truth for the system string so the KV-cache warmup
-    (server.py) and the real agent turn stay byte-identical. `edit_log` is
-    omitted at warmup time (a fresh chat has none), matching the start of a
-    new conversation.
+    (server.py) and the real agent turn stay byte-identical. The edit log is no
+    longer embedded here — pending edits are DB truth and applied edits leave
+    their real tool result in history, so nothing edit-related belongs in the
+    system prompt (which would nuke the KV cache on every change). Memory is the
+    one accepted KV nuker and stays.
     """
     memory = load_memory()
     system = prompts.SYSTEM_PROMPT + "\n\n" + prompts.MEMORY_MANAGEMENT_PROMPT
     if memory:
         system = system + "\n\n" + memory
-    if edit_log:
-        system += "\n\nEdit Log:\n" + "\n".join(edit_log)
     return system
 
 
@@ -259,11 +241,6 @@ def _prune_history(history: list[dict], keep_last_n_tool_results: int = 2) -> li
     tool_result_count = 0
     for msg in reversed(history):
         if msg["role"] == "tool":
-            # EXEMPT pending edits from pruning
-            if msg.get("content") and "edit pending approval" in msg.get("content", ""):
-                pruned.append(msg)
-                continue
-                
             tool_result_count += 1
             if tool_result_count > keep_last_n_tool_results:
                 pruned.append({**msg, "content": "[pruned]"})
@@ -383,11 +360,632 @@ async def generate_and_save_title(conversation_id: str, first_message: str):
         log.error(f"Failed to generate title for {conversation_id}: {e}")
 
 
+def _resolve_turn_models(resolved_provider: str, use_remote_provider: bool, model_override: str, user_message: str) -> tuple[str, str]:
+    """Resolve (tool_model, answer_model) for a turn — factored out so both the
+    live agent turn and the resume-after-confirmation path pick models the same
+    way. Does NOT emit the `model_upgrade` SSE; the caller compares the two and
+    emits it when they differ (only the live path does)."""
+    if use_remote_provider:
+        tool_settings = get_model_setting("tool", "default")
+        if model_override == "coding":
+            return (
+                llm_provider.get_model_name_for_provider(tool_settings, resolved_provider, CONFIG.get("groq_model")),
+                llm_provider.get_model_name_for_provider(get_model_setting("coding", "answer"), resolved_provider, CODING_MODEL),
+            )
+        elif model_override == "thinking":
+            return (
+                llm_provider.get_model_name_for_provider(tool_settings, resolved_provider, CONFIG.get("groq_model")),
+                llm_provider.get_model_name_for_provider(get_model_setting("thinking", "answer"), resolved_provider, THINKING_MODEL),
+            )
+        else:
+            return llm_provider.select_model(
+                user_message, CONFIG, get_model_setting, CODING_MODEL, THINKING_MODEL, CONFIG.get("groq_model"), CODING_KEYWORDS, CODING_PHRASES
+            )
+    else:
+        default_settings = get_model_setting("default", "default")
+        model = default_settings.get("model", CONFIG["model"])
+        return (model, model)
+
+
+async def _run_tool_loop(
+    conversation_history: list[dict],
+    conversation_id: str,
+    mcp,
+    resolved_provider: str,
+    use_remote_provider: bool,
+    ollama_tools: list[dict],
+    answer_model: str,
+    tool_model: str,
+    model_override: str,
+    ollama_thinking: bool,
+) -> AsyncGenerator[str, None]:
+    """Shared tool loop used by both the live agent turn (``agent_loop``) and
+    the resume path (``resume_after_confirmation``).
+
+    Owns the per-turn counters, the ``while True:`` provider/tool loop, and the
+    outer tool-failure fallback. For the normal (no confirm-required tool) path
+    its behavior is byte-for-byte identical to the previous inline loop.
+
+    Confirm-required gating (break-and-resume): within a tool batch, non-confirm
+    tools run first (their results are appended). The FIRST confirm-required
+    call is left UNANSWERED — we emit a ``confirm_required`` SSE (resolving the
+    edit once for the preview) and ``return``, ending the generator with that
+    assistant ``tool_calls`` message dangling in the DB. Any ADDITIONAL
+    confirm-required calls in the same batch are answered with the Option-P
+    auto-reject result (so the message array stays valid)."""
+    import db
+
+    search_count = 0
+    email_count = 0
+    memory_count = 0
+    tool_count = 0
+    last_read_path = ""
+    max_searches = CONFIG["max_searches"]
+    max_emails = CONFIG["max_emails"]
+    max_tools = CONFIG["max_tools"]
+    max_memory = 3
+
+    while True:
+        try:
+            # Skip pruning on local (ollama) to preserve KV cache prefix
+            if use_remote_provider:
+                trimmed_history = _prune_history(conversation_history[-MAX_HISTORY:])
+            else:
+                trimmed_history = conversation_history[-MAX_HISTORY:]
+            is_final_call = len(trimmed_history) > 0 and trimmed_history[-1]["role"] == "tool"
+            # current_model = answer_model if is_final_call else tool_model
+            current_model = answer_model # i give up trying to optimize this single call.
+            current_settings = get_model_setting("answer", "default")
+            if model_override == "coding":
+                current_settings = get_model_setting("coding", "answer")
+            elif model_override == "thinking":
+                current_settings = get_model_setting("thinking", "answer")
+
+            if use_remote_provider:
+                await _maybe_summarize_history(resolved_provider, conversation_history)
+
+            system = build_system_prompt()
+
+            yield _sse("model", json.dumps({
+                "provider": resolved_provider,
+                "model": current_model if use_remote_provider else CONFIG["model"]
+            }))
+
+            if use_remote_provider:
+                # Remote: filter tools to save tokens (no KV cache to preserve)
+                available_tools = []
+                for t in ollama_tools:
+                    if tool_count >= max_tools:
+                        break
+                    func_name = t["function"]["name"]
+                    if func_name in ("web_search", "fetch_webpage") and search_count >= max_searches:
+                        continue
+                    if func_name == "draft_email" and email_count >= max_emails:
+                        continue
+                    if func_name == "save_user_preference" and memory_count >= max_memory:
+                        continue
+                    available_tools.append(t)
+            else:
+                # Local/Ollama: always pass full tool list to preserve KV cache.
+                # Limits are enforced at execution time via error messages.
+                available_tools = ollama_tools
+
+            request_kwargs = {
+                "model": current_model if use_remote_provider else CONFIG["model"],
+                "messages": [
+                    {"role": "system", "content": system},
+                    *trimmed_history,
+                ],
+                "tools": available_tools if available_tools else [],
+                "temperature": current_settings.get("temperature", CONFIG["temperature"]),
+                "max_completion_tokens": current_settings.get("max_tokens", CONFIG["max_tokens"]),
+            }
+            if use_remote_provider:
+                reasoning_effort = current_settings.get("reasoning_effort")
+                if isinstance(reasoning_effort, str) and reasoning_effort.strip():
+                    request_kwargs["reasoning_effort"] = reasoning_effort.strip()
+            else:
+                # Ollama thinking: per-request flag wins, then per-role setting,
+                # then global config fallback (handled inside _build_ollama_payload).
+                # IMPORTANT: never send think:True when tools are available — most
+                # Ollama models (including gemma4) silently drop tool calls when
+                # thinking mode is active, returning empty content instead.
+                role_thinking = current_settings.get("thinking", False)
+                want_thinking = ollama_thinking or model_override == "thinking" or role_thinking
+                has_tools = bool(available_tools)
+                if want_thinking and not has_tools:
+                    request_kwargs["thinking"] = True
+                    log.debug("ollama thinking enabled (no tools in this turn)")
+                elif want_thinking and has_tools:
+                    log.debug("ollama thinking suppressed — tools are present, think:True would break tool calls")
+
+            try:
+                log.info("agent_loop: calling LLM provider=%s with %d tools", resolved_provider, len(request_kwargs.get("tools", [])))
+
+                if not use_remote_provider:
+                    # ── Ollama streaming path ──────────────────────────────────────
+                    assembled = None
+                    verbose_stats = None
+                    content_started = False
+                    thinking_started = False
+                    token_count = 0
+                    thinking_count = 0
+                    async for stream_chunk in llm_provider._ollama_stream_chat_completion(request_kwargs, CONFIG):
+                        choice = stream_chunk.choices[0]
+                        delta = choice.delta
+
+                        if delta.thinking:
+                            yield _sse("thinking_token", delta.thinking)
+                            thinking_count += len(delta.thinking)
+                            thinking_started = True
+
+                        if delta.content:
+                            yield _sse("token", delta.content)
+                            content_started = True
+                            token_count += len(delta.content)
+
+                        if choice.finish_reason is not None:
+                            assembled = stream_chunk.assembled
+                            verbose_stats = assembled.verbose_stats if assembled else None
+                            log.info(
+                                "ollama stream done | finish_reason=%s | content_chars=%d | thinking_chars=%d | tool_calls_raw=%s",
+                                choice.finish_reason,
+                                token_count,
+                                thinking_count,
+                                assembled.tool_calls_raw if assembled else [],
+                            )
+                            break
+
+                    if assembled is None:
+                        log.warning("ollama stream ended with no done chunk — treating as empty response")
+                        assembled_content = ""
+                        assembled_thinking = None
+                        assembled_tool_calls = []
+                    else:
+                        assembled_content = assembled.content
+                        assembled_thinking = assembled.thinking
+                        assembled_tool_calls = llm_provider._parse_ollama_tool_calls_raw(
+                            assembled.tool_calls_raw
+                        )
+                        log.info(
+                            "ollama assembled | content=%r | tool_calls=%s",
+                            (assembled_content or "")[:120],
+                            [tc.function.name for tc in assembled_tool_calls],
+                        )
+
+                    # Fallback: gemma4 and some other models correctly return
+                    # tool_calls in non-streaming mode but emit empty content with
+                    # no tool_calls when streamed. If we got nothing useful from
+                    # the stream, retry with a non-streaming call to recover.
+                    if not assembled_tool_calls and not assembled_content and assembled_thinking:
+                        log.warning(
+                            "ollama stream returned thinking-only with no content/tools — "
+                            "falling back to non-streaming call to recover tool_calls"
+                        )
+                        # Content was already streamed as empty so nothing to clear,
+                        # but reset content_started so we don't skip the token emit below.
+                        content_started = False
+                        fallback_resp = await llm_provider._ollama_chat_completion(request_kwargs, CONFIG)
+                        fallback_msg = fallback_resp.choices[0].message
+                        verbose_stats = getattr(fallback_resp, "verbose_stats", verbose_stats)
+                        assembled_content = fallback_msg.content or ""
+                        assembled_thinking = fallback_msg.thinking
+                        assembled_tool_calls = list(fallback_msg.tool_calls or [])
+                        log.info(
+                            "ollama fallback result | content=%r | tool_calls=%s",
+                            (assembled_content or "")[:120],
+                            [tc.function.name for tc in assembled_tool_calls],
+                        )
+
+                    # Fallback: some models (especially gemma4) emit tool calls
+                    # as plain text content instead of structured tool_calls.
+                    # Detect patterns like: tool_name{...json...} or tool_name({...})
+                    # and convert them into real tool calls.
+                    if not assembled_tool_calls and assembled_content:
+                        extracted = _extract_tool_call_from_text(assembled_content, ollama_tools)
+                        if extracted:
+                            log.warning(
+                                "ollama emitted tool call as text — extracting: %s",
+                                extracted.function.name,
+                            )
+                            assembled_tool_calls = [extracted]
+                            assembled_content = None
+                            # Tell the UI to discard the text tokens already streamed
+                            if content_started:
+                                yield _sse("clear_tokens", "")
+                                content_started = False
+
+                    msg = SimpleNamespace(
+                        content=assembled_content,
+                        tool_calls=assembled_tool_calls,
+                        thinking=assembled_thinking,
+                    )
+
+                else:
+                    # ── Remote provider (groq / openrouter) — non-streaming ────────
+                    response = await llm_provider.chat_completion_with_retry(resolved_provider, request_kwargs, CONFIG)
+                    msg = response.choices[0].message
+                    verbose_stats = None
+                    content_started = False  # remote path doesn't pre-stream tokens
+
+                log.info("agent_loop: LLM responded")
+            except Exception as e:
+                resp = getattr(e, "response", None)
+                if resp is not None:
+                    try:
+                        body = resp.text
+                    except Exception:
+                        # Streamed responses raise ResponseNotRead on .text
+                        # unless the body was already read. Fall back to the
+                        # raw (possibly already-read) content.
+                        try:
+                            body = resp.content.decode(errors="replace")
+                        except Exception:
+                            body = f"<unreadable response body; status={getattr(resp, 'status_code', '?')}>"
+                    log.error("Provider error body: %s", body)
+                raise
+
+            tool_calls = msg.tool_calls or []
+            content = msg.content
+
+            if tool_calls:
+                content = None
+                # If we already streamed some content tokens live before discovering
+                # the model wanted to call tools, tell the UI to discard them.
+                if content_started:
+                    yield _sse("clear_tokens", "")
+            else:
+                content = content or ""
+
+            log.info("%s response | content=%s | tool_calls=%s", resolved_provider, content, tool_calls)
+            yield _sse("status", f"{resolved_provider} responded")
+
+            if not tool_calls:
+                # Only persist non-empty assistant messages. An empty response
+                # (e.g. model returned only thinking tokens, fallback also gave
+                # nothing useful) should not be written to history as it will
+                # corrupt future turns.
+                thinking_text = getattr(msg, 'thinking', None) or None
+                if content:
+                    conversation_history.append({"role": "assistant", "content": content})
+                    db.add_message(conversation_id, "assistant", content, thinking_content=thinking_text)
+
+                if content_started:
+                    # Ollama already streamed tokens live — just emit stats and done
+                    pass
+                else:
+                    # Remote providers: fake-stream word by word
+                    for word in content.split(" "):
+                        yield _sse("token", word + " ")
+                        await asyncio.sleep(0.01)
+
+                # Emit verbose stats for Ollama responses
+                if verbose_stats:
+                    yield _sse("ollama_stats", json.dumps(verbose_stats))
+
+                yield _sse("done", json.dumps({
+                    "searches_used": search_count,
+                    "emails_used": email_count,
+                    "tools_used": tool_count,
+                    "max_searches": max_searches,
+                    "max_emails": max_emails,
+                    "max_tools": max_tools
+                }))
+                return
+
+            tool_calls_for_history = [
+                {
+                    "id": tc.id,
+                    "type": "function",
+                    "function": {
+                        "name": tc.function.name,
+                        "arguments": tc.function.arguments if tc.function.arguments and tc.function.arguments != "null" else "{}"
+                    }
+                }
+                for tc in tool_calls
+            ]
+
+            conversation_history.append({"role": "assistant", "content": None, "tool_calls": tool_calls_for_history})
+            db.add_message(conversation_id, "assistant", None, tool_calls=tool_calls_for_history)
+
+            # Buffer all tool result messages for this batch, then append
+            # them all at the end so they land contiguously at the tail of
+            # the messages array (important for pending edits and correct
+            # multi-tool ordering).
+            pending_tool_messages: list[tuple[str, str]] = []  # (tool_call_id, content)
+
+            # ── Confirm-required gating (Option P) ───────────────────────────
+            # Partition the batch: the FIRST confirm-required call gates the turn
+            # (left unanswered); every ADDITIONAL confirm-required call is
+            # auto-rejected so the message array stays valid. Non-confirm tools
+            # run normally in the loop below FIRST so their results (and
+            # last_read_path) are ready before we build the preview / resume.
+            gate_tc = None          # the first confirm-required tool call
+            for tc in tool_calls:
+                if tc.function.name in REQUIRES_CONFIRMATION:
+                    if gate_tc is None:
+                        gate_tc = tc
+                    else:
+                        # Extra confirm call — answer it with the Option-P message.
+                        yield _sse("status", "Additional edit auto-rejected (one pending at a time).")
+                        pending_tool_messages.append((tc.id, AUTO_REJECT_EXTRA_EDIT))
+
+            for tc in tool_calls:
+                name = tc.function.name
+                raw_args = tc.function.arguments
+                if isinstance(raw_args, str):
+                    args = json.loads(raw_args) if raw_args and raw_args != "null" else {}
+                else:
+                    args = raw_args or {}
+
+                # Confirm-required calls are NOT executed here — the gate is
+                # handled after this loop (so non-confirm tools, including
+                # read_file which sets last_read_path, run first), and extras
+                # were already auto-rejected above.
+                if name in REQUIRES_CONFIRMATION:
+                    continue
+
+                yield _sse("tool_requested", json.dumps({"tool": name, "args": args}))
+
+                if search_count >= max_searches and name in ("web_search", "fetch_webpage"):
+                    yield _sse("status", f"Search cap ({max_searches}) reached, answering from context...")
+                    pending_tool_messages.append((tc.id, f"Search limit of {max_searches} reached."))
+                    continue
+
+                if email_count >= max_emails and name == "draft_email":
+                    yield _sse("status", f"Email cap ({max_emails}) reached...")
+                    pending_tool_messages.append((tc.id, f"Email drafting limit of {max_emails} reached. You cannot draft any more emails in this turn. Please proceed to answer the user based on the drafts already opened."))
+                    continue
+
+                if memory_count >= max_memory and name == "save_user_preference":
+                    yield _sse("status", f"Memory cap ({max_memory}) reached...")
+                    pending_tool_messages.append((tc.id, f"Memory management limit of {max_memory} reached. No more memory edits allowed this turn. Please proceed to answer the user."))
+                    continue
+
+                if tool_count >= max_tools:
+                    yield _sse("status", f"Total tool cap ({max_tools}) reached...")
+                    pending_tool_messages.append((tc.id, f"Total tool limit of {max_tools} reached. No more tools can be called. Please proceed to answer the user with the information you already have."))
+                    continue
+
+                event_payload = {"tool": name, "args": args}
+                if name == "web_search":
+                    event_payload["count"] = search_count + 1
+                    event_payload["max"] = max_searches
+                    event_payload["label"] = f'searching: "{args.get("query", "")}" ({search_count + 1}/{max_searches})'
+                elif name == "fetch_webpage":
+                    event_payload["label"] = f'fetching: {args.get("url", "")}'
+                elif name == "list_files":
+                    event_payload["label"] = f'listing workspace files, with option {args.get("topic", "all")}'
+                elif name == "read_file":
+                    event_payload["label"] = f'reading: {args.get("path", "")}, with {args.get("count")} lines from lines {args.get("start")}'
+                elif name == "calculate":
+                    event_payload["label"] = f'calculating: {args.get("expression", "")}'
+                elif name == "recent_events":
+                    event_payload["label"] = f'getting recent info for: {args.get("infoType", "")}, for/about {args.get("details","")}'
+                elif name == "draft_email":
+                    event_payload["count"] = email_count + 1
+                    event_payload["max"] = max_emails
+                    event_payload["label"] = f'drafting email to {args.get("to","NA")}, about {args.get("subject","NA")} ({email_count + 1}/{max_emails})'
+                elif name == "search_semantic":
+                    event_payload["label"] = f'conceptual search: "{args.get("query", "")}"'
+                else:
+                    event_payload["label"] = f'{name}: {json.dumps(args)}'
+
+                yield _sse("searching", json.dumps(event_payload))
+                log.info("tool_call | %s | args=%s", name, json.dumps(args))
+
+                # Intercept plan tool (needs conversation_id, not MCP)
+                if name == "plan":
+                    action = args.get("action")
+                    if action == "create":
+                        plan = plans.create_plan(conversation_id, args["goal"], args["steps"])
+                        result = json.dumps({"status": "plan_created", "goal": plan["goal"], "steps": len(plan["steps"])})
+                        yield _sse("plan_update", json.dumps({"plan": plan}))
+                    elif action == "update":
+                        plan = plans.update_plan(conversation_id, args.get("step_index"), args.get("status"), args.get("new_steps"))
+                        if plan:
+                            result = json.dumps({"status": "plan_updated", "plan": plans.format_plan_status(plan)})
+                            yield _sse("plan_update", json.dumps({"plan": plan}))
+                        else:
+                            result = "No active plan for this conversation."
+                    else:
+                        result = f"Unknown plan action: {action}"
+                else:
+                    # Track last read_file path for the propose_edit path-fill
+                    # fallback (applied at the confirm gate, since propose_edit
+                    # itself is gated and never executed here).
+                    if name == "read_file" and args.get("path"):
+                        last_read_path = args["path"]
+
+                    result = await mcp.call_tool(name, args)
+
+                if name == "fetch_webpage":
+                    try:
+                        lines = result.split("\n")
+                        metadata_line = next((l for l in lines if l.startswith("__LINK_METADATA__:")), None)
+                        if metadata_line:
+                            metadata = json.loads(metadata_line.split(":", 1)[1])
+                            yield _sse("link_card", json.dumps(metadata))
+                            result = "\n".join(l for l in lines if not l.startswith("__LINK_METADATA__:"))
+                    except Exception:
+                        pass
+
+                try:
+                    lines = result.split("\n")
+                    action_line = next((l for l in lines if l.strip().startswith("__ACTION_BUTTON__:")), None)
+                    if action_line:
+                        log.debug(f"Found action button line: {action_line}")
+                        action_data = json.loads(action_line.split(":", 1)[1])
+                        yield _sse("action_button", json.dumps(action_data))
+                        result = "\n".join(l for l in lines if not l.strip().startswith("__ACTION_BUTTON__:"))
+                except Exception as e:
+                    log.error(f"Error processing action button: {e}")
+
+                if use_remote_provider and name in ("web_search", "fetch_webpage"):
+                    result = await _summarize_tool_result(resolved_provider, name, result)
+                    yield _sse("status", f"summarized {name} result")
+
+                if name in ("web_search", "fetch_webpage"):
+                    search_count += 1
+                if name == "draft_email":
+                    email_count += 1
+                if name == "save_user_preference":
+                    memory_count += 1
+
+                if name not in ("plan",):
+                    tool_count += 1
+                yield _sse("search_result", json.dumps({"tool": name, "count": tool_count}))
+
+                pending_tool_messages.append((tc.id, result))
+
+            # Append all tool results to history at the end of the batch
+            for tool_call_id, content in pending_tool_messages:
+                conversation_history.append({
+                    "role": "tool",
+                    "tool_call_id": tool_call_id,
+                    "content": content,
+                })
+                db.add_message(conversation_id, "tool", content, tool_call_id=tool_call_id)
+
+            # Append plan status to the last tool result (ephemeral, not persisted)
+            active_plan = plans.get_plan(conversation_id)
+            if active_plan and conversation_history and conversation_history[-1]["role"] == "tool":
+                plan_status = plans.format_plan_status(active_plan)
+                conversation_history[-1]["content"] += f"\n\n{plan_status}"
+
+            # ── Gate the turn on the first confirm-required call ─────────────
+            # All non-confirm tools ran (results + last_read_path ready) and any
+            # extra confirm calls were auto-rejected above. Now resolve the
+            # preview for the gate call against the file AS IT IS NOW, emit the
+            # confirm_required SSE, and RETURN — leaving gate_tc UNANSWERED in
+            # the DB (no placeholder, no tool result). /respond resolves + resumes
+            # from DB truth.
+            if gate_tc is not None:
+                raw_args = gate_tc.function.arguments
+                if isinstance(raw_args, str):
+                    gate_args = json.loads(raw_args) if raw_args and raw_args != "null" else {}
+                else:
+                    gate_args = raw_args or {}
+
+                # Auto-fill missing 'path' from the last read_file, matching the
+                # propose_edit tool's own fallback.
+                if last_read_path and not gate_args.get("path"):
+                    gate_args["path"] = last_read_path
+
+                edit_inputs = {
+                    "path": gate_args.get("path", ""),
+                    "action": gate_args.get("action", "replace"),
+                    "anchor": gate_args.get("anchor", ""),
+                    "content": gate_args.get("content", ""),
+                    "summary": gate_args.get("summary", ""),
+                }
+                preview = _resolve_preview(edit_inputs)
+
+                confirm_payload = {
+                    "toolCallId": gate_tc.id,
+                    "conversation_id": conversation_id,
+                    "tool": gate_tc.function.name,
+                    "edit": {
+                        "path": edit_inputs["path"],
+                        "action": edit_inputs["action"],
+                        "anchor": edit_inputs["anchor"],
+                        "summary": edit_inputs["summary"],
+                    },
+                    "preview": preview,
+                }
+                yield _sse("confirm_required", json.dumps(confirm_payload))
+                return
+        except Exception as e:
+            if resolved_provider == "groq" and hasattr(e, 'response'):
+                log.error("Groq 400 body: %s", e.response.text)
+            if "tool_use_failed" in str(e):
+                log.warning("tool_use_failed — retrying without tools")
+                fallback_kwargs = {
+                    "model": current_model if use_remote_provider else CONFIG["model"],
+                    "messages": [
+                        {"role": "system", "content": system},
+                        *trimmed_history,
+                    ],
+                    "temperature": current_settings.get("temperature", CONFIG["temperature"]),
+                    "max_completion_tokens": current_settings.get("max_tokens", CONFIG["max_tokens"]),
+                }
+                if not use_remote_provider and request_kwargs.get("thinking"):
+                    fallback_kwargs["thinking"] = True
+
+                if not use_remote_provider:
+                    fallback_assembled = None
+                    fallback_stats = None
+                    async for fb_chunk in llm_provider._ollama_stream_chat_completion(fallback_kwargs, CONFIG):
+                        fb_choice = fb_chunk.choices[0]
+                        if fb_chunk.choices[0].delta.thinking:
+                            yield _sse("thinking_token", fb_chunk.choices[0].delta.thinking)
+                        if fb_chunk.choices[0].delta.content:
+                            yield _sse("token", fb_chunk.choices[0].delta.content)
+                        if fb_choice.finish_reason is not None:
+                            fallback_assembled = fb_chunk.assembled
+                            fallback_stats = fallback_assembled.verbose_stats if fallback_assembled else None
+                            break
+                    content = fallback_assembled.content if fallback_assembled else ""
+                    fallback_thinking = fallback_assembled.thinking if fallback_assembled else None
+                    if fallback_stats:
+                        yield _sse("ollama_stats", json.dumps(fallback_stats))
+                else:
+                    response = await llm_provider.chat_completion_with_retry(
+                        resolved_provider, fallback_kwargs, CONFIG
+                    )
+                    content = response.choices[0].message.content or ""
+                    fallback_thinking = None
+                    for word in content.split(" "):
+                        yield _sse("token", word + " ")
+                        await asyncio.sleep(0.01)
+
+                if content:
+                    conversation_history.append({"role": "assistant", "content": content})
+                    db.add_message(conversation_id, "assistant", content, thinking_content=fallback_thinking)
+                yield _sse("done", json.dumps({
+                    "searches_used": search_count,
+                    "emails_used": email_count,
+                    "tools_used": tool_count,
+                    "max_searches": max_searches,
+                    "max_emails": max_emails,
+                    "max_tools": max_tools
+                }))
+                return
+            raise
+
+
+def _resolve_preview(edit_inputs: dict) -> dict:
+    """Resolve an edit's inputs against the file AS IT IS NOW and return the
+    contract ``preview`` shape. Never raises — a stale/invalid edit becomes
+    ``{"ok": false, "error": "<msg>"}``. Used by the propose path, the resume
+    path, and GET /pending_edit so all three render/apply against current state.
+
+    On success: ``{"ok": true, "old_content", "new_content", "target_path"}``."""
+    from tools.files import WORKSPACE_ROOT
+    from tools.edit import resolve_edit
+
+    edit = {
+        "path": edit_inputs.get("path", ""),
+        "action": edit_inputs.get("action", "replace"),
+        "anchor": edit_inputs.get("anchor", ""),
+        "content": edit_inputs.get("content", ""),
+    }
+    try:
+        resolved = resolve_edit(WORKSPACE_ROOT, edit)
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+    return {
+        "ok": True,
+        "old_content": resolved["old_content"],
+        "new_content": resolved["new_content"],
+        "target_path": resolved["target_path"],
+    }
+
+
 async def agent_loop(user_message: str, mcp, model_override: str = "default", conversation_id: str = None, ollama_thinking: bool = False, attachments: list = None) -> AsyncGenerator[str, None]:
     # `attachments` is the whole attachment bucket from the request. Each item
     # is a `data:<mime>;base64,...` URL (or a {name, dataUrl} object) — images,
     # PDFs, and future doc types all flow here.
-    global global_pending_edits
     import db
     import file_store
     try:
@@ -485,29 +1083,11 @@ async def agent_loop(user_message: str, mcp, model_override: str = "default", co
         )
         use_remote_provider = resolved_provider in {"groq", "openrouter"}
 
-        if use_remote_provider:
-            tool_settings = get_model_setting("tool", "default")
-            if model_override == "coding":
-                tool_model, answer_model = (
-                    llm_provider.get_model_name_for_provider(tool_settings, resolved_provider, CONFIG.get("groq_model")),
-                    llm_provider.get_model_name_for_provider(get_model_setting("coding", "answer"), resolved_provider, CODING_MODEL),
-                )
-            elif model_override == "thinking":
-                tool_model, answer_model = (
-                    llm_provider.get_model_name_for_provider(tool_settings, resolved_provider, CONFIG.get("groq_model")),
-                    llm_provider.get_model_name_for_provider(get_model_setting("thinking", "answer"), resolved_provider, THINKING_MODEL),
-                )
-            else:
-                tool_model, answer_model = llm_provider.select_model(
-                    user_message, CONFIG, get_model_setting, CODING_MODEL, THINKING_MODEL, CONFIG.get("groq_model"), CODING_KEYWORDS, CODING_PHRASES
-                )
-
-            if answer_model != tool_model:
-                yield _sse("model_upgrade", answer_model)
-        else:
-            default_settings = get_model_setting("default", "default")
-            tool_model = default_settings.get("model", CONFIG["model"])
-            answer_model = default_settings.get("model", CONFIG["model"])
+        tool_model, answer_model = _resolve_turn_models(
+            resolved_provider, use_remote_provider, model_override, user_message
+        )
+        if use_remote_provider and answer_model != tool_model:
+            yield _sse("model_upgrade", answer_model)
 
         log.info("agent_loop: starting")
         log.info("agent_loop: provider=%s | ollama_thinking=%s | model_override=%s", resolved_provider, ollama_thinking, model_override)
@@ -519,515 +1099,20 @@ async def agent_loop(user_message: str, mcp, model_override: str = "default", co
         log.info("agent_loop: tools mapped")
         yield _sse("status", f"calling {resolved_provider}")
 
-        search_count = 0
-        email_count = 0
-        memory_count = 0
-        tool_count = 0
-        last_read_path = ""
-        max_searches = CONFIG["max_searches"]
-        max_emails = CONFIG["max_emails"]
-        max_tools = CONFIG["max_tools"]
-        max_memory = 3
+        async for chunk in _run_tool_loop(
+            conversation_history,
+            conversation_id,
+            mcp,
+            resolved_provider,
+            use_remote_provider,
+            ollama_tools,
+            answer_model,
+            tool_model,
+            model_override,
+            ollama_thinking,
+        ):
+            yield chunk
 
-        while True:
-            try:
-                # Skip pruning on local (ollama) to preserve KV cache prefix
-                if use_remote_provider:
-                    trimmed_history = _prune_history(conversation_history[-MAX_HISTORY:])
-                else:
-                    trimmed_history = conversation_history[-MAX_HISTORY:]
-                is_final_call = len(trimmed_history) > 0 and trimmed_history[-1]["role"] == "tool"
-                # current_model = answer_model if is_final_call else tool_model
-                current_model = answer_model # i give up trying to optimize this single call.
-                current_settings = get_model_setting("answer", "default")
-                if model_override == "coding":
-                    current_settings = get_model_setting("coding", "answer")
-                elif model_override == "thinking":
-                    current_settings = get_model_setting("thinking", "answer")
-
-                if use_remote_provider:
-                    await _maybe_summarize_history(resolved_provider, conversation_history)
-
-                system = build_system_prompt(global_edit_log)
-
-                yield _sse("model", json.dumps({
-                    "provider": resolved_provider,
-                    "model": current_model if use_remote_provider else CONFIG["model"]
-                }))
-
-                last_was_pending_edit = len(trimmed_history) > 0 and trimmed_history[-1].get("role") == "tool" and trimmed_history[-1].get("content") == "edit pending approval. provide a short summary of the changes."
-
-                if last_was_pending_edit:
-                    available_tools = []
-                elif use_remote_provider:
-                    # Remote: filter tools to save tokens (no KV cache to preserve)
-                    available_tools = []
-                    for t in ollama_tools:
-                        if tool_count >= max_tools:
-                            break
-                        func_name = t["function"]["name"]
-                        if func_name in ("web_search", "fetch_webpage") and search_count >= max_searches:
-                            continue
-                        if func_name == "draft_email" and email_count >= max_emails:
-                            continue
-                        if func_name == "save_user_preference" and memory_count >= max_memory:
-                            continue
-                        available_tools.append(t)
-                else:
-                    # Local/Ollama: always pass full tool list to preserve KV cache.
-                    # Limits are enforced at execution time via error messages.
-                    available_tools = ollama_tools
-
-                request_kwargs = {
-                    "model": current_model if use_remote_provider else CONFIG["model"],
-                    "messages": [
-                        {"role": "system", "content": system},
-                        *trimmed_history,
-                    ],
-                    "tools": available_tools if available_tools else [],
-                    "temperature": current_settings.get("temperature", CONFIG["temperature"]),
-                    "max_completion_tokens": current_settings.get("max_tokens", CONFIG["max_tokens"]),
-                }
-                if use_remote_provider:
-                    reasoning_effort = current_settings.get("reasoning_effort")
-                    if isinstance(reasoning_effort, str) and reasoning_effort.strip():
-                        request_kwargs["reasoning_effort"] = reasoning_effort.strip()
-                else:
-                    # Ollama thinking: per-request flag wins, then per-role setting,
-                    # then global config fallback (handled inside _build_ollama_payload).
-                    # IMPORTANT: never send think:True when tools are available — most
-                    # Ollama models (including gemma4) silently drop tool calls when
-                    # thinking mode is active, returning empty content instead.
-                    role_thinking = current_settings.get("thinking", False)
-                    want_thinking = ollama_thinking or model_override == "thinking" or role_thinking
-                    has_tools = bool(available_tools)
-                    if want_thinking and not has_tools:
-                        request_kwargs["thinking"] = True
-                        log.debug("ollama thinking enabled (no tools in this turn)")
-                    elif want_thinking and has_tools:
-                        log.debug("ollama thinking suppressed — tools are present, think:True would break tool calls")
-
-                try:
-                    log.info("agent_loop: calling LLM provider=%s with %d tools", resolved_provider, len(request_kwargs.get("tools", [])))
-
-                    if not use_remote_provider:
-                        # ── Ollama streaming path ──────────────────────────────────────
-                        assembled = None
-                        verbose_stats = None
-                        content_started = False
-                        thinking_started = False
-                        token_count = 0
-                        thinking_count = 0
-                        async for stream_chunk in llm_provider._ollama_stream_chat_completion(request_kwargs, CONFIG):
-                            choice = stream_chunk.choices[0]
-                            delta = choice.delta
-
-                            if delta.thinking:
-                                yield _sse("thinking_token", delta.thinking)
-                                thinking_count += len(delta.thinking)
-                                thinking_started = True
-
-                            if delta.content:
-                                yield _sse("token", delta.content)
-                                content_started = True
-                                token_count += len(delta.content)
-
-                            if choice.finish_reason is not None:
-                                assembled = stream_chunk.assembled
-                                verbose_stats = assembled.verbose_stats if assembled else None
-                                log.info(
-                                    "ollama stream done | finish_reason=%s | content_chars=%d | thinking_chars=%d | tool_calls_raw=%s",
-                                    choice.finish_reason,
-                                    token_count,
-                                    thinking_count,
-                                    assembled.tool_calls_raw if assembled else [],
-                                )
-                                break
-
-                        if assembled is None:
-                            log.warning("ollama stream ended with no done chunk — treating as empty response")
-                            assembled_content = ""
-                            assembled_thinking = None
-                            assembled_tool_calls = []
-                        else:
-                            assembled_content = assembled.content
-                            assembled_thinking = assembled.thinking
-                            assembled_tool_calls = llm_provider._parse_ollama_tool_calls_raw(
-                                assembled.tool_calls_raw
-                            )
-                            log.info(
-                                "ollama assembled | content=%r | tool_calls=%s",
-                                (assembled_content or "")[:120],
-                                [tc.function.name for tc in assembled_tool_calls],
-                            )
-
-                        # Fallback: gemma4 and some other models correctly return
-                        # tool_calls in non-streaming mode but emit empty content with
-                        # no tool_calls when streamed. If we got nothing useful from
-                        # the stream, retry with a non-streaming call to recover.
-                        if not assembled_tool_calls and not assembled_content and assembled_thinking:
-                            log.warning(
-                                "ollama stream returned thinking-only with no content/tools — "
-                                "falling back to non-streaming call to recover tool_calls"
-                            )
-                            # Content was already streamed as empty so nothing to clear,
-                            # but reset content_started so we don't skip the token emit below.
-                            content_started = False
-                            fallback_resp = await llm_provider._ollama_chat_completion(request_kwargs, CONFIG)
-                            fallback_msg = fallback_resp.choices[0].message
-                            verbose_stats = getattr(fallback_resp, "verbose_stats", verbose_stats)
-                            assembled_content = fallback_msg.content or ""
-                            assembled_thinking = fallback_msg.thinking
-                            assembled_tool_calls = list(fallback_msg.tool_calls or [])
-                            log.info(
-                                "ollama fallback result | content=%r | tool_calls=%s",
-                                (assembled_content or "")[:120],
-                                [tc.function.name for tc in assembled_tool_calls],
-                            )
-
-                        # Fallback: some models (especially gemma4) emit tool calls
-                        # as plain text content instead of structured tool_calls.
-                        # Detect patterns like: tool_name{...json...} or tool_name({...})
-                        # and convert them into real tool calls.
-                        if not assembled_tool_calls and assembled_content:
-                            extracted = _extract_tool_call_from_text(assembled_content, ollama_tools)
-                            if extracted:
-                                log.warning(
-                                    "ollama emitted tool call as text — extracting: %s",
-                                    extracted.function.name,
-                                )
-                                assembled_tool_calls = [extracted]
-                                assembled_content = None
-                                # Tell the UI to discard the text tokens already streamed
-                                if content_started:
-                                    yield _sse("clear_tokens", "")
-                                    content_started = False
-
-                        msg = SimpleNamespace(
-                            content=assembled_content,
-                            tool_calls=assembled_tool_calls,
-                            thinking=assembled_thinking,
-                        )
-
-                    else:
-                        # ── Remote provider (groq / openrouter) — non-streaming ────────
-                        response = await llm_provider.chat_completion_with_retry(resolved_provider, request_kwargs, CONFIG)
-                        msg = response.choices[0].message
-                        verbose_stats = None
-                        content_started = False  # remote path doesn't pre-stream tokens
-
-                    log.info("agent_loop: LLM responded")
-                except Exception as e:
-                    resp = getattr(e, "response", None)
-                    if resp is not None:
-                        try:
-                            body = resp.text
-                        except Exception:
-                            # Streamed responses raise ResponseNotRead on .text
-                            # unless the body was already read. Fall back to the
-                            # raw (possibly already-read) content.
-                            try:
-                                body = resp.content.decode(errors="replace")
-                            except Exception:
-                                body = f"<unreadable response body; status={getattr(resp, 'status_code', '?')}>"
-                        log.error("Provider error body: %s", body)
-                    raise
-
-                tool_calls = msg.tool_calls or []
-                content = msg.content
-
-                if tool_calls:
-                    content = None
-                    # If we already streamed some content tokens live before discovering
-                    # the model wanted to call tools, tell the UI to discard them.
-                    if content_started:
-                        yield _sse("clear_tokens", "")
-                else:
-                    content = content or ""
-
-                log.info("%s response | content=%s | tool_calls=%s", resolved_provider, content, tool_calls)
-                yield _sse("status", f"{resolved_provider} responded")
-
-                if not tool_calls:
-                    # Only persist non-empty assistant messages. An empty response
-                    # (e.g. model returned only thinking tokens, fallback also gave
-                    # nothing useful) should not be written to history as it will
-                    # corrupt future turns.
-                    thinking_text = getattr(msg, 'thinking', None) or None
-                    if content:
-                        conversation_history.append({"role": "assistant", "content": content})
-                        db.add_message(conversation_id, "assistant", content, thinking_content=thinking_text)
-
-                    if content_started:
-                        # Ollama already streamed tokens live — just emit stats and done
-                        pass
-                    else:
-                        # Remote providers: fake-stream word by word
-                        for word in content.split(" "):
-                            yield _sse("token", word + " ")
-                            await asyncio.sleep(0.01)
-
-                    # Emit verbose stats for Ollama responses
-                    if verbose_stats:
-                        yield _sse("ollama_stats", json.dumps(verbose_stats))
-
-                    yield _sse("done", json.dumps({
-                        "searches_used": search_count,
-                        "emails_used": email_count,
-                        "tools_used": tool_count,
-                        "max_searches": max_searches,
-                        "max_emails": max_emails,
-                        "max_tools": max_tools
-                    }))
-                    return
-
-                tool_calls_for_history = [
-                    {
-                        "id": tc.id,
-                        "type": "function",
-                        "function": {
-                            "name": tc.function.name,
-                            "arguments": tc.function.arguments if tc.function.arguments and tc.function.arguments != "null" else "{}"
-                        }
-                    }
-                    for tc in tool_calls
-                ]
-
-                conversation_history.append({"role": "assistant", "content": None, "tool_calls": tool_calls_for_history})
-                db.add_message(conversation_id, "assistant", None, tool_calls=tool_calls_for_history)
-
-                # Buffer all tool result messages for this batch, then append
-                # them all at the end so they land contiguously at the tail of
-                # the messages array (important for pending edits and correct
-                # multi-tool ordering).
-                pending_tool_messages: list[tuple[str, str]] = []  # (tool_call_id, content)
-
-                for tc in tool_calls:
-                    name = tc.function.name
-                    raw_args = tc.function.arguments
-                    if isinstance(raw_args, str):
-                        args = json.loads(raw_args) if raw_args and raw_args != "null" else {}
-                    else:
-                        args = raw_args or {}
-
-                    yield _sse("tool_requested", json.dumps({"tool": name, "args": args}))
-
-                    if search_count >= max_searches and name in ("web_search", "fetch_webpage"):
-                        yield _sse("status", f"Search cap ({max_searches}) reached, answering from context...")
-                        pending_tool_messages.append((tc.id, f"Search limit of {max_searches} reached."))
-                        continue
-
-                    if email_count >= max_emails and name == "draft_email":
-                        yield _sse("status", f"Email cap ({max_emails}) reached...")
-                        pending_tool_messages.append((tc.id, f"Email drafting limit of {max_emails} reached. You cannot draft any more emails in this turn. Please proceed to answer the user based on the drafts already opened."))
-                        continue
-
-                    if memory_count >= max_memory and name == "save_user_preference":
-                        yield _sse("status", f"Memory cap ({max_memory}) reached...")
-                        pending_tool_messages.append((tc.id, f"Memory management limit of {max_memory} reached. No more memory edits allowed this turn. Please proceed to answer the user."))
-                        continue
-
-                    if name == "propose_edit" and _count_pending_edits() >= 5:
-                        yield _sse("status", "Pending edits cap (5) reached...")
-                        pending_tool_messages.append((tc.id, "Maximum pending edits (5) reached. The user must approve or reject existing edits before you can propose more. Please proceed to answer the user."))
-                        continue
-
-                    if tool_count >= max_tools:
-                        yield _sse("status", f"Total tool cap ({max_tools}) reached...")
-                        pending_tool_messages.append((tc.id, f"Total tool limit of {max_tools} reached. No more tools can be called. Please proceed to answer the user with the information you already have."))
-                        continue
-
-                    event_payload = {"tool": name, "args": args}
-                    if name == "web_search":
-                        event_payload["count"] = search_count + 1
-                        event_payload["max"] = max_searches
-                        event_payload["label"] = f'searching: "{args.get("query", "")}" ({search_count + 1}/{max_searches})'
-                    elif name == "fetch_webpage":
-                        event_payload["label"] = f'fetching: {args.get("url", "")}'
-                    elif name == "list_files":
-                        event_payload["label"] = f'listing workspace files, with option {args.get("topic", "all")}'
-                    elif name == "read_file":
-                        event_payload["label"] = f'reading: {args.get("path", "")}, with {args.get("count")} lines from lines {args.get("start")}'
-                    elif name == "calculate":
-                        event_payload["label"] = f'calculating: {args.get("expression", "")}'
-                    elif name == "recent_events":
-                        event_payload["label"] = f'getting recent info for: {args.get("infoType", "")}, for/about {args.get("details","")}'
-                    elif name == "draft_email":
-                        event_payload["count"] = email_count + 1
-                        event_payload["max"] = max_emails
-                        event_payload["label"] = f'drafting email to {args.get("to","NA")}, about {args.get("subject","NA")} ({email_count + 1}/{max_emails})'
-                    elif name == "search_semantic":
-                        event_payload["label"] = f'conceptual search: "{args.get("query", "")}"'
-                    else:
-                        event_payload["label"] = f'{name}: {json.dumps(args)}'
-
-                    yield _sse("searching", json.dumps(event_payload))
-                    log.info("tool_call | %s | args=%s", name, json.dumps(args))
-
-                    # Intercept plan tool (needs conversation_id, not MCP)
-                    if name == "plan":
-                        action = args.get("action")
-                        if action == "create":
-                            plan = plans.create_plan(conversation_id, args["goal"], args["steps"])
-                            result = json.dumps({"status": "plan_created", "goal": plan["goal"], "steps": len(plan["steps"])})
-                            yield _sse("plan_update", json.dumps({"plan": plan}))
-                        elif action == "update":
-                            plan = plans.update_plan(conversation_id, args.get("step_index"), args.get("status"), args.get("new_steps"))
-                            if plan:
-                                result = json.dumps({"status": "plan_updated", "plan": plans.format_plan_status(plan)})
-                                yield _sse("plan_update", json.dumps({"plan": plan}))
-                            else:
-                                result = "No active plan for this conversation."
-                        else:
-                            result = f"Unknown plan action: {action}"
-                    else:
-                        # Track last read_file path for propose_edit fallback
-                        if name == "read_file" and args.get("path"):
-                            last_read_path = args["path"]
-
-                        # Auto-fill missing 'path' in propose_edit from last read_file
-                        if name == "propose_edit" and last_read_path and not args.get("path"):
-                            args["path"] = last_read_path
-                            log.info("propose_edit: auto-filled missing path with '%s'", last_read_path)
-
-                        result = await mcp.call_tool(name, args)
-
-                    if name == "fetch_webpage":
-                        try:
-                            lines = result.split("\n")
-                            metadata_line = next((l for l in lines if l.startswith("__LINK_METADATA__:")), None)
-                            if metadata_line:
-                                metadata = json.loads(metadata_line.split(":", 1)[1])
-                                yield _sse("link_card", json.dumps(metadata))
-                                result = "\n".join(l for l in lines if not l.startswith("__LINK_METADATA__:"))
-                        except Exception:
-                            pass
-
-                    try:
-                        lines = result.split("\n")
-                        action_line = next((l for l in lines if l.strip().startswith("__ACTION_BUTTON__:")), None)
-                        if action_line:
-                            log.debug(f"Found action button line: {action_line}")
-                            action_data = json.loads(action_line.split(":", 1)[1])
-                            yield _sse("action_button", json.dumps(action_data))
-                            result = "\n".join(l for l in lines if not l.strip().startswith("__ACTION_BUTTON__:"))
-                    except Exception as e:
-                        log.error(f"Error processing action button: {e}")
-
-                    if name == "propose_edit":
-                        try:
-                            parsed = json.loads(result)
-                            if parsed.get("status") == "pending_approval":
-                                edits_list = parsed.get("edits", [])
-                                batch_entry = {
-                                    "toolCallId": tc.id,
-                                    "edits": edits_list,
-                                    "summary": parsed.get("summary"),
-                                    "conversation_id": conversation_id
-                                }
-                                global_pending_edits.append(batch_entry)
-                                _save_pending_edits()
-                                yield _sse("propose_edit", json.dumps(batch_entry))
-                                result = "edit pending approval. provide a short summary of the changes for the user."
-                        except Exception:
-                            # result already contains the REJECTED message from the tool — 
-                            # pass it through so the model sees the error details
-                            yield _sse("status", "Edit proposed but failed validation. Agent will retry.")
-                            if "REJECTED" not in result:
-                                result = (
-                                    f"REJECTED: Edit failed validation. Error: {result}. "
-                                    f"Remember: propose_edit takes a single edit with 'path' (e.g. 'draft.txt'), "
-                                    f"'action', 'anchor' (short — one line max, required unless action is 'create'), and 'content'."
-                                )
-
-                    if use_remote_provider and name in ("web_search", "fetch_webpage"):
-                        result = await _summarize_tool_result(resolved_provider, name, result)
-                        yield _sse("status", f"summarized {name} result")
-
-                    if name in ("web_search", "fetch_webpage"):
-                        search_count += 1
-                    if name == "draft_email":
-                        email_count += 1
-                    if name == "save_user_preference":
-                        memory_count += 1
-
-                    if name not in ("plan",):
-                        tool_count += 1
-                    yield _sse("search_result", json.dumps({"tool": name, "count": tool_count}))
-
-                    pending_tool_messages.append((tc.id, result))
-
-                # Append all tool results to history at the end of the batch
-                for tool_call_id, content in pending_tool_messages:
-                    conversation_history.append({
-                        "role": "tool",
-                        "tool_call_id": tool_call_id,
-                        "content": content,
-                    })
-                    db.add_message(conversation_id, "tool", content, tool_call_id=tool_call_id)
-
-                # Append plan status to the last tool result (ephemeral, not persisted)
-                active_plan = plans.get_plan(conversation_id)
-                if active_plan and conversation_history and conversation_history[-1]["role"] == "tool":
-                    plan_status = plans.format_plan_status(active_plan)
-                    conversation_history[-1]["content"] += f"\n\n{plan_status}"
-            except Exception as e:
-                if resolved_provider == "groq" and hasattr(e, 'response'):
-                    log.error("Groq 400 body: %s", e.response.text)
-                if "tool_use_failed" in str(e):
-                    log.warning("tool_use_failed — retrying without tools")
-                    fallback_kwargs = {
-                        "model": current_model if use_remote_provider else CONFIG["model"],
-                        "messages": [
-                            {"role": "system", "content": system},
-                            *trimmed_history,
-                        ],
-                        "temperature": current_settings.get("temperature", CONFIG["temperature"]),
-                        "max_completion_tokens": current_settings.get("max_tokens", CONFIG["max_tokens"]),
-                    }
-                    if not use_remote_provider and request_kwargs.get("thinking"):
-                        fallback_kwargs["thinking"] = True
-
-                    if not use_remote_provider:
-                        fallback_assembled = None
-                        fallback_stats = None
-                        async for fb_chunk in llm_provider._ollama_stream_chat_completion(fallback_kwargs, CONFIG):
-                            fb_choice = fb_chunk.choices[0]
-                            if fb_chunk.choices[0].delta.thinking:
-                                yield _sse("thinking_token", fb_chunk.choices[0].delta.thinking)
-                            if fb_chunk.choices[0].delta.content:
-                                yield _sse("token", fb_chunk.choices[0].delta.content)
-                            if fb_choice.finish_reason is not None:
-                                fallback_assembled = fb_chunk.assembled
-                                fallback_stats = fallback_assembled.verbose_stats if fallback_assembled else None
-                                break
-                        content = fallback_assembled.content if fallback_assembled else ""
-                        fallback_thinking = fallback_assembled.thinking if fallback_assembled else None
-                        if fallback_stats:
-                            yield _sse("ollama_stats", json.dumps(fallback_stats))
-                    else:
-                        response = await llm_provider.chat_completion_with_retry(
-                            resolved_provider, fallback_kwargs, CONFIG
-                        )
-                        content = response.choices[0].message.content or ""
-                        fallback_thinking = None
-                        for word in content.split(" "):
-                            yield _sse("token", word + " ")
-                            await asyncio.sleep(0.01)
-
-                    if content:
-                        conversation_history.append({"role": "assistant", "content": content})
-                        db.add_message(conversation_id, "assistant", content, thinking_content=fallback_thinking)
-                    yield _sse("done", json.dumps({
-                        "searches_used": search_count,
-                        "emails_used": email_count,
-                        "tools_used": tool_count,
-                        "max_searches": max_searches,
-                        "max_emails": max_emails,
-                        "max_tools": max_tools
-                    }))
-                    return
-                raise
 
     except Exception as e:
         # Log one clear line naming the actual cause, then keep the full
@@ -1050,5 +1135,153 @@ async def agent_loop(user_message: str, mcp, model_override: str = "default", co
         else:
             log.error("agent_loop FAILED: %s: %s", type(e).__name__, e)
         log.debug("agent_loop traceback:\n%s", traceback.format_exc())
+        yield _sse("error", traceback.format_exc())
+        yield _sse("done", "{}")
+
+
+# ─── Break-and-resume: approve/reject a pending edit, then resume the turn ───
+
+# Contract result strings (frozen — see design doc). `{path}`, `{action}`, and
+# `{msg}` are filled per call; everything else is byte-for-byte fixed.
+def _applied_result(path: str, action: str) -> str:
+    return f"Applied: {path} ({action})."
+
+
+def _stale_result(msg: str) -> str:
+    return (
+        "Edit NOT applied — the file changed since this edit was proposed and "
+        "the anchor no longer matches uniquely. Error: "
+        f"{msg}. Re-propose the edit against the current file contents."
+    )
+
+
+_REJECT_RESULT = "Edit rejected by the user. Do not re-apply it. Continue with the user's intent."
+
+
+async def resume_after_confirmation(conversation_id: str, toolCallId: str, decision: str, mcp) -> AsyncGenerator[str, None]:
+    """Resolve a pending edit and resume the agent turn (break-and-resume).
+
+    Looks up the dangling confirm-required tool call by `toolCallId`, applies the
+    decision against the file AS IT IS NOW (recompute, never snapshot), appends
+    the REAL tool result to the DB exactly once (answering the dangling call),
+    then rebuilds history + system prompt + tools from DB truth and hands off to
+    the shared `_run_tool_loop`. Because history is rebuilt deterministically and
+    only one new tool message is appended, Ollama reuses its KV cache for the
+    unchanged prefix.
+
+    Mirrors `agent_loop`'s provider/model/tool setup so the resumed turn is
+    indistinguishable from a normal turn to `_run_tool_loop`.
+    """
+    import db
+    try:
+        yield _sse("conversation_id", conversation_id)
+        yield _sse("status", "resuming after confirmation")
+
+        pending = db.get_pending_tool_call(conversation_id)
+        if not pending or pending["tool_call_id"] != toolCallId:
+            # The caller (/respond) already validated this, but double-check so a
+            # race (resolved in another tab) can't double-apply.
+            yield _sse("error", "No matching pending edit to resolve.")
+            yield _sse("done", "{}")
+            return
+
+        raw_args = pending.get("arguments") or "{}"
+        if isinstance(raw_args, str):
+            try:
+                edit_args = json.loads(raw_args) if raw_args and raw_args != "null" else {}
+            except json.JSONDecodeError:
+                edit_args = {}
+        else:
+            edit_args = raw_args or {}
+
+        edit_inputs = {
+            "path": edit_args.get("path", ""),
+            "action": edit_args.get("action", "replace"),
+            "anchor": edit_args.get("anchor", ""),
+            "content": edit_args.get("content", ""),
+            "summary": edit_args.get("summary", ""),
+        }
+
+        if decision == "approve":
+            preview = _resolve_preview(edit_inputs)
+            if preview.get("ok"):
+                # Apply: write the recomputed new_content to the resolved target.
+                target = Path(preview["target_path"])
+                target.parent.mkdir(parents=True, exist_ok=True)
+                with target.open("w", encoding="utf-8") as f:
+                    f.write(preview["new_content"])
+                result_content = _applied_result(edit_inputs["path"], edit_inputs["action"])
+                yield _sse("status", "edit applied")
+            else:
+                # Stale anchor / file changed — do NOT write; let the model
+                # re-propose against current contents.
+                result_content = _stale_result(preview.get("error", "unknown error"))
+                yield _sse("status", "edit could not be applied (stale)")
+        else:
+            # reject (any non-approve decision is treated as a rejection)
+            result_content = _REJECT_RESULT
+            yield _sse("status", "edit rejected")
+
+        # Append the REAL tool result exactly once — this answers the dangling
+        # confirm tool call and makes the conversation no longer "pending".
+        db.add_message(conversation_id, "tool", result_content, tool_call_id=toolCallId)
+
+        # Rebuild history from DB truth (deterministic) and re-attach page images
+        # for older user messages so the model keeps full visual context — same
+        # rebuild the live path uses, keeping the KV-cache prefix byte-identical.
+        conversation_history = db.get_messages(conversation_id)
+        _rehydrate_history_files(conversation_id, conversation_history)
+        yield _sse("status", "history rebuilt")
+
+        # Provider / model / tool setup — mirror agent_loop.
+        resolved_provider = db.resolve_conversation_provider(
+            conversation_id,
+            llm_provider.get_effective_provider(CONFIG)
+        )
+        use_remote_provider = resolved_provider in {"groq", "openrouter"}
+        # No user_message to re-route on at resume time; model selection for the
+        # remote path keyword-routes on the last user turn's text if available.
+        last_user_text = ""
+        for m in reversed(conversation_history):
+            if m.get("role") == "user" and m.get("content"):
+                last_user_text = m["content"]
+                break
+        tool_model, answer_model = _resolve_turn_models(
+            resolved_provider, use_remote_provider, "default", last_user_text
+        )
+
+        mcp_tools = await mcp.list_tools()
+        ollama_tools = build_ollama_tools(mcp_tools)
+        yield _sse("status", f"calling {resolved_provider}")
+
+        async for chunk in _run_tool_loop(
+            conversation_history,
+            conversation_id,
+            mcp,
+            resolved_provider,
+            use_remote_provider,
+            ollama_tools,
+            answer_model,
+            tool_model,
+            "default",
+            False,
+        ):
+            yield chunk
+
+    except Exception as e:
+        resp = getattr(e, "response", None)
+        if resp is not None:
+            try:
+                body = resp.text
+            except Exception:
+                try:
+                    body = resp.content.decode(errors="replace")
+                except Exception:
+                    body = "<unreadable body>"
+            status = getattr(resp, "status_code", "?")
+            log.error("resume_after_confirmation FAILED: HTTP %s — %s", status, (body or "<empty>").strip()[:1000])
+        else:
+            log.error("resume_after_confirmation FAILED: %s: %s", type(e).__name__, e)
+        log.debug("resume traceback:\n%s", traceback.format_exc())
         yield _sse("error", traceback.format_exc())
         yield _sse("done", "{}")

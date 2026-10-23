@@ -1,159 +1,249 @@
 import { API } from '../constants.js';
 import { showToast } from '../utils/dom.js';
+import { respondToPendingEdit, currentConversationId } from '../api/chat.js';
 
-// All pending batches keyed by toolCallId
-let pendingBatches = {};
+// ─── Single-edit pending state ────────────────────────────────────────────
+//
+// Break-and-resume model: at most ONE edit is pending approval per conversation
+// at a time (the backend gates the turn on the first confirm-required tool
+// call). The pending edit is durable server-side; the client mirrors just
+// enough to render the modal and drive /respond. `pendingEdit` is the currently
+// displayed pending edit, or null when nothing is pending.
+//
+// Shape (from the `confirm_required` SSE and GET /pending_edit):
+//   { toolCallId, conversation_id, tool, edit:{path,action,anchor,summary},
+//     preview:{ ok, old_content, new_content, target_path } | { ok:false, error } }
+let pendingEdit = null;
+
+/** True when an edit is pending approval for the open conversation. */
+export function hasPendingEdit() {
+    return pendingEdit !== null;
+}
 
 export function initEditPanel() {
     const panel = document.getElementById('edit-panel');
-    const closeBtn = document.getElementById('close-edit-panel');
-
     if (!panel) return;
 
-    closeBtn.addEventListener('click', () => panel.classList.remove('open'));
+    const closeBtn = document.getElementById('close-edit-panel');
+    if (closeBtn) {
+        // Closing only hides the panel — the pending edit stays pending
+        // server-side and the modal re-opens on reload or when re-fetched.
+        closeBtn.addEventListener('click', () => panel.classList.remove('open'));
+    }
 
     // Resizer logic
     const resizer = document.getElementById('edit-resizer');
     let isResizing = false;
 
-    resizer.addEventListener('mousedown', () => {
-        isResizing = true;
-        document.body.style.cursor = 'ew-resize';
-        document.body.style.userSelect = 'none';
-    });
+    if (resizer) {
+        resizer.addEventListener('mousedown', () => {
+            isResizing = true;
+            document.body.style.cursor = 'ew-resize';
+            document.body.style.userSelect = 'none';
+        });
 
-    window.addEventListener('mousemove', (e) => {
-        if (!isResizing) return;
-        const newWidth = window.innerWidth - e.clientX;
-        if (newWidth > 300 && newWidth < window.innerWidth - 100) {
-            panel.style.width = newWidth + 'px';
-        }
-    });
+        window.addEventListener('mousemove', (e) => {
+            if (!isResizing) return;
+            const newWidth = window.innerWidth - e.clientX;
+            if (newWidth > 300 && newWidth < window.innerWidth - 100) {
+                panel.style.width = newWidth + 'px';
+            }
+        });
 
-    window.addEventListener('mouseup', () => {
-        if (isResizing) {
-            isResizing = false;
-            document.body.style.cursor = '';
-            document.body.style.userSelect = '';
-        }
-    });
+        window.addEventListener('mouseup', () => {
+            if (isResizing) {
+                isResizing = false;
+                document.body.style.cursor = '';
+                document.body.style.userSelect = '';
+            }
+        });
+    }
 
-    // Bulk actions
-    document.getElementById('btn-approve-all').addEventListener('click', () => resolveAll('approve'));
-    document.getElementById('btn-reject-all').addEventListener('click', () => resolveAll('reject'));
+    // Approve / Reject for the single pending edit
+    const approveBtn = document.getElementById('btn-approve-edit');
+    const rejectBtn = document.getElementById('btn-reject-edit');
+    if (approveBtn) approveBtn.addEventListener('click', () => resolvePending('approve'));
+    if (rejectBtn) rejectBtn.addEventListener('click', () => resolvePending('reject'));
 
-    // Restore pending edits from server on page load
-    loadPendingEdits();
+    // Restore any pending edit for the already-open conversation on page load.
+    loadPendingEdit(currentConversationId);
 }
 
-export function handleProposeEdit(data) {
-    // data: {toolCallId, edits: [{index, path, action, anchor, content, old_content, new_content, target_path}], summary}
-    pendingBatches[data.toolCallId] = data;
+// ─── Render ────────────────────────────────────────────────────────────────
+
+/**
+ * Handle the `confirm_required` SSE event: a single edit + preview gating the
+ * turn. Stores it as the pending edit and renders the modal.
+ */
+export function handleConfirmRequired(data) {
+    showPendingEdit(data);
+    showToast(`Edit proposed: ${data.edit?.path || ''}`);
+}
+
+/**
+ * Render the approval modal from a single pending-edit payload (from either the
+ * `confirm_required` SSE or GET /pending_edit). If preview.ok is false, shows
+ * the error, renders no diff and disables Approve (Reject stays enabled).
+ */
+function showPendingEdit(data) {
+    pendingEdit = data;
 
     const panel = document.getElementById('edit-panel');
-    const cardsContainer = document.getElementById('edit-cards');
+    const edit = data.edit || {};
+    const preview = data.preview || { ok: false, error: 'No preview available.' };
 
-    // Render cards for this batch (append — don't clear, other batches may be pending)
-    for (const edit of data.edits) {
-        const card = createEditCard(data.toolCallId, edit, data.summary);
-        cardsContainer.appendChild(card);
+    // Header: action badge + path
+    const badge = document.getElementById('edit-action-badge');
+    if (badge) {
+        const action = edit.action || '';
+        badge.className = 'badge action-badge action-' + action;
+        badge.textContent = (action || 'edit').replace(/_/g, ' ').toUpperCase();
+    }
+    const pathEl = document.getElementById('edit-path');
+    if (pathEl) pathEl.textContent = edit.path || '';
+
+    const summaryEl = document.getElementById('edit-summary-text');
+    if (summaryEl) summaryEl.textContent = edit.summary || '';
+
+    // Anchor context (hidden for create / empty anchor)
+    const anchorEl = document.getElementById('edit-anchor');
+    if (anchorEl) {
+        if (edit.action !== 'create' && edit.anchor) {
+            anchorEl.style.display = '';
+            anchorEl.innerHTML = `<span class="anchor-label">anchor:</span> <code>${escapeHtml(truncate(edit.anchor, 120))}</code>`;
+        } else {
+            anchorEl.style.display = 'none';
+            anchorEl.innerHTML = '';
+        }
     }
 
-    panel.classList.add('open');
-    updateSummary();
-    showToast(`Edit proposed: ${data.edits.length} edit(s)`);
-}
+    const errorEl = document.getElementById('edit-error');
+    const diffEl = document.getElementById('edit-diff');
+    const approveBtn = document.getElementById('btn-approve-edit');
+    const oldCode = document.getElementById('edit-diff-old');
+    const newCode = document.getElementById('edit-diff-new');
 
-function updateSummary() {
-    const summaryEl = document.getElementById('edit-summary');
-    const cardCount = document.querySelectorAll('#edit-cards .edit-card').length;
-    summaryEl.textContent = cardCount > 0
-        ? `${cardCount} pending edit${cardCount !== 1 ? 's' : ''}`
-        : 'No pending edits';
-}
-
-function createEditCard(toolCallId, edit, batchSummary) {
-    const card = document.createElement('div');
-    card.className = 'edit-card';
-    card.dataset.toolCallId = toolCallId;
-    card.dataset.index = edit.index;
-
-    const isNew = edit.action === 'create';
-
-    // Header row
-    const header = document.createElement('div');
-    header.className = 'edit-card-header';
-
-    const actionBadge = document.createElement('span');
-    actionBadge.className = 'badge action-badge action-' + edit.action;
-    actionBadge.textContent = edit.action.replace('_', ' ').toUpperCase();
-
-    const pathEl = document.createElement('span');
-    pathEl.className = 'edit-card-path';
-    pathEl.textContent = edit.path;
-
-    // Per-card action buttons
-    const actions = document.createElement('div');
-    actions.className = 'edit-card-actions';
-
-    const approveBtn = document.createElement('button');
-    approveBtn.className = 'card-btn-approve';
-    approveBtn.textContent = 'Approve';
-    approveBtn.addEventListener('click', () => resolveOne(card, toolCallId, edit.index, 'approve'));
-
-    const rejectBtn = document.createElement('button');
-    rejectBtn.className = 'card-btn-reject';
-    rejectBtn.textContent = 'Reject';
-    rejectBtn.addEventListener('click', () => resolveOne(card, toolCallId, edit.index, 'reject'));
-
-    actions.appendChild(approveBtn);
-    actions.appendChild(rejectBtn);
-
-    header.appendChild(actionBadge);
-    header.appendChild(pathEl);
-    header.appendChild(actions);
-
-    // Anchor context
-    if (!isNew && edit.anchor) {
-        const anchorEl = document.createElement('div');
-        anchorEl.className = 'edit-card-anchor';
-        anchorEl.innerHTML = `<span class="anchor-label">anchor:</span> <code>${escapeHtml(truncate(edit.anchor, 120))}</code>`;
-        card.appendChild(header);
-        card.appendChild(anchorEl);
+    if (preview.ok) {
+        // Stale-anchor error cleared; render the diff.
+        if (errorEl) { errorEl.style.display = 'none'; errorEl.textContent = ''; }
+        if (diffEl) diffEl.style.display = '';
+        if (approveBtn) approveBtn.disabled = false;
+        if (oldCode && newCode) {
+            renderDiff(preview.old_content || '', preview.new_content || '', oldCode, newCode);
+            syncDiffScroll(oldCode, newCode);
+        }
     } else {
-        card.appendChild(header);
+        // Resolve failed now (e.g. file changed, anchor no longer unique): show
+        // the error, render no diff, disable Approve but keep Reject enabled.
+        if (errorEl) {
+            errorEl.style.display = '';
+            errorEl.textContent = preview.error || 'This edit can no longer be applied. Reject it and let the model re-propose.';
+        }
+        if (diffEl) diffEl.style.display = 'none';
+        if (oldCode) oldCode.innerHTML = '';
+        if (newCode) newCode.innerHTML = '';
+        if (approveBtn) approveBtn.disabled = true;
     }
 
-    // Diff view
-    const diffView = document.createElement('div');
-    diffView.className = 'edit-card-diff';
+    // Re-enable both buttons' processing state (Approve may be disabled above).
+    const rejectBtn = document.getElementById('btn-reject-edit');
+    if (rejectBtn) rejectBtn.disabled = false;
 
-    const oldPane = document.createElement('div');
-    oldPane.className = 'diff-pane';
-    const oldHeader = document.createElement('div');
-    oldHeader.className = 'diff-pane-header';
-    oldHeader.textContent = 'Before';
-    const oldCode = document.createElement('div');
-    oldCode.className = 'diff-code';
-    oldPane.appendChild(oldHeader);
-    oldPane.appendChild(oldCode);
+    if (panel) panel.classList.add('open');
 
-    const newPane = document.createElement('div');
-    newPane.className = 'diff-pane';
-    const newHeader = document.createElement('div');
-    newHeader.className = 'diff-pane-header';
-    newHeader.textContent = 'After';
-    const newCode = document.createElement('div');
-    newCode.className = 'diff-code';
-    newPane.appendChild(newHeader);
-    newPane.appendChild(newCode);
+    // Lock the composer while an edit is pending.
+    setInputPending(true);
+}
 
-    diffView.appendChild(oldPane);
-    diffView.appendChild(newPane);
+// ─── Resolve (approve / reject) ──────────────────────────────────────────────
 
-    renderDiff(edit.old_content || '', edit.new_content || '', oldCode, newCode);
+async function resolvePending(decision) {
+    if (!pendingEdit) return;
 
-    // Sync scrolling
+    const { toolCallId } = pendingEdit;
+    const conversationId = pendingEdit.conversation_id || currentConversationId;
+
+    const approveBtn = document.getElementById('btn-approve-edit');
+    const rejectBtn = document.getElementById('btn-reject-edit');
+    if (approveBtn) approveBtn.disabled = true;
+    if (rejectBtn) rejectBtn.disabled = true;
+
+    // Clear the pending state and close the modal BEFORE resuming the stream so
+    // the input unlocks and the resumed turn renders cleanly. The resumed turn
+    // may itself emit a fresh confirm_required, which re-opens the modal.
+    clearPendingEdit();
+
+    const started = await respondToPendingEdit(conversationId, toolCallId, decision);
+
+    if (!started) {
+        // 409 or busy: the edit may still be pending. Re-fetch the durable
+        // state so the modal reflects reality rather than silently vanishing.
+        await loadPendingEdit(conversationId);
+    }
+}
+
+// ─── Restore on chat open / page load ────────────────────────────────────────
+
+/**
+ * Fetch the durable pending edit for a conversation and render it, or clear the
+ * modal if there is none. Safe to call with a null/empty conversationId (no-op
+ * that clears any stale modal). Used on chat open, page reload and after a
+ * server restart — the pending state lives in the DB.
+ */
+export async function loadPendingEdit(conversationId) {
+    if (!conversationId) {
+        clearPendingEdit();
+        return;
+    }
+    try {
+        const res = await fetch(`${API}/pending_edit/${conversationId}`);
+        if (!res.ok) { clearPendingEdit(); return; }
+        // Contract: body is `null` (HTTP 200) when nothing is pending.
+        const data = await res.json();
+        if (data && data.toolCallId) {
+            showPendingEdit(data);
+        } else {
+            clearPendingEdit();
+        }
+    } catch (e) {
+        console.warn('Failed to load pending edit:', e);
+        clearPendingEdit();
+    }
+}
+
+/** Drop any pending edit, hide the modal and unlock the composer. */
+export function clearPendingEdit() {
+    pendingEdit = null;
+    const panel = document.getElementById('edit-panel');
+    if (panel) panel.classList.remove('open');
+    setInputPending(false);
+}
+
+// ─── Composer lock ───────────────────────────────────────────────────────────
+
+/**
+ * Disable/enable the message input + send button while an edit is pending. The
+ * backend also rejects new messages with a 409 backstop; this just keeps the UI
+ * honest so that never fires in normal use.
+ */
+function setInputPending(pending) {
+    const input = document.getElementById('user-input');
+    const sendBtn = document.getElementById('send-btn');
+    if (input) {
+        input.disabled = pending;
+        input.placeholder = pending
+            ? 'Approve or reject the pending edit to continue...'
+            : 'ask something...';
+    }
+    // Don't fight the streaming lifecycle: only toggle the send button when not
+    // mid-stream. chat.js owns send-btn.disabled during an active stream.
+    if (sendBtn && pending) sendBtn.disabled = true;
+    else if (sendBtn && !pending) sendBtn.disabled = false;
+}
+
+// ─── Diff rendering ───────────────────────────────────────────────────────
+
+function syncDiffScroll(oldCode, newCode) {
     let isSyncingLeft = false;
     let isSyncingRight = false;
     oldCode.onscroll = () => {
@@ -172,131 +262,7 @@ function createEditCard(toolCallId, edit, batchSummary) {
         }
         isSyncingRight = false;
     };
-
-    card.appendChild(diffView);
-    return card;
 }
-
-async function resolveOne(card, toolCallId, editIndex, action) {
-    // Disable buttons while processing
-    const btns = card.querySelectorAll('button');
-    btns.forEach(b => b.disabled = true);
-
-    try {
-        const res = await fetch(`${API}/resolve_edit`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                toolCallId,
-                decisions: [{ index: editIndex, action }]
-            })
-        });
-
-        if (res.ok) {
-            // Animate out and remove
-            card.classList.add(action === 'approve' ? 'resolved-approved' : 'resolved-rejected');
-            setTimeout(() => {
-                card.remove();
-                updateSummary();
-                closePanelIfEmpty();
-            }, 300);
-
-            showToast(`${action === 'approve' ? 'Approved' : 'Rejected'}: ${card.querySelector('.edit-card-path').textContent}`);
-            addHistoryEntry(card.querySelector('.edit-card-path').textContent, action);
-        } else {
-            const data = await res.json();
-            showToast(data.detail || 'Failed to resolve edit');
-            btns.forEach(b => b.disabled = false);
-        }
-    } catch (e) {
-        console.error(e);
-        showToast('Error resolving edit');
-        btns.forEach(b => b.disabled = false);
-    }
-}
-
-async function resolveAll(action) {
-    const cards = document.querySelectorAll('#edit-cards .edit-card');
-    if (cards.length === 0) return;
-
-    // Group by toolCallId
-    const groups = {};
-    cards.forEach(card => {
-        const tcId = card.dataset.toolCallId;
-        if (!groups[tcId]) groups[tcId] = [];
-        groups[tcId].push(parseInt(card.dataset.index, 10));
-    });
-
-    // Fire one request per batch
-    for (const [toolCallId, indices] of Object.entries(groups)) {
-        try {
-            const res = await fetch(`${API}/resolve_edit`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    toolCallId,
-                    bulk_action: action === 'approve' ? 'approve_all' : 'reject_all'
-                })
-            });
-
-            if (res.ok) {
-                // Remove all cards for this batch
-                cards.forEach(card => {
-                    if (card.dataset.toolCallId === toolCallId) {
-                        card.classList.add(action === 'approve' ? 'resolved-approved' : 'resolved-rejected');
-                    }
-                });
-            }
-        } catch (e) {
-            console.error(e);
-        }
-    }
-
-    setTimeout(() => {
-        document.querySelectorAll('#edit-cards .edit-card').forEach(c => c.remove());
-        updateSummary();
-        closePanelIfEmpty();
-    }, 300);
-
-    showToast(`${action === 'approve' ? 'Approved' : 'Rejected'} all edits`);
-    addHistoryEntry(`All (${cards.length} edits)`, action);
-}
-
-function closePanelIfEmpty() {
-    const remaining = document.querySelectorAll('#edit-cards .edit-card').length;
-    if (remaining === 0) {
-        document.getElementById('edit-panel').classList.remove('open');
-        pendingBatches = {};
-    }
-}
-
-function addHistoryEntry(label, action) {
-    const list = document.getElementById('edit-history-list');
-    const div = document.createElement('div');
-    div.className = `history-item ${action === 'approve' ? 'approved' : 'rejected'}`;
-    div.innerHTML = `<strong>${escapeHtml(label)}</strong> <small>${action.toUpperCase()}</small>`;
-    list.prepend(div);
-}
-
-// ─── Restore on page load ─────────────────────────────────────────────────
-
-async function loadPendingEdits() {
-    try {
-        const res = await fetch(`${API}/pending_edits`);
-        if (!res.ok) return;
-        const batches = await res.json();
-        if (!batches || batches.length === 0) return;
-
-        // Re-render all pending batches
-        for (const batch of batches) {
-            handleProposeEdit(batch);
-        }
-    } catch (e) {
-        console.warn('Failed to load pending edits:', e);
-    }
-}
-
-// ─── Diff rendering ───────────────────────────────────────────────────────
 
 function renderDiff(oldText, newText, oldContainer, newContainer) {
     oldContainer.innerHTML = '';

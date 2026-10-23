@@ -14,7 +14,7 @@ from tools.events import _recent_events
 from tools.emails import _draft_email
 from tools.search import _search_semantic
 from tools.memory import _manage_memory
-from tools.edit import validate_and_preview_edit
+from tools.edit import resolve_edit
 from tools.files import WORKSPACE_ROOT
 import json
 
@@ -366,12 +366,12 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
             }
 
             try:
-                preview = validate_and_preview_edit(WORKSPACE_ROOT, edit)
+                preview = resolve_edit(WORKSPACE_ROOT, edit)
             except ValueError as e:
                 return [types.TextContent(type="text", text=f"REJECTED: Edit failed: {str(e)}")]
 
             # Wrap the single edit in a one-element array so downstream
-            # (agent storage, /resolve_edit, frontend) keeps its batch shape.
+            # consumers that still expect the batch shape keep working.
             edit_results = [{
                 "index": 0,
                 "path": preview["path"],

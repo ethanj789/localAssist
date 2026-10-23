@@ -16,7 +16,7 @@ import {
 // import { initVoiceRecorder, bindVoiceButton } from './api/voice.js'; // DEAD CODE — replaced by Web Speech API
 import { initWebSpeechVoice, bindWebSpeechButton } from './api/webSpeechVoice.js';
 import { initMemoryUI } from './ui/memory.js';
-import { initEditPanel, handleProposeEdit } from './ui/editPanel.js';
+import { initEditPanel, loadPendingEdit, clearPendingEdit } from './ui/editPanel.js';
 import { appendMsg, appendMsgAttachments, appendPill, renderMarkdown, renderMath } from './ui/chatRenderer.js';
 import { initSkillsAutocomplete, loadSkills, isDropdownVisible } from './ui/skillsAutocomplete.js';
 import { initAttachments } from './ui/attachments.js';
@@ -431,6 +431,11 @@ async function selectConversation(id) {
             }
         });
 
+        // Restore any durable pending edit for this conversation (survives tab
+        // close / reload / server restart). Renders the modal + locks input if
+        // one exists, otherwise clears any stale modal.
+        loadPendingEdit(id);
+
         showToast('Resumed conversation');
     } catch (err) {
         showToast('Error loading conversation');
@@ -571,6 +576,9 @@ function startNewChat(showNotification = true) {
     setCurrentConversationId(null);
     const messagesEl = document.getElementById('messages');
     if (messagesEl) messagesEl.innerHTML = '';
+
+    // A fresh chat has no pending edit — hide any stale modal and unlock input.
+    clearPendingEdit();
 
     const userInput = document.getElementById('user-input');
     if (userInput) {

@@ -1,7 +1,7 @@
 import { API } from '../constants.js';
 import { escHtml, setStatus, showToast, scrollToBottom } from '../utils/dom.js';
 import { appendMsg, appendMsgAttachments, appendPill, renderLinkCard, renderMarkdown, renderActionButton, createThinkingBlock, appendOllamaStats, renderMath, upgradeFileChipLinks } from '../ui/chatRenderer.js';
-import { handleProposeEdit } from '../ui/editPanel.js';
+import { handleConfirmRequired, hasPendingEdit } from '../ui/editPanel.js';
 import { getPendingAttachments, hasPendingAttachments, clearPendingAttachments } from '../ui/attachments.js';
 
 export let isStreaming = false;
@@ -73,6 +73,14 @@ export async function deleteConversation(id) {
 export async function sendMessage(customText = null) {
     if (isStreaming) return;
 
+    // Backstop: a pending edit must be resolved before a new message. The input
+    // is also disabled in this state, so this normally never fires — it mirrors
+    // the backend's 409 guard on /chat.
+    if (hasPendingEdit()) {
+        showToast('Resolve the pending edit before sending a new message.');
+        return;
+    }
+
     let text = '';
     if (customText && typeof customText === 'string') {
         text = customText.trim();
@@ -98,30 +106,9 @@ export async function sendMessage(customText = null) {
     if (attachments.length) appendMsgAttachments(userDiv, attachments);
     scrollToBottom(document.getElementById('messages'), true);
 
-    const aId = 'msg-' + Date.now();
-    const aDiv = appendMsg('assistant', '', aId);
-    scrollToBottom(document.getElementById('messages'), true);
-
-    const aBody = aDiv.querySelector('.msg-body');
-    const mdDiv = document.createElement('div');
-    mdDiv.className = 'md-content';
-    let cursor = document.createElement('span');
-    cursor.className = 'cursor';
-    aBody.appendChild(mdDiv);
-    aBody.appendChild(cursor);
-
-    const state = {
-        aDiv,
-        userDiv,   // so files_prepared can upgrade this turn's optimistic chips
-        mdDiv,
-        fullText: '',
-        currentPill: null,
-        cursor,
-        linkCards: [],
-        actionButtons: [],
-        thinkingBlock: null,
-        ollamaStats: null,
-    };
+    // Build the assistant bubble + streaming state. userDiv is passed so the
+    // files_prepared event can upgrade this turn's optimistic file chips.
+    const { state, cursor } = createAssistantStream({ userDiv });
 
     const modelSelector = document.getElementById('model-selector');
     const model = modelSelector ? modelSelector.value : 'default';
@@ -146,45 +133,168 @@ export async function sendMessage(customText = null) {
             signal,
         });
 
-        const reader = resp.body.getReader();
-        const decoder = new TextDecoder();
-        let buf = '';
-
-        while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-            buf += decoder.decode(value, { stream: true });
-
-            const lines = buf.split('\n\n');
-            buf = lines.pop();
-
-            for (const line of lines) {
-                if (!line.startsWith('data: ')) continue;
-                let parsed;
-                try { parsed = JSON.parse(line.slice(6)); } catch { continue; }
-
-                const { event, data } = parsed;
-                handleStreamEvent(event, data, state);
-            }
-        }
+        await consumeChatStream(resp, state);
     } catch (e) {
-        if (e.name === 'AbortError') {
-            // User cancelled — show a subtle indicator
-            const meta = document.createElement('div');
-            meta.className = 'meta';
-            meta.textContent = '⏹ stopped';
-            aBody.appendChild(meta);
-            setStatus(true, 'stopped');
-        } else {
-            aBody.innerHTML = `<span style="color:var(--warn)">error: ${e.message}</span>`;
-            setStatus(false, 'error');
-        }
+        handleStreamError(e, state);
     } finally {
         currentAbortController = null;
         cursor.remove();
         setIsStreaming(false);
         document.getElementById('send-btn').disabled = false;
         setStatus(true, 'ready');
+    }
+}
+
+/**
+ * Create a fresh assistant message bubble (with a blinking cursor and an empty
+ * markdown container) plus the per-turn streaming `state` object that
+ * handleStreamEvent mutates. Reused by both the /chat send path and the
+ * /respond resume path so a resumed turn renders identically to a live one.
+ *
+ * @param {object} opts
+ * @param {HTMLElement} [opts.userDiv] the user message bubble for this turn, if any
+ * @returns {{state: object, aDiv: HTMLElement, cursor: HTMLElement}}
+ */
+export function createAssistantStream({ userDiv = null } = {}) {
+    const aId = 'msg-' + Date.now();
+    const aDiv = appendMsg('assistant', '', aId);
+    scrollToBottom(document.getElementById('messages'), true);
+
+    const aBody = aDiv.querySelector('.msg-body');
+    const mdDiv = document.createElement('div');
+    mdDiv.className = 'md-content';
+    const cursor = document.createElement('span');
+    cursor.className = 'cursor';
+    aBody.appendChild(mdDiv);
+    aBody.appendChild(cursor);
+
+    const state = {
+        aDiv,
+        userDiv,
+        mdDiv,
+        fullText: '',
+        currentPill: null,
+        cursor,
+        linkCards: [],
+        actionButtons: [],
+        thinkingBlock: null,
+        ollamaStats: null,
+    };
+
+    return { state, aDiv, cursor };
+}
+
+/**
+ * Drive an assistant message from an SSE Response body. Reads the stream,
+ * splits on SSE record boundaries, parses each `data:` line and dispatches it
+ * to handleStreamEvent against the supplied `state`. Shared by /chat and
+ * /respond so the resumed turn uses the exact same rendering path.
+ */
+export async function consumeChatStream(resp, state) {
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = '';
+
+    while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+
+        const lines = buf.split('\n\n');
+        buf = lines.pop();
+
+        for (const line of lines) {
+            if (!line.startsWith('data: ')) continue;
+            let parsed;
+            try { parsed = JSON.parse(line.slice(6)); } catch { continue; }
+
+            const { event, data } = parsed;
+            handleStreamEvent(event, data, state);
+        }
+    }
+}
+
+/**
+ * Shared error handling for an interrupted/failed assistant stream. Renders the
+ * stop indicator on user abort, or an inline error otherwise.
+ */
+/**
+ * Resolve a pending edit (approve/reject) and resume the agent turn. POSTs to
+ * /respond and consumes the returned SSE stream — the resumed turn — through
+ * the exact same assistant-bubble + handleStreamEvent path used by /chat. This
+ * is the key behavioral change: approval is no longer fire-and-forget, it
+ * reopens the chat stream.
+ *
+ * @param {string} conversationId
+ * @param {string} toolCallId
+ * @param {('approve'|'reject')} decision
+ * @returns {Promise<boolean>} true if the stream was started, false on a
+ *   pre-stream error (e.g. 409 no-matching-pending) so the caller can keep the
+ *   modal open.
+ */
+export async function respondToPendingEdit(conversationId, toolCallId, decision) {
+    if (isStreaming) return false;
+
+    setIsStreaming(true);
+    const sendBtn = document.getElementById('send-btn');
+    if (sendBtn) sendBtn.disabled = true;
+    setStatus(true, 'thinking...');
+
+    const { state, cursor } = createAssistantStream({});
+
+    currentAbortController = new AbortController();
+    const signal = currentAbortController.signal;
+
+    try {
+        const resp = await fetch(`${API}/respond`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                conversation_id: conversationId,
+                toolCallId: toolCallId,
+                decision: decision,
+            }),
+            signal,
+        });
+
+        if (!resp.ok) {
+            // Contract: 409 when toolCallId doesn't match the current pending
+            // edit. Surface the detail and leave the modal to the caller. Remove
+            // the empty assistant bubble we optimistically created.
+            let detail = `error ${resp.status}`;
+            try { detail = (await resp.json()).detail || detail; } catch (_) { /* no body */ }
+            state.aDiv.remove();
+            showToast(detail);
+            setStatus(true, 'ready');
+            return false;
+        }
+
+        await consumeChatStream(resp, state);
+        return true;
+    } catch (e) {
+        handleStreamError(e, state);
+        return true;
+    } finally {
+        currentAbortController = null;
+        cursor.remove();
+        setIsStreaming(false);
+        if (sendBtn) sendBtn.disabled = false;
+        setStatus(true, 'ready');
+    }
+}
+
+export function handleStreamError(e, state) {
+    const aBody = state.aDiv.querySelector('.msg-body');
+    if (e.name === 'AbortError') {
+        // User cancelled — show a subtle indicator
+        const meta = document.createElement('div');
+        meta.className = 'meta';
+        meta.textContent = '⏹ stopped';
+        aBody.appendChild(meta);
+        setStatus(true, 'stopped');
+    } else {
+        aBody.innerHTML = `<span style="color:var(--warn)">error: ${e.message}</span>`;
+        setStatus(false, 'error');
     }
 }
 
@@ -331,9 +441,12 @@ export function handleStreamEvent(event, data, state) {
         state.actionButtons.push(JSON.parse(data));
     }
 
-    if (event === 'propose_edit') {
-        const editData = JSON.parse(data);
-        handleProposeEdit(editData);
+    if (event === 'confirm_required') {
+        // A confirm-required tool (e.g. propose_edit) gated the turn. The turn
+        // ends here with the tool call left unanswered server-side; the modal
+        // drives /respond, which reopens this same stream path to resume.
+        const payload = typeof data === 'string' ? JSON.parse(data) : data;
+        handleConfirmRequired(payload);
     }
 
     if (event === 'plan_update') {
