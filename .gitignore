@@ -15,6 +15,7 @@ chat_images/
 chat_files/
 docs/
 .kiro/
+scratch/
 
 winink/**/bin/
 winink/**/obj/

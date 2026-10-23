@@ -77,27 +77,36 @@ async def lifespan(app: FastAPI):
 
     asyncio.get_event_loop().create_task(_background_index())
 
-    # Warm up Ollama KV cache for the system prompt so subsequent requests
-    # skip the expensive prefill phase (~2k tokens at ~50 tok/s = ~40s saved).
+    # Warm up Ollama KV cache so the first real turn skips the expensive prefill
+    # phase. This must produce a prompt prefix that is BYTE-IDENTICAL to what the
+    # first real turn sends (system string + tool schemas), otherwise the cached
+    # prefix won't match and nothing is saved. We therefore reuse the agent's own
+    # prompt-assembly helpers and the real _build_ollama_payload path rather than
+    # hand-rolling a second payload shape that would silently drift.
     async def _warmup_ollama_kv():
         import httpx
-        from prompts import SYSTEM_PROMPT
         try:
+            mcp_tools = await mcp.list_tools()
+            system = agent.build_system_prompt()  # no edit log — matches a fresh chat
+            tools = agent.build_ollama_tools(mcp_tools)
+            request_kwargs = {
+                "model": CONFIG["model"],
+                "messages": [
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": "hi"},
+                ],
+                "tools": tools,
+                "temperature": CONFIG["temperature"],
+            }
+            payload = llm_provider._build_ollama_payload(request_kwargs, CONFIG, stream=False)
+            # Only prefill — generate a single token (decode is irrelevant here).
+            payload["options"]["num_predict"] = 1
             async with httpx.AsyncClient(timeout=120) as client:
                 resp = await client.post(
-                    f"{CONFIG['ollama_base_url']}/api/chat",
-                    json={
-                        "model": CONFIG["model"],
-                        "messages": [
-                            {"role": "system", "content": SYSTEM_PROMPT},
-                            {"role": "user", "content": "hi"},
-                        ],
-                        "options": {"num_predict": 1},
-                        "stream": False,
-                    },
+                    f"{CONFIG['ollama_base_url']}/api/chat", json=payload
                 )
                 resp.raise_for_status()
-                print("[warmup] Ollama KV cache primed for system prompt.")
+                print(f"[warmup] Ollama KV cache primed (system + {len(tools)} tools).")
         except Exception as exc:
             logging.warning(f"[warmup] Ollama KV warm-up failed (non-fatal): {exc}")
 

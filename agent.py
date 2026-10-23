@@ -52,6 +52,39 @@ def _count_pending_edits() -> int:
     return sum(len(batch.get("edits", [])) for batch in global_pending_edits)
 
 
+def build_system_prompt(edit_log: list[str] | None = None) -> str:
+    """Assemble the system prompt exactly as a live turn does.
+
+    Single source of truth for the system string so the KV-cache warmup
+    (server.py) and the real agent turn stay byte-identical. `edit_log` is
+    omitted at warmup time (a fresh chat has none), matching the start of a
+    new conversation.
+    """
+    memory = load_memory()
+    system = prompts.SYSTEM_PROMPT + "\n\n" + prompts.MEMORY_MANAGEMENT_PROMPT
+    if memory:
+        system = system + "\n\n" + memory
+    if edit_log:
+        system += "\n\nEdit Log:\n" + "\n".join(edit_log)
+    return system
+
+
+def build_ollama_tools(mcp_tools: list[dict]) -> list[dict]:
+    """Map MCP tool defs into the Ollama tools array shape. Shared by the
+    agent turn and the KV-cache warmup so the rendered prompt prefix matches."""
+    return [
+        {
+            "type": "function",
+            "function": {
+                "name": t["name"],
+                "description": t.get("description", ""),
+                "parameters": t.get("inputSchema", {}),
+            },
+        }
+        for t in mcp_tools
+    ]
+
+
 def _sse(event: str, data: str) -> str:
     payload = json.dumps({"event": event, "data": data})
     return f"data: {payload}\n\n"
@@ -482,17 +515,7 @@ async def agent_loop(user_message: str, mcp, model_override: str = "default", co
         log.info("agent_loop: mcp_tools fetched")
         yield _sse("status", f"got {len(mcp_tools)} tools")
 
-        ollama_tools = [
-            {
-                "type": "function",
-                "function": {
-                    "name": t["name"],
-                    "description": t.get("description", ""),
-                    "parameters": t.get("inputSchema", {}),
-                }
-            }
-            for t in mcp_tools
-        ]
+        ollama_tools = build_ollama_tools(mcp_tools)
         log.info("agent_loop: tools mapped")
         yield _sse("status", f"calling {resolved_provider}")
 
@@ -525,13 +548,7 @@ async def agent_loop(user_message: str, mcp, model_override: str = "default", co
                 if use_remote_provider:
                     await _maybe_summarize_history(resolved_provider, conversation_history)
 
-                memory = load_memory()
-                system = prompts.SYSTEM_PROMPT + "\n\n" + prompts.MEMORY_MANAGEMENT_PROMPT
-                if memory:
-                    system = system + "\n\n" + memory
-                    
-                if global_edit_log:
-                    system += "\n\nEdit Log:\n" + "\n".join(global_edit_log)
+                system = build_system_prompt(global_edit_log)
 
                 yield _sse("model", json.dumps({
                     "provider": resolved_provider,
