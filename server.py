@@ -304,6 +304,10 @@ def _pending_edit_payload(conversation_id: str) -> dict | None:
             edit_args = {}
     else:
         edit_args = raw_args or {}
+    # Sanitize invalid JSON escapes so the preview rendered on chat open/reload
+    # matches the byte-correct content that will be written on approve.
+    from tools.edit import strip_invalid_json_escapes
+    edit_args = strip_invalid_json_escapes(edit_args)
 
     edit_inputs = {
         "path": edit_args.get("path", ""),

@@ -7,6 +7,76 @@ log = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
+# Invalid-JSON-escape sanitizer (applied to parsed tool-call arguments)
+# ---------------------------------------------------------------------------
+
+# The set of characters that legally follow a backslash in a JSON string.
+# (JSON spec: \" \\ \/ \b \f \n \r \t \uXXXX)
+_JSON_LEGAL_ESCAPE_CHARS = frozenset('"\\/bfnrtu')
+
+
+def _strip_invalid_json_escapes_str(s: str) -> str:
+    """
+    Remove backslashes that precede a character JSON does not allow as an
+    escape. Small local models sometimes emit non-standard escapes (e.g. ``\\``'
+    before a backtick or ``$``) inside tool-call argument strings; lenient JSON
+    parsing leaves a stray literal backslash in the value, which then corrupts
+    written file content and anchor matching.
+
+    A backslash is dropped ONLY when the next character is outside the
+    JSON-legal escape set (" \\ / b f n r t u). Legal escapes have already been
+    decoded by the JSON parser into real characters (newline, tab, quote, etc.),
+    so any backslash still present here is either a legitimate literal backslash
+    followed by a legal-escape char (left alone, conservative) or a stray
+    backslash from a bogus escape (removed).
+
+    Examples (on the already-parsed Python string):
+        r"cell-\\${i}"   -> "cell-${i}"
+        r"say \\`hi\\`"  -> "say `hi`"
+        "line\\nbreak"   -> "line\\nbreak"  (backslash before 'n' preserved)
+
+    Idempotent: a string with no stray backslashes is returned unchanged, and
+    running the function twice yields the same result.
+    """
+    if '\\' not in s:
+        return s
+
+    out = []
+    i = 0
+    n = len(s)
+    while i < n:
+        ch = s[i]
+        if ch == '\\' and i + 1 < n and s[i + 1] not in _JSON_LEGAL_ESCAPE_CHARS:
+            # Stray backslash from an invalid JSON escape — drop it, keep the
+            # following character verbatim.
+            out.append(s[i + 1])
+            i += 2
+        else:
+            out.append(ch)
+            i += 1
+    return ''.join(out)
+
+
+def strip_invalid_json_escapes(value):
+    """
+    Recursively sanitize invalid JSON escape sequences out of a parsed
+    tool-call argument value.
+
+    Walks dicts and lists; cleans str leaves via _strip_invalid_json_escapes_str.
+    Non-string scalars (int, float, bool, None) pass through untouched. Pure and
+    idempotent — it only ever removes stray backslashes, never adds characters,
+    so a legitimate bare ``$`` or backtick is left exactly as-is.
+    """
+    if isinstance(value, str):
+        return _strip_invalid_json_escapes_str(value)
+    if isinstance(value, dict):
+        return {k: strip_invalid_json_escapes(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [strip_invalid_json_escapes(v) for v in value]
+    return value
+
+
+# ---------------------------------------------------------------------------
 # Whitespace normalization helpers (used for anchor matching)
 # ---------------------------------------------------------------------------
 

@@ -43,6 +43,11 @@ SYSTEM_PROMPT = (
     "If a sentence mixes money and math, escape every currency $ and leave only the math $ unescaped. "
     "Correct: 'You have \\$10 left, so buy the \\$4 pack and the \\$5 pack, totaling \\$9.' "
     "Wrong: 'You have $10 left, so buy the $4 pack and the $5 pack, totaling $9.' (the $ signs pair up and italicize the text). "
+    "SCOPE OF THE \\$ RULE: the currency-escaping rule above is ONLY for your chat reply text (the markdown the user reads). "
+    "It does NOT apply to tool arguments. When you write file contents inside a tool call — for example the 'content' or 'anchor' of propose_edit — "
+    "reproduce the text EXACTLY as it should appear in the file, with NO added escaping. Do not put a backslash before $, before a backtick (`), "
+    "or before any other source character. For instance a JavaScript template literal must be written as `Number ${num}` — never as \\`Number \\${num}\\`. "
+    "Chat reply: escape currency $. Tool/file content: verbatim, no escaping. "
     "Be concise but complete. No filler."
     
     "When you call propose_edit and receive 'edit pending approval', that means SUCCESS — the edit was proposed and is waiting for the user to accept or reject it in the UI. "

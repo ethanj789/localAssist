@@ -710,6 +710,8 @@ async def _run_tool_loop(
                         yield _sse("status", "Additional edit auto-rejected (one pending at a time).")
                         pending_tool_messages.append((tc.id, AUTO_REJECT_EXTRA_EDIT))
 
+            from tools.edit import strip_invalid_json_escapes
+
             for tc in tool_calls:
                 name = tc.function.name
                 raw_args = tc.function.arguments
@@ -717,6 +719,11 @@ async def _run_tool_loop(
                     args = json.loads(raw_args) if raw_args and raw_args != "null" else {}
                 else:
                     args = raw_args or {}
+                # Remove stray backslashes from invalid JSON escapes (e.g. \` or
+                # \$ emitted by small local models) before any tool sees the
+                # args. Provider-agnostic: this runs after provider parsing, so
+                # it covers Ollama/Groq/OpenRouter alike. No-op when clean.
+                args = strip_invalid_json_escapes(args)
 
                 # Confirm-required calls are NOT executed here — the gate is
                 # handled after this loop (so non-confirm tools, including
@@ -866,6 +873,12 @@ async def _run_tool_loop(
                     gate_args = json.loads(raw_args) if raw_args and raw_args != "null" else {}
                 else:
                     gate_args = raw_args or {}
+                # Strip invalid JSON escapes (e.g. \` or \$) so both 'content'
+                # (written to disk) and 'anchor' (matched against the file) are
+                # byte-correct before preview/resolve. Done before the path-fill
+                # and edit_inputs construction. Deterministic clean of incoming
+                # args only — no mutation of prior history (KV-cache safe).
+                gate_args = strip_invalid_json_escapes(gate_args)
 
                 # Auto-fill missing 'path' from the last read_file, matching the
                 # propose_edit tool's own fallback.
@@ -1193,6 +1206,12 @@ async def resume_after_confirmation(conversation_id: str, toolCallId: str, decis
                 edit_args = {}
         else:
             edit_args = raw_args or {}
+        # Sanitize invalid JSON escapes here too: this is the path that actually
+        # WRITES the file on approve (args are read fresh from the DB, which may
+        # hold the raw, pre-sanitize stored arguments), so both the preview and
+        # the on-disk result stay byte-correct.
+        from tools.edit import strip_invalid_json_escapes
+        edit_args = strip_invalid_json_escapes(edit_args)
 
         edit_inputs = {
             "path": edit_args.get("path", ""),
