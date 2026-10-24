@@ -748,3 +748,44 @@ a.msg-file-chip:hover {
     background: rgba(248, 81, 73, 0.08);
 }
 .edit-reject-error { color: var(--warn); opacity: 0.9; }
+
+/* ── Stored tool-result pill (reload path, expandable) ── */
+.tool-result-pill {
+    align-self: flex-start;
+    max-width: 100%;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    background: transparent;
+    font-family: var(--mono);
+    font-size: 10px;
+    overflow: hidden;
+    margin: 2px 0;
+    opacity: 0.85;
+}
+.tool-result-summary {
+    padding: 4px 10px;
+    cursor: pointer;
+    color: var(--muted);
+    list-style: none;
+    user-select: none;
+}
+.tool-result-summary::-webkit-details-marker { display: none; }
+.tool-result-pill[open] .tool-result-summary { border-bottom: 1px solid var(--border); }
+.tool-result-body {
+    margin: 0;
+    padding: 8px 10px;
+    max-height: 240px;
+    overflow: auto;
+    white-space: pre-wrap;
+    word-break: break-word;
+    color: var(--text);
+    font-size: 10px;
+    line-height: 1.45;
+}
+
+/* Applied-edit result pill (reload) — positive state */
+.search-pill.edit-result-applied {
+    border-color: var(--accent);
+    color: var(--accent);
+    background: rgba(124, 255, 182, 0.08);
+}

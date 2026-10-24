@@ -1,6 +1,6 @@
 import { API } from '../constants.js';
 import { escHtml, setStatus, showToast, scrollToBottom } from '../utils/dom.js';
-import { appendMsg, appendMsgAttachments, appendPill, renderLinkCard, renderMarkdown, renderActionButton, createThinkingBlock, appendOllamaStats, renderMath, upgradeFileChipLinks, appendEditPill, appendEditRejectPill } from '../ui/chatRenderer.js';
+import { appendMsg, appendMsgAttachments, appendPill, renderLinkCard, renderMarkdown, renderActionButton, createThinkingBlock, appendOllamaStats, renderMath, upgradeFileChipLinks, appendEditPill, appendEditRejectPill, toolRequestLabel } from '../ui/chatRenderer.js';
 import { handleConfirmRequired, hasPendingEdit } from '../ui/editPanel.js';
 import { getPendingAttachments, hasPendingAttachments, clearPendingAttachments } from '../ui/attachments.js';
 
@@ -367,22 +367,7 @@ export function handleStreamEvent(event, data, state) {
 
     if (event === 'tool_requested') {
         const info = JSON.parse(data);
-        let label;
-        if (info.tool === 'web_search') {
-            label = `tool requested: web_search "${info.args?.query || ''}"`;
-        } else if (info.tool === 'fetch_webpage') {
-            label = `tool requested: fetch_webpage ${info.args?.url || ''}`;
-        } else if (info.tool === 'list_files') {
-            label = `tool requested: list_files ${info.args?.subdir || '/'}`;
-        } else if (info.tool === 'read_file') {
-            label = `tool requested: read_file ${info.args?.path || ''}`;
-        } else if (info.tool === 'read_code_skeleton') {
-            label = `tool requested: read_code_skeleton for file: ${info.args?.path || ''}`;
-        } else if (info.tool === 'search_semantic') {
-            label = `tool requested: conceptual search: "${info.args?.query || ''}"`;
-        } else {
-            label = `tool requested: ${info.tool}`;
-        }
+        const label = toolRequestLabel(info.tool, info.args || {});
         // Collapse the current thinking block if it's still open
         if (state.thinkingBlock && state.thinkingBlock.open) {
             state.thinkingBlock.open = false;

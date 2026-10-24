@@ -448,6 +448,84 @@ export function appendEditRejectPill(msgDiv, info) {
     return pill;
 }
 
+/**
+ * Build the human label for a tool request pill from the tool name + parsed
+ * args. Shared by the live SSE path (tool_requested) and the reload path so the
+ * two never drift. `args` is the already-parsed arguments object.
+ */
+export function toolRequestLabel(tool, args = {}) {
+    switch (tool) {
+        case 'web_search':
+            return `tool requested: web_search "${args?.query || ''}"`;
+        case 'fetch_webpage':
+            return `tool requested: fetch_webpage ${args?.url || ''}`;
+        case 'list_files':
+            return `tool requested: list_files ${args?.subdir || args?.topic || '/'}`;
+        case 'read_file':
+            return `tool requested: read_file ${args?.path || ''}`;
+        case 'read_code_skeleton':
+            return `tool requested: read_code_skeleton for file: ${args?.path || ''}`;
+        case 'search_semantic':
+            return `tool requested: conceptual search: "${args?.query || ''}"`;
+        case 'calculate':
+            return `tool requested: calculate ${args?.expression || ''}`;
+        default:
+            return `tool requested: ${tool}`;
+    }
+}
+
+/**
+ * Append a compact pill for a stored tool result (reload path). Keeps the
+ * transcript readable: edit outcomes get a clear applied/rejected/invalid pill;
+ * other tool results collapse to a short "got result" line with the full text
+ * available on expand. `result` is the raw tool-result string from the DB.
+ */
+export function appendToolResultPill(msgDiv, name, result) {
+    const group = getPillGroup(msgDiv);
+    const text = (result || '').trim();
+
+    // Legacy outcomes from the old decoupled edit model (pre break-and-resume).
+    if (text === 'APPROVED' || text.startsWith('REJECTED')) {
+        const pill = document.createElement('div');
+        const approved = text === 'APPROVED';
+        pill.className = approved ? 'search-pill done edit-result-applied' : 'search-pill edit-reject-pill';
+        pill.innerHTML = `${approved ? '✓' : '✗'} edit ${escHtml(text)}`;
+        group.appendChild(pill);
+        return pill;
+    }
+
+    // Edit outcomes (propose_edit results) — surface the state distinctly.
+    if (name === 'propose_edit' || /^(Applied:|Edit rejected|Edit NOT applied)/.test(text)) {
+        const pill = document.createElement('div');
+        if (text.startsWith('Applied:')) {
+            pill.className = 'search-pill done edit-result-applied';
+            pill.innerHTML = `✓ ${escHtml(text)}`;
+        } else {
+            // "Edit rejected..." or "Edit NOT applied — ..." (rejected/stale/invalid)
+            pill.className = 'search-pill edit-reject-pill';
+            pill.innerHTML = `✗ ${escHtml(text)}`;
+        }
+        group.appendChild(pill);
+        return pill;
+    }
+
+    if (!text) return null;
+
+    // Generic tool result — short, expandable so it doesn't flood the reload.
+    const details = document.createElement('details');
+    details.className = 'tool-result-pill';
+    const summary = document.createElement('summary');
+    summary.className = 'tool-result-summary';
+    summary.textContent = `✓ ${name} result`;
+    details.appendChild(summary);
+    const pre = document.createElement('pre');
+    pre.className = 'tool-result-body';
+    pre.textContent = text;
+    details.appendChild(pre);
+    group.appendChild(details);
+    return details;
+}
+
 function updateToggleLabel(toggle, wrapper) {
     const count = wrapper.children.length;
     const isOpen = wrapper.classList.contains('open');

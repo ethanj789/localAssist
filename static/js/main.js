@@ -17,7 +17,7 @@ import {
 import { initWebSpeechVoice, bindWebSpeechButton } from './api/webSpeechVoice.js';
 import { initMemoryUI } from './ui/memory.js';
 import { initEditPanel, loadPendingEdit, clearPendingEdit, maybeAutoApprovePending } from './ui/editPanel.js';
-import { appendMsg, appendMsgAttachments, appendPill, renderMarkdown, renderMath } from './ui/chatRenderer.js';
+import { appendMsg, appendMsgAttachments, appendPill, renderMarkdown, renderMath, appendEditPill, toolRequestLabel, appendToolResultPill } from './ui/chatRenderer.js';
 import { initSkillsAutocomplete, loadSkills, isDropdownVisible } from './ui/skillsAutocomplete.js';
 import { initAttachments } from './ui/attachments.js';
 
@@ -491,6 +491,10 @@ function renderConversationHistory(messages, conversationId) {
     msgs.innerHTML = '';
 
     let lastAssistantDiv = null;
+    // Map each tool_call_id → its tool name, so a later `tool` result row can be
+    // labeled with the tool that produced it (results are stored in separate
+    // rows linked only by tool_call_id).
+    const toolNameByCallId = new Map();
 
     messages.forEach(msg => {
         if (msg.role === 'user') {
@@ -530,7 +534,11 @@ function renderConversationHistory(messages, conversationId) {
                 flow.appendChild(details);
             }
 
-            // Render tool calls as pills in the flow container
+            // Render tool calls as pills in the flow container. Edits get the
+            // SAME rich expandable pill (action/path/anchor/content) they had
+            // during the live stream — the args are persisted in the stored
+            // tool_calls JSON, so reopening a chat keeps full context instead of
+            // collapsing to a bare "tool requested: propose_edit".
             if (msg.tool_calls && msg.tool_calls.length > 0) {
                 msg.tool_calls.forEach(tc => {
                     const fn = tc.function || tc;
@@ -541,17 +549,20 @@ function renderConversationHistory(messages, conversationId) {
                     } catch (e) {
                         args = {};
                     }
-                    let label = `tool requested: ${name}`;
-                    if (name === 'web_search') {
-                        label = `tool requested: web_search "${args?.query || ''}"`;
-                    } else if (name === 'fetch_webpage') {
-                        label = `tool requested: fetch_webpage ${args?.url || ''}`;
-                    } else if (name === 'list_files') {
-                        label = `tool requested: list_files ${args?.subdir || '/'}`;
-                    } else if (name === 'read_file') {
-                        label = `tool requested: read_file ${args?.path || ''}`;
+                    const callId = tc.id || tc.tool_call_id;
+                    if (callId) toolNameByCallId.set(callId, name);
+                    if (name === 'propose_edit') {
+                        appendEditPill(div, {
+                            tool: name,
+                            path: args.path || '',
+                            action: args.action || 'replace',
+                            anchor: args.anchor || '',
+                            content: args.content || '',
+                            summary: args.summary || '',
+                        });
+                    } else {
+                        appendPill(div, toolRequestLabel(name, args), 'done');
                     }
-                    appendPill(div, label, 'done');
                 });
             }
 
@@ -563,10 +574,15 @@ function renderConversationHistory(messages, conversationId) {
                 renderMath(mdDiv);
             }
         } else if (msg.role === 'tool') {
-            if (lastAssistantDiv) {
-                if (msg.content === 'APPROVED' || msg.content?.startsWith('REJECTED')) {
-                    appendPill(lastAssistantDiv, `edit proposed — ${msg.content}`, 'done');
-                }
+            // Render the stored tool result under the assistant turn that made
+            // the call. Edit outcomes (Applied / rejected / NOT applied) get a
+            // distinct state pill; other tool results collapse to an expandable
+            // "got result" pill. Pair to the call by tool_call_id when we can,
+            // falling back to the current assistant turn.
+            const host = lastAssistantDiv;
+            if (host && msg.content) {
+                const name = toolNameByCallId.get(msg.tool_call_id) || 'tool';
+                appendToolResultPill(host, name, msg.content);
             }
         }
     });
