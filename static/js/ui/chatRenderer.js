@@ -359,6 +359,95 @@ export function appendPill(msgDiv, text, state = 'active', opts = {}) {
     return pill;
 }
 
+/** Find or create the trailing .pill-group in a message's flow (shared by the
+ *  edit pills so they land in the same group as tool pills). */
+function getPillGroup(msgDiv) {
+    const flow = msgDiv.querySelector('.msg-flow');
+    let group = flow.querySelector('.pill-group:last-child');
+    if (!group || group.nextElementSibling) {
+        group = document.createElement('div');
+        group.className = 'pill-group';
+        flow.appendChild(group);
+    }
+    return group;
+}
+
+/**
+ * Append an expandable pill for a proposed edit, showing the full args the model
+ * tried (action, path, anchor, content). The summary line is always visible;
+ * clicking expands the anchor/content detail. `info` is the `edit_proposed`
+ * payload: { tool, path, action, anchor, content, summary }.
+ */
+export function appendEditPill(msgDiv, info) {
+    const group = getPillGroup(msgDiv);
+
+    const details = document.createElement('details');
+    details.className = 'edit-pill';
+
+    const action = info.action || 'edit';
+    const path = info.path || '(path from last read)';
+    const summary = document.createElement('summary');
+    summary.className = 'edit-pill-summary';
+    summary.innerHTML =
+        `✎ <span class="edit-pill-action">${escHtml(action)}</span> ` +
+        `<span class="edit-pill-path">${escHtml(path)}</span>` +
+        (info.summary ? ` <span class="edit-pill-note">— ${escHtml(info.summary)}</span>` : '');
+    details.appendChild(summary);
+
+    const body = document.createElement('div');
+    body.className = 'edit-pill-body';
+    if (info.anchor) {
+        body.appendChild(makeEditField('anchor', info.anchor));
+    }
+    if (action !== 'delete' && info.content) {
+        body.appendChild(makeEditField(action === 'create' ? 'content (new file)' : 'content', info.content));
+    }
+    if (!body.children.length) {
+        const empty = document.createElement('div');
+        empty.className = 'edit-pill-field-empty';
+        empty.textContent = 'no anchor/content';
+        body.appendChild(empty);
+    }
+    details.appendChild(body);
+
+    group.appendChild(details);
+    return details;
+}
+
+function makeEditField(label, value) {
+    const wrap = document.createElement('div');
+    wrap.className = 'edit-pill-field';
+    const lab = document.createElement('div');
+    lab.className = 'edit-pill-field-label';
+    lab.textContent = label;
+    const pre = document.createElement('pre');
+    pre.className = 'edit-pill-field-value';
+    pre.textContent = value;
+    wrap.appendChild(lab);
+    wrap.appendChild(pre);
+    return wrap;
+}
+
+/**
+ * Append a distinct failed-state pill when an edit is auto-rejected at the gate
+ * (bad/duplicate anchor). Shows the specific error and the retry attempt so the
+ * user can see the model is trying and failing. `info` is the `edit_rejected`
+ * payload: { path, action, error, attempt, max_attempts }.
+ */
+export function appendEditRejectPill(msgDiv, info) {
+    const group = getPillGroup(msgDiv);
+    const pill = document.createElement('div');
+    pill.className = 'search-pill edit-reject-pill';
+    const attempt = info.attempt && info.max_attempts
+        ? ` (retry ${info.attempt}/${info.max_attempts})`
+        : '';
+    pill.innerHTML =
+        `✗ edit auto-rejected${escHtml(attempt)}: ` +
+        `<span class="edit-reject-error">${escHtml(info.error || 'could not resolve')}</span>`;
+    group.appendChild(pill);
+    return pill;
+}
+
 function updateToggleLabel(toggle, wrapper) {
     const count = wrapper.children.length;
     const isOpen = wrapper.classList.contains('open');

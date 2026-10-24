@@ -197,6 +197,9 @@
           <button class="chip-toggle" id="chip-thinking-toggle" title="Enable extended thinking (local only)" style="display:none;">
             <span class="chip-icon">💭</span> Think
           </button>
+          <button class="chip-toggle" id="chip-auto-approve-toggle" title="Auto-approve proposed edits for this chat (resets off each session)">
+            <span class="chip-icon">✓</span> Auto-approve
+          </button>
         </div>
         <div class="input-toolbar-right">
           <button id="attach-image-btn" class="voice-btn-compact" title="Attach file or image (PDF, images — or paste from clipboard)">📎</button>
@@ -256,9 +259,16 @@
           </div>
         </div>
       </div>
+      <div class="edit-reason" id="edit-reason-wrap">
+        <label for="edit-reject-reason" class="edit-reason-label">rejection reason (optional)</label>
+        <textarea id="edit-reject-reason" class="edit-reject-reason"
+          rows="2" placeholder="why are you rejecting this? the model sees this..."></textarea>
+      </div>
       <div class="edit-actions-bar">
-        <button class="btn-approve-edit" id="btn-approve-edit">Approve</button>
-        <button class="btn-reject-edit" id="btn-reject-edit">Reject</button>
+        <div class="edit-actions-buttons">
+          <button class="btn-approve-edit" id="btn-approve-edit">Approve</button>
+          <button class="btn-reject-edit" id="btn-reject-edit">Reject</button>
+        </div>
       </div>
     </div>
   </div>

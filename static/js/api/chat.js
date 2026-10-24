@@ -1,6 +1,6 @@
 import { API } from '../constants.js';
 import { escHtml, setStatus, showToast, scrollToBottom } from '../utils/dom.js';
-import { appendMsg, appendMsgAttachments, appendPill, renderLinkCard, renderMarkdown, renderActionButton, createThinkingBlock, appendOllamaStats, renderMath, upgradeFileChipLinks } from '../ui/chatRenderer.js';
+import { appendMsg, appendMsgAttachments, appendPill, renderLinkCard, renderMarkdown, renderActionButton, createThinkingBlock, appendOllamaStats, renderMath, upgradeFileChipLinks, appendEditPill, appendEditRejectPill } from '../ui/chatRenderer.js';
 import { handleConfirmRequired, hasPendingEdit } from '../ui/editPanel.js';
 import { getPendingAttachments, hasPendingAttachments, clearPendingAttachments } from '../ui/attachments.js';
 
@@ -232,7 +232,7 @@ export async function consumeChatStream(resp, state) {
  *   pre-stream error (e.g. 409 no-matching-pending) so the caller can keep the
  *   modal open.
  */
-export async function respondToPendingEdit(conversationId, toolCallId, decision) {
+export async function respondToPendingEdit(conversationId, toolCallId, decision, reason = null) {
     if (isStreaming) return false;
 
     setIsStreaming(true);
@@ -253,6 +253,7 @@ export async function respondToPendingEdit(conversationId, toolCallId, decision)
                 conversation_id: conversationId,
                 toolCallId: toolCallId,
                 decision: decision,
+                reason: reason,
             }),
             signal,
         });
@@ -439,6 +440,22 @@ export function handleStreamEvent(event, data, state) {
     if (event === 'action_button') {
         console.log(data)
         state.actionButtons.push(JSON.parse(data));
+    }
+
+    if (event === 'edit_proposed') {
+        // An edit reached the confirm gate. Show an expandable pill with the
+        // full args it tried (action/path/anchor/content). This fires whether
+        // or not the edit is applicable — on auto-reject an edit_rejected pill
+        // follows; on success the approval modal opens.
+        const info = typeof data === 'string' ? JSON.parse(data) : data;
+        appendEditPill(aDiv, info);
+    }
+
+    if (event === 'edit_rejected') {
+        // The gate auto-rejected an invalid edit (bad/duplicate anchor) and
+        // asked the model to retry. Show a distinct failed pill with the reason.
+        const info = typeof data === 'string' ? JSON.parse(data) : data;
+        appendEditRejectPill(aDiv, info);
     }
 
     if (event === 'confirm_required') {

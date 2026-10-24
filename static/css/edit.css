@@ -110,13 +110,51 @@
     line-height: 1.4;
 }
 
+/* Optional rejection-reason input (above the action bar) */
+.edit-reason {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 10px 18px 0;
+}
+.edit-reason-label {
+    font-size: 0.72rem;
+    color: var(--muted, #888);
+    font-family: var(--sans);
+}
+.edit-reject-reason {
+    width: 100%;
+    box-sizing: border-box;
+    resize: vertical;
+    min-height: 2.2em;
+    padding: 6px 8px;
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    background: var(--bg, var(--surface));
+    color: var(--text, inherit);
+    font-family: var(--sans);
+    font-size: 0.8rem;
+    line-height: 1.4;
+}
+.edit-reject-reason:focus {
+    outline: none;
+    border-color: var(--accent, #4a9eff);
+}
+
 /* Action bar pinned below the edit */
 .edit-actions-bar {
     display: flex;
+    align-items: center;
     gap: 8px;
     padding: 12px 18px;
     border-top: 1px solid var(--border);
     background: var(--surface);
+}
+
+.edit-actions-buttons {
+    display: flex;
+    gap: 8px;
+    margin-left: auto;
 }
 
 .btn-approve-edit,
@@ -138,7 +176,6 @@
 .btn-reject-edit {
     background: var(--warn);
     color: #050505;
-    margin-left: auto;
 }
 
 .btn-approve-edit:hover,

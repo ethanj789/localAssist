@@ -20,6 +20,33 @@ export function hasPendingEdit() {
     return pendingEdit !== null;
 }
 
+// ─── Auto-approve (frontend-only, edits-only, per-session) ──────────────────
+//
+// Pure client-side convenience: when on, a proposed edit whose preview is
+// applicable is approved automatically instead of prompting. State lives on the
+// composer chip (#chip-auto-approve-toggle) `.active` class — not persisted, so
+// it defaults off every session, and it's per-chat since the user can flip it
+// anytime. The backend doesn't know or care whether an approval was manual or
+// auto. Deliberately scoped to EDITS only; it must not auto-approve any future
+// confirm-required tool (e.g. sandbox commands), which don't flow through
+// showPendingEdit's edit preview.
+function isAutoApproveOn() {
+    const chip = document.getElementById('chip-auto-approve-toggle');
+    return !!chip && chip.classList.contains('active');
+}
+
+/**
+ * If auto-approve is on and there's a currently-pending, cleanly-resolvable
+ * edit, approve it now. Called when the user flips the chip on while an edit is
+ * already waiting (so toggling on doesn't require a new proposal to take
+ * effect). Exported for main.js to call from the chip handler.
+ */
+export function maybeAutoApprovePending() {
+    if (isAutoApproveOn() && pendingEdit && pendingEdit.preview && pendingEdit.preview.ok) {
+        resolvePending('approve');
+    }
+}
+
 export function initEditPanel() {
     const panel = document.getElementById('edit-panel');
     if (!panel) return;
@@ -88,6 +115,10 @@ export function handleConfirmRequired(data) {
 function showPendingEdit(data) {
     pendingEdit = data;
 
+    // Fresh edit → clear any stale reason text from a previous rejection.
+    const reasonEl = document.getElementById('edit-reject-reason');
+    if (reasonEl) reasonEl.value = '';
+
     const panel = document.getElementById('edit-panel');
     const edit = data.edit || {};
     const preview = data.preview || { ok: false, error: 'No preview available.' };
@@ -153,6 +184,13 @@ function showPendingEdit(data) {
 
     // Lock the composer while an edit is pending.
     setInputPending(true);
+
+    // Auto-approve: only for a cleanly-resolvable edit. A failed preview still
+    // shows the modal so the user sees why (and the backend already gave the
+    // model MAX_INVALID_EDIT_RETRIES attempts before surfacing it here).
+    if (isAutoApproveOn() && preview.ok) {
+        resolvePending('approve');
+    }
 }
 
 // ─── Resolve (approve / reject) ──────────────────────────────────────────────
@@ -163,17 +201,33 @@ async function resolvePending(decision) {
     const { toolCallId } = pendingEdit;
     const conversationId = pendingEdit.conversation_id || currentConversationId;
 
+    // On reject, capture the optional reason the user typed. The model sees it
+    // as part of the tool result so it can adjust rather than blindly retry.
+    let reason = null;
+    if (decision === 'reject') {
+        const reasonEl = document.getElementById('edit-reject-reason');
+        reason = reasonEl ? reasonEl.value.trim() || null : null;
+    }
+
     const approveBtn = document.getElementById('btn-approve-edit');
     const rejectBtn = document.getElementById('btn-reject-edit');
     if (approveBtn) approveBtn.disabled = true;
     if (rejectBtn) rejectBtn.disabled = true;
+
+    // Surface the decision (and reason, if any) so there's a visible record of
+    // what was sent to the model.
+    if (decision === 'reject') {
+        showToast(reason ? `Edit rejected: ${truncate(reason, 80)}` : 'Edit rejected');
+    } else {
+        showToast('Edit approved');
+    }
 
     // Clear the pending state and close the modal BEFORE resuming the stream so
     // the input unlocks and the resumed turn renders cleanly. The resumed turn
     // may itself emit a fresh confirm_required, which re-opens the modal.
     clearPendingEdit();
 
-    const started = await respondToPendingEdit(conversationId, toolCallId, decision);
+    const started = await respondToPendingEdit(conversationId, toolCallId, decision, reason);
 
     if (!started) {
         // 409 or busy: the edit may still be pending. Re-fetch the durable

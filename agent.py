@@ -1,5 +1,6 @@
 import asyncio
 import json
+import time
 import traceback
 import logging
 from types import SimpleNamespace
@@ -419,6 +420,13 @@ async def _run_tool_loop(
     email_count = 0
     memory_count = 0
     tool_count = 0
+    # Per-turn counter for edits whose anchor didn't resolve at the gate. Each
+    # such edit is auto-rejected server-side with the specific error (so the
+    # model can re-propose) WITHOUT bothering the UI. After the cap we stop
+    # auto-retrying and surface the failed preview to the UI instead, so a model
+    # that can't land an anchor doesn't spin forever.
+    invalid_edit_retries = 0
+    MAX_INVALID_EDIT_RETRIES = 2
     last_read_path = ""
     max_searches = CONFIG["max_searches"]
     max_emails = CONFIG["max_emails"]
@@ -637,7 +645,14 @@ async def _run_tool_loop(
             else:
                 content = content or ""
 
-            log.info("%s response | content=%s | tool_calls=%s", resolved_provider, content, tool_calls)
+            _tc_names = [getattr(tc.function, "name", "?") for tc in (tool_calls or [])]
+            log.info(
+                "%s response | content_chars=%d | content_preview=%r | tool_calls=%s",
+                resolved_provider,
+                len(content or ""),
+                (content or "")[:200],
+                _tc_names,
+            )
             yield _sse("status", f"{resolved_provider} responded")
 
             if not tool_calls:
@@ -779,7 +794,12 @@ async def _run_tool_loop(
                     event_payload["label"] = f'{name}: {json.dumps(args)}'
 
                 yield _sse("searching", json.dumps(event_payload))
-                log.info("tool_call | %s | args=%s", name, json.dumps(args))
+                # Cap args in the log: propose_edit/write args can carry an
+                # entire file's contents, which would bloat the log file.
+                _args_str = json.dumps(args)
+                if len(_args_str) > 500:
+                    _args_str = _args_str[:500] + f"...(+{len(_args_str) - 500} chars)"
+                log.info("tool_call | %s | args=%s", name, _args_str)
 
                 # Intercept plan tool (needs conversation_id, not MCP)
                 if name == "plan":
@@ -804,7 +824,28 @@ async def _run_tool_loop(
                     if name == "read_file" and args.get("path"):
                         last_read_path = args["path"]
 
-                    result = await mcp.call_tool(name, args)
+                    _t0 = time.perf_counter()
+                    try:
+                        result = await mcp.call_tool(name, args)
+                    except Exception as tool_exc:
+                        _dt = (time.perf_counter() - _t0) * 1000
+                        log.error(
+                            "tool_error | %s | %.0fms | %s: %s",
+                            name, _dt, type(tool_exc).__name__, tool_exc,
+                        )
+                        raise
+                    _dt = (time.perf_counter() - _t0) * 1000
+                    _result_str = result if isinstance(result, str) else str(result)
+                    # Tool-reported failures come back as a normal string result
+                    # (no exception), so sniff the leading text for error markers
+                    # to flag them at WARNING instead of burying them in INFO.
+                    _lead = _result_str.lstrip()[:40].lower()
+                    _looks_failed = _lead.startswith(("error", "failed", "traceback", "[error"))
+                    log.log(
+                        logging.WARNING if _looks_failed else logging.INFO,
+                        "tool_result | %s | %.0fms | %d chars | %r",
+                        name, _dt, len(_result_str), _result_str[:300],
+                    )
 
                 if name == "fetch_webpage":
                     try:
@@ -892,7 +933,52 @@ async def _run_tool_loop(
                     "content": gate_args.get("content", ""),
                     "summary": gate_args.get("summary", ""),
                 }
+
+                # Surface the edit proposal in the chat transcript as an
+                # expandable pill showing the full args it tried (action, path,
+                # anchor, content). Confirm-required tools skip the normal
+                # tool_requested emit in the batch loop above, so without this
+                # the edit never shows in the UI chat flow (only the modal).
+                yield _sse("edit_proposed", json.dumps({
+                    "tool": gate_tc.function.name,
+                    "path": edit_inputs["path"],
+                    "action": edit_inputs["action"],
+                    "anchor": edit_inputs["anchor"],
+                    "content": edit_inputs["content"],
+                    "summary": edit_inputs["summary"],
+                }))
+
                 preview = _resolve_preview(edit_inputs)
+
+                # ── Auto-reject invalid edits before the UI sees them ─────────
+                # If the edit can't be resolved against the file as-it-is-now
+                # (anchor not found / not unique / file missing), don't bother
+                # the user with a broken approval card. Instead answer the gate
+                # tool call with the SPECIFIC error so the model can re-propose,
+                # and continue the loop. Capped at MAX_INVALID_EDIT_RETRIES so a
+                # model that can't land an anchor doesn't spin forever — past the
+                # cap we fall through and surface the failed preview to the UI.
+                if not preview.get("ok") and invalid_edit_retries < MAX_INVALID_EDIT_RETRIES:
+                    invalid_edit_retries += 1
+                    err = preview.get("error", "unknown error")
+                    result_content = _invalid_edit_result(err, invalid_edit_retries, MAX_INVALID_EDIT_RETRIES)
+                    conversation_history.append({
+                        "role": "tool",
+                        "tool_call_id": gate_tc.id,
+                        "content": result_content,
+                    })
+                    db.add_message(conversation_id, "tool", result_content, tool_call_id=gate_tc.id)
+                    # Distinct, visible pill so the user sees the edit is being
+                    # auto-rejected and WHY (specific anchor error), and that the
+                    # model is being asked to retry.
+                    yield _sse("edit_rejected", json.dumps({
+                        "path": edit_inputs["path"],
+                        "action": edit_inputs["action"],
+                        "error": err,
+                        "attempt": invalid_edit_retries,
+                        "max_attempts": MAX_INVALID_EDIT_RETRIES,
+                    }))
+                    continue
 
                 confirm_payload = {
                     "toolCallId": gate_tc.id,
@@ -1168,10 +1254,30 @@ def _stale_result(msg: str) -> str:
     )
 
 
-_REJECT_RESULT = "Edit rejected by the user. Do not re-apply it. Continue with the user's intent."
+def _invalid_edit_result(msg: str, attempt: int, max_attempts: int) -> str:
+    """Tool result for an edit whose anchor failed to resolve at the gate (auto
+    -rejected server-side, never shown to the user). Carries the specific error
+    so the model can fix the anchor and re-propose."""
+    return (
+        "Edit NOT applied — it could not be resolved against the current file "
+        f"(attempt {attempt} of {max_attempts}). Error: {msg}. "
+        "Fix the anchor (copy the exact text from the file, add surrounding "
+        "context to make it unique) and call propose_edit again."
+    )
 
 
-async def resume_after_confirmation(conversation_id: str, toolCallId: str, decision: str, mcp) -> AsyncGenerator[str, None]:
+def _reject_result(reason: str | None = None) -> str:
+    """Tool result for a user-rejected edit. Includes the user's reason when
+    provided so the model can act on it (e.g. adjust the approach) rather than
+    just knowing the edit was declined."""
+    base = "Edit rejected by the user. Do not re-apply it as-is."
+    reason = (reason or "").strip()
+    if reason:
+        return f"{base} User's reason: {reason}. Take this into account and continue with the user's intent."
+    return f"{base} Continue with the user's intent."
+
+
+async def resume_after_confirmation(conversation_id: str, toolCallId: str, decision: str, mcp, reason: str | None = None) -> AsyncGenerator[str, None]:
     """Resolve a pending edit and resume the agent turn (break-and-resume).
 
     Looks up the dangling confirm-required tool call by `toolCallId`, applies the
@@ -1237,8 +1343,10 @@ async def resume_after_confirmation(conversation_id: str, toolCallId: str, decis
                 result_content = _stale_result(preview.get("error", "unknown error"))
                 yield _sse("status", "edit could not be applied (stale)")
         else:
-            # reject (any non-approve decision is treated as a rejection)
-            result_content = _REJECT_RESULT
+            # reject (any non-approve decision is treated as a rejection).
+            # The user's reason (if any) is folded into the tool result so the
+            # model learns WHY and can adjust rather than blindly retrying.
+            result_content = _reject_result(reason)
             yield _sse("status", "edit rejected")
 
         # Append the REAL tool result exactly once — this answers the dangling

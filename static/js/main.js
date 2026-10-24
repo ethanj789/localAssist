@@ -16,7 +16,7 @@ import {
 // import { initVoiceRecorder, bindVoiceButton } from './api/voice.js'; // DEAD CODE — replaced by Web Speech API
 import { initWebSpeechVoice, bindWebSpeechButton } from './api/webSpeechVoice.js';
 import { initMemoryUI } from './ui/memory.js';
-import { initEditPanel, loadPendingEdit, clearPendingEdit } from './ui/editPanel.js';
+import { initEditPanel, loadPendingEdit, clearPendingEdit, maybeAutoApprovePending } from './ui/editPanel.js';
 import { appendMsg, appendMsgAttachments, appendPill, renderMarkdown, renderMath } from './ui/chatRenderer.js';
 import { initSkillsAutocomplete, loadSkills, isDropdownVisible } from './ui/skillsAutocomplete.js';
 import { initAttachments } from './ui/attachments.js';
@@ -273,6 +273,18 @@ function initCustomSelect() {
             const cfgThinking = document.getElementById('cfg-ollama-thinking');
             cfgThinking.checked = !cfgThinking.checked;
             thinkingChip.classList.toggle('active', cfgThinking.checked);
+        });
+    }
+
+    // Auto-approve chip: frontend-only, per-session, defaults off. Its own
+    // `.active` class is the single source of truth — editPanel reads it to
+    // decide whether to auto-approve a valid pending edit. Not persisted.
+    const autoApproveChip = document.getElementById('chip-auto-approve-toggle');
+    if (autoApproveChip) {
+        autoApproveChip.addEventListener('click', () => {
+            const on = autoApproveChip.classList.toggle('active');
+            // If turning on while a valid edit is already pending, apply it now.
+            if (on) maybeAutoApprovePending();
         });
     }
 }

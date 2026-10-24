@@ -677,3 +677,74 @@ a.msg-file-chip:hover {
 .image-lightbox-close:hover {
     background: rgba(255, 255, 255, 0.25);
 }
+
+/* ── Edit proposal pill (expandable: action/path/anchor/content) ── */
+.edit-pill {
+    align-self: flex-start;
+    max-width: 100%;
+    border: 1px solid var(--accent);
+    border-radius: 12px;
+    background: transparent;
+    font-family: var(--mono);
+    font-size: 10px;
+    overflow: hidden;
+    margin: 2px 0;
+}
+
+.edit-pill-summary {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+    padding: 4px 10px;
+    cursor: pointer;
+    color: var(--accent);
+    list-style: none;
+    user-select: none;
+}
+.edit-pill-summary::-webkit-details-marker { display: none; }
+.edit-pill[open] .edit-pill-summary { border-bottom: 1px solid var(--border); }
+
+.edit-pill-action {
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    font-weight: 600;
+}
+.edit-pill-path { color: var(--text); }
+.edit-pill-note { color: var(--muted); font-style: italic; }
+
+.edit-pill-body {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 8px 10px;
+}
+.edit-pill-field-label {
+    color: var(--muted);
+    margin-bottom: 2px;
+    letter-spacing: 0.05em;
+}
+.edit-pill-field-value {
+    margin: 0;
+    padding: 6px 8px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    max-height: 220px;
+    overflow: auto;
+    white-space: pre-wrap;
+    word-break: break-word;
+    color: var(--text);
+    font-size: 10px;
+    line-height: 1.45;
+}
+.edit-pill-field-empty { color: var(--muted); font-style: italic; }
+
+/* ── Auto-reject pill (distinct failed state) ── */
+.edit-reject-pill {
+    align-self: flex-start;
+    border-color: var(--warn);
+    color: var(--warn);
+    background: rgba(248, 81, 73, 0.08);
+}
+.edit-reject-error { color: var(--warn); opacity: 0.9; }
