@@ -555,7 +555,7 @@ async def _run_tool_loop(
                         assembled_tool_calls = llm_provider._parse_ollama_tool_calls_raw(
                             assembled.tool_calls_raw
                         )
-                        log.info(
+                        log.debug(
                             "ollama assembled | content=%r | tool_calls=%s",
                             (assembled_content or "")[:120],
                             [tc.function.name for tc in assembled_tool_calls],
@@ -579,7 +579,7 @@ async def _run_tool_loop(
                         assembled_content = fallback_msg.content or ""
                         assembled_thinking = fallback_msg.thinking
                         assembled_tool_calls = list(fallback_msg.tool_calls or [])
-                        log.info(
+                        log.debug(
                             "ollama fallback result | content=%r | tool_calls=%s",
                             (assembled_content or "")[:120],
                             [tc.function.name for tc in assembled_tool_calls],
@@ -616,7 +616,7 @@ async def _run_tool_loop(
                     verbose_stats = None
                     content_started = False  # remote path doesn't pre-stream tokens
 
-                log.info("agent_loop: LLM responded")
+                log.debug("agent_loop: LLM responded")
             except Exception as e:
                 resp = getattr(e, "response", None)
                 if resp is not None:
