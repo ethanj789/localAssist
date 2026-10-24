@@ -5,6 +5,7 @@
 *.pfx
 *.p12
 logs.txt
+logs.txt.*
 __pycache__/
 aiWorkspace/
 update.bat

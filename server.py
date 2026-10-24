@@ -1,4 +1,5 @@
 import asyncio
+import os
 import sys
 import uuid
 from contextlib import asynccontextmanager
@@ -27,13 +28,28 @@ import db
 # DEAD CODE — Whisper replaced by browser Web Speech API (see static/js/api/webSpeechVoice.js)
 # from faster_whisper import WhisperModel
 import json
+from logging.handlers import RotatingFileHandler
+# Default to INFO so the log stays readable (DEBUG dumps per-request payload
+# summaries and stream internals). Set LOG_LEVEL=DEBUG for deep troubleshooting.
+_log_level = getattr(logging, os.getenv("LOG_LEVEL", "INFO").upper(), logging.INFO)
+# Rotating log so it self-caps instead of growing forever: once logs.txt hits
+# ~2 MB it rolls over to logs.txt.1 (and .2), keeping only the most recent
+# entries. No more manual cleanup. Tune via LOG_MAX_BYTES / LOG_BACKUPS.
+_log_handler = RotatingFileHandler(
+    "logs.txt",
+    maxBytes=int(os.getenv("LOG_MAX_BYTES", str(2 * 1024 * 1024))),
+    backupCount=int(os.getenv("LOG_BACKUPS", "2")),
+    encoding="utf-8",
+)
 logging.basicConfig(
-    filename="logs.txt",
-    level=logging.DEBUG,
-    format="%(asctime)s [%(levelname)s] %(message)s",
+    level=_log_level,
+    format="%(asctime)s [%(levelname)s] %(name)s | %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S",
+    handlers=[_log_handler],
 )
 logging.getLogger("watchfiles").setLevel(logging.WARNING)
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
 
 
 STARTUP_TOKEN = str(uuid.uuid4())
@@ -343,6 +359,7 @@ class RespondRequest(BaseModel):
     conversation_id: str
     toolCallId: str
     decision: str  # "approve" | "reject"
+    reason: str | None = None  # optional user-supplied rejection reason
 
 
 @app.post("/respond")
@@ -354,7 +371,7 @@ async def respond(req: RespondRequest):
         raise HTTPException(status_code=409, detail="No matching pending edit.")
 
     return StreamingResponse(
-        agent.resume_after_confirmation(req.conversation_id, req.toolCallId, req.decision, mcp),
+        agent.resume_after_confirmation(req.conversation_id, req.toolCallId, req.decision, mcp, reason=req.reason),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )

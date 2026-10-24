@@ -7,6 +7,38 @@ from types import SimpleNamespace
 
 log = logging.getLogger(__name__)
 
+
+def _summarize_payload(payload: dict) -> str:
+    """Compact, log-safe description of an Ollama request payload.
+
+    The raw payload contains the full system prompt (several KB) and, on vision
+    turns, hundreds of KB of base64 image data per message. Dumping it verbatim
+    is what bloats the log file. This returns a one-line summary with per-message
+    role/char-counts and an image count instead of the actual bytes.
+    """
+    try:
+        msgs = payload.get("messages", []) or []
+        parts = []
+        img_total = 0
+        for m in msgs:
+            role = m.get("role", "?")
+            content = m.get("content") or ""
+            imgs = m.get("images") or []
+            img_total += len(imgs)
+            tag = f"{role}:{len(content)}c"
+            if imgs:
+                tag += f"+{len(imgs)}img"
+            parts.append(tag)
+        return (
+            f"model={payload.get('model')} | stream={payload.get('stream')} | "
+            f"think={payload.get('think', False)} | tools={len(payload.get('tools', []))} | "
+            f"msgs=[{', '.join(parts)}] | images={img_total} | "
+            f"num_ctx={(payload.get('options') or {}).get('num_ctx')}"
+        )
+    except Exception as exc:  # never let logging break a request
+        return f"<payload summary failed: {exc}>"
+
+
 # --- Provider resolution logic ---
 # We keep this here to consolidate all provider logic in one place.
 
@@ -303,7 +335,7 @@ async def _ollama_chat_completion(request_kwargs: dict, config_dict: dict) -> Si
     OpenAI ChatCompletion object used throughout the codebase.
     Also attaches verbose_stats to the response for token-rate display."""
     payload = _build_ollama_payload(request_kwargs, config_dict, stream=False)
-    log.debug("ollama request payload: %s", payload)
+    log.debug("ollama request | %s", _summarize_payload(payload))
     async with httpx.AsyncClient(timeout=240) as client:
         resp = await client.post(f"{config_dict['ollama_base_url']}/api/chat", json=payload)
         resp.raise_for_status()
@@ -357,7 +389,7 @@ async def _ollama_stream_chat_completion(request_kwargs: dict, config_dict: dict
     UI-side streaming renderer is in place.
     """
     payload = _build_ollama_payload(request_kwargs, config_dict, stream=True)
-    log.debug("ollama stream request payload: %s", payload)
+    log.debug("ollama stream request | %s", _summarize_payload(payload))
 
     # Accumulators for the final assembled message
     full_content: list[str] = []
