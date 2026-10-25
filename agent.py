@@ -294,7 +294,7 @@ async def _maybe_summarize_history(provider: str, conversation_history: list[dic
 
 
 async def _summarize_tool_result(provider: str, tool_name: str, result: str) -> str:
-    if provider == "ollama" or len(result) < 300 or tool_name not in ("web_search", "fetch_webpage"):
+    if provider == "ollama" or len(result) < 300 or tool_name != "web_tool":
         return result
 
     compact_settings = get_model_setting("compact", "default")
@@ -466,7 +466,7 @@ async def _run_tool_loop(
                     if tool_count >= max_tools:
                         break
                     func_name = t["function"]["name"]
-                    if func_name in ("web_search", "fetch_webpage") and search_count >= max_searches:
+                    if func_name == "web_tool" and search_count >= max_searches:
                         continue
                     if func_name == "draft_email" and email_count >= max_emails:
                         continue
@@ -749,7 +749,18 @@ async def _run_tool_loop(
 
                 yield _sse("tool_requested", json.dumps({"tool": name, "args": args}))
 
-                if search_count >= max_searches and name in ("web_search", "fetch_webpage"):
+                # The web/search tools were consolidated into a single `web_tool`
+                # (action: "search"|"fetch", arg: "target") and file listing +
+                # semantic search into `search_workspace` (arg: "query"). The old
+                # names (web_search/fetch_webpage/list_files/search_semantic) are
+                # no longer emittable, so every branch below keys off the current
+                # names. Both web_tool actions count toward the search budget,
+                # matching the pre-consolidation behavior.
+                is_web = name == "web_tool"
+                is_web_search = is_web and args.get("action") == "search"
+                is_web_fetch = is_web and args.get("action") == "fetch"
+
+                if search_count >= max_searches and is_web:
                     yield _sse("status", f"Search cap ({max_searches}) reached, answering from context...")
                     pending_tool_messages.append((tc.id, f"Search limit of {max_searches} reached."))
                     continue
@@ -770,14 +781,17 @@ async def _run_tool_loop(
                     continue
 
                 event_payload = {"tool": name, "args": args}
-                if name == "web_search":
+                if is_web_search:
                     event_payload["count"] = search_count + 1
                     event_payload["max"] = max_searches
-                    event_payload["label"] = f'searching: "{args.get("query", "")}" ({search_count + 1}/{max_searches})'
-                elif name == "fetch_webpage":
-                    event_payload["label"] = f'fetching: {args.get("url", "")}'
-                elif name == "list_files":
-                    event_payload["label"] = f'listing workspace files, with option {args.get("topic", "all")}'
+                    event_payload["label"] = f'searching: "{args.get("target", "")}" ({search_count + 1}/{max_searches})'
+                elif is_web_fetch:
+                    event_payload["label"] = f'fetching: {args.get("target", "")}'
+                elif name == "search_workspace":
+                    _q = args.get("query")
+                    event_payload["label"] = (
+                        f'searching workspace: "{_q}"' if _q else "listing workspace files"
+                    )
                 elif name == "read_file":
                     event_payload["label"] = f'reading: {args.get("path", "")}, with {args.get("count")} lines from lines {args.get("start")}'
                 elif name == "calculate":
@@ -788,8 +802,6 @@ async def _run_tool_loop(
                     event_payload["count"] = email_count + 1
                     event_payload["max"] = max_emails
                     event_payload["label"] = f'drafting email to {args.get("to","NA")}, about {args.get("subject","NA")} ({email_count + 1}/{max_emails})'
-                elif name == "search_semantic":
-                    event_payload["label"] = f'conceptual search: "{args.get("query", "")}"'
                 else:
                     event_payload["label"] = f'{name}: {json.dumps(args)}'
 
@@ -847,7 +859,7 @@ async def _run_tool_loop(
                         name, _dt, len(_result_str), _result_str[:300],
                     )
 
-                if name == "fetch_webpage":
+                if is_web_fetch:
                     try:
                         lines = result.split("\n")
                         metadata_line = next((l for l in lines if l.startswith("__LINK_METADATA__:")), None)
@@ -869,11 +881,11 @@ async def _run_tool_loop(
                 except Exception as e:
                     log.error(f"Error processing action button: {e}")
 
-                if use_remote_provider and name in ("web_search", "fetch_webpage"):
+                if use_remote_provider and is_web:
                     result = await _summarize_tool_result(resolved_provider, name, result)
                     yield _sse("status", f"summarized {name} result")
 
-                if name in ("web_search", "fetch_webpage"):
+                if is_web:
                     search_count += 1
                 if name == "draft_email":
                     email_count += 1
