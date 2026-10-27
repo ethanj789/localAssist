@@ -703,8 +703,16 @@ async def _run_tool_loop(
                 for tc in tool_calls
             ]
 
+            # Persist the reasoning emitted alongside this tool-call turn so it
+            # survives a reload. The thinking tokens were already streamed live
+            # (thinking_token SSE) but were previously dropped on the tool-call
+            # branch, so the 💭 block vanished when the chat was reopened. We do
+            # NOT inject thinking_content back into conversation_history (KV-cache
+            # discipline: history stays byte-identical to what was sent to the
+            # model); it's stored only for UI rebuild.
+            tool_turn_thinking = getattr(msg, 'thinking', None) or None
             conversation_history.append({"role": "assistant", "content": None, "tool_calls": tool_calls_for_history})
-            db.add_message(conversation_id, "assistant", None, tool_calls=tool_calls_for_history)
+            db.add_message(conversation_id, "assistant", None, tool_calls=tool_calls_for_history, thinking_content=tool_turn_thinking)
 
             # Buffer all tool result messages for this batch, then append
             # them all at the end so they land contiguously at the tail of
@@ -898,6 +906,17 @@ async def _run_tool_loop(
                 if name not in ("plan",):
                     tool_count += 1
                 yield _sse("search_result", json.dumps({"tool": name, "count": tool_count}))
+
+                # Emit the result text live so a result pill shows during
+                # streaming (previously results only appeared after reopening the
+                # chat, since they were just persisted as role:"tool" rows). The
+                # reload path renders these from the stored tool rows via
+                # appendToolResultPill — this mirrors that live. `plan` results
+                # are internal status JSON and drive the plan_update UI instead,
+                # so they're excluded from the transcript pill.
+                if name != "plan":
+                    _result_str = result if isinstance(result, str) else str(result)
+                    yield _sse("tool_result", json.dumps({"tool": name, "result": _result_str}))
 
                 pending_tool_messages.append((tc.id, result))
 

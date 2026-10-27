@@ -1,6 +1,6 @@
 import { API } from '../constants.js';
 import { escHtml, setStatus, showToast, scrollToBottom } from '../utils/dom.js';
-import { appendMsg, appendMsgAttachments, appendPill, renderLinkCard, renderMarkdown, renderActionButton, createThinkingBlock, appendOllamaStats, renderMath, upgradeFileChipLinks, appendEditPill, appendEditRejectPill, toolRequestLabel } from '../ui/chatRenderer.js';
+import { appendMsg, appendMsgAttachments, appendPill, renderLinkCard, renderMarkdown, renderActionButton, createThinkingBlock, appendOllamaStats, renderMath, upgradeFileChipLinks, appendEditPill, appendEditRejectPill, toolRequestLabel, appendToolResultPill } from '../ui/chatRenderer.js';
 import { handleConfirmRequired, hasPendingEdit } from '../ui/editPanel.js';
 import { getPendingAttachments, hasPendingAttachments, clearPendingAttachments } from '../ui/attachments.js';
 
@@ -400,6 +400,18 @@ export function handleStreamEvent(event, data, state) {
             state.currentPill.className = 'search-pill done';
             state.currentPill.innerHTML = `✓ ${state.currentPill.textContent.trim()}`;
         }
+    }
+
+    if (event === 'tool_result') {
+        // Render the tool's result as a pill live, matching what the reload path
+        // draws from the stored role:"tool" rows (so the transcript looks the
+        // same whether you stay in the chat or reopen it). Edits are handled by
+        // their own edit_proposed/edit_rejected/confirm_required flow and never
+        // emit tool_result, so this only covers generic tool results.
+        try {
+            const info = typeof data === 'string' ? JSON.parse(data) : data;
+            appendToolResultPill(aDiv, info.tool, info.result);
+        } catch (_) { /* non-fatal: result still shows after reload */ }
     }
 
     if (event === 'status') {
