@@ -214,9 +214,17 @@ def _read_scannable(path: Path, max_bytes: int = MAX_SCAN_BYTES) -> list[str] | 
 
 # ── list_files ────────────────────────────────────────────────────────────────
 
+def _normalize_name(s: str) -> str:
+    """Lowercase and collapse word separators (space/hyphen/underscore) to a
+    single space, so 'shopping list', 'shopping-list' and 'shopping_list' all
+    compare equal. Used for matching note slugs (dir names) against queries."""
+    return re.sub(r"[\s\-_]+", " ", s.lower()).strip()
+
+
 async def _list_files(topic: str | None = None) -> list[types.TextContent]:
     log.info("list_files | listing workspace root | topic=%s", topic)
     topic_lower = topic.lower() if topic else None
+    topic_norm = _normalize_name(topic) if topic else None
     lines = []
 
     for root, dirs, files in os.walk(WORKSPACE_ROOT):
@@ -243,6 +251,16 @@ async def _list_files(topic: str | None = None) -> list[types.TextContent]:
             # Topic set: filename match (exact substring)
             if topic_lower in f.lower():
                 section_lines.append(f"  {rel_path}  [match: filename]")
+                continue
+
+            # Topic set: path/slug match (separator-normalized).
+            # Notes are stored as <slug>/0.txt, so the meaningful "name" is the
+            # containing directory, not the bare filename. Match the query
+            # against the full relative path with space/hyphen/underscore
+            # treated as equivalent, so "shopping list" finds
+            # "shopping-list/0.txt".
+            if topic_norm and topic_norm in _normalize_name(rel_path):
+                section_lines.append(f"  {rel_path}  [match: name]")
                 continue
 
             # Topic set: filename match (fuzzy — catches typos, missing plurals, etc.)
