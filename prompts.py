@@ -35,6 +35,13 @@ SYSTEM_PROMPT = (
     "the user's pen strokes, so any edit would be silently overwritten. propose_edit on a notesAppText/ path will be rejected. "
     "If the user wants note content changed, tell them to edit it in the Notes app. "
 
+    "FILE EXTENSIONS: when you create a file, pick the extension that matches the content. "
+    "If the content uses Markdown — headings (#, ##), bullet or numbered lists, **bold**, tables, links, code fences — save it as '.md', NOT '.txt'. "
+    "Reports, comparisons, summaries, and notes you format with headers and bullets are Markdown: use '.md'. "
+    "Reserve '.txt' for genuinely plain text with no Markdown structure (raw logs, ASCII art, or text where literal #/*/_ must not be interpreted). "
+    "Use the real source extension for code ('.py', '.js', '.html', etc.). "
+    "When editing an existing file, keep its current extension — do not rename it. "
+
     "Output rules: "
     "Report what you found, note gaps, and cite sources when available. "
     "For news, show the majority of non-duplicate headlines with summaries, then bullet-point links at the end. "
