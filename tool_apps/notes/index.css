@@ -166,8 +166,20 @@ body {
     gap: 8px;
 }
 
+/* Direct children of the scroll container (and nested folder bodies) must keep
+   their natural height instead of being shrunk to fit. In a flex column the
+   default flex-shrink:1 lets tall folders get squeezed; combined with the
+   folder-section's own overflow:hidden, that clips the lower pages so you can
+   never scroll to them. Pinning flex-shrink:0 makes the content overflow the
+   list and drive the scrollbar instead. */
+.page-list > .folder-section,
+.folder-body > .folder-section,
+.folder-body > .page-item {
+    flex-shrink: 0;
+}
+
 .page-list::-webkit-scrollbar {
-    width: 4px;
+    width: 8px;
 }
 .page-list::-webkit-scrollbar-track {
     background: transparent;
