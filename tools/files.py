@@ -26,7 +26,9 @@ MAX_SCAN_BYTES = 1_000_000
 SKIP_DIRS = {
     "node_modules", ".git", "venv", ".venv", "__pycache__",
     "dist", "build", ".mypy_cache", ".pytest_cache", ".index", ".stfolder", "aiNotes",
-    "notesAppText",  # OCR output — indexed via note_blobs table, not file_chunks
+    # notesAppText is intentionally NOT skipped: its recognized note text
+    # (<slug>/0.txt) is indexed like any other workspace file (mtime-gated).
+    # The agent can search/read it; writes are blocked in tools/edit.py.
 }
 
 SCANNABLE_EXTENSIONS = {
@@ -100,54 +102,6 @@ def _find_topic_ranges(
             ranges.append((lo, hi))
 
     return [(s + 1, e + 1) for s, e in ranges]
-
-
-# ── Note-path resolution ──────────────────────────────────────────────────────
-
-# Matches patterns like "note: <page_id> / blob <N>" (with optional brackets)
-_NOTE_PATH_RE = re.compile(
-    r"^\[?note:\s*(?P<page_id>[^\]/]+?)\s*/\s*blob\s+(?P<blob_idx>\d+)\]?$",
-    re.IGNORECASE,
-)
-
-NOTES_TEXT_DIR = WORKSPACE_ROOT.parent / "aiWorkspace" / "notesAppText"
-
-
-def _resolve_note_path(path: str) -> Path | None:
-    """
-    If *path* looks like a note reference (e.g. "note: 2026-07-13_untitled / blob 0"),
-    resolve it to the actual .txt file under notesAppText by scanning .page_meta.json
-    sidecars for the matching page_id.
-
-    Returns the absolute Path to the blob .txt file, or None if not a note ref or not found.
-    """
-    m = _NOTE_PATH_RE.match(path.strip())
-    if not m:
-        return None
-
-    target_page_id = m.group("page_id").strip()
-    blob_idx = m.group("blob_idx")
-
-    if not NOTES_TEXT_DIR.exists():
-        return None
-
-    # Scan subdirectories for matching page_id in .page_meta.json
-    for page_dir in NOTES_TEXT_DIR.iterdir():
-        if not page_dir.is_dir():
-            continue
-        meta_file = page_dir / ".page_meta.json"
-        if meta_file.exists():
-            try:
-                meta = json.loads(meta_file.read_text(encoding="utf-8"))
-                if meta.get("page_id") == target_page_id:
-                    txt_file = page_dir / f"{blob_idx}.txt"
-                    if txt_file.exists():
-                        return txt_file
-                    return None
-            except (json.JSONDecodeError, OSError):
-                continue
-
-    return None
 
 
 # ── Wildcard/glob detection ───────────────────────────────────────────────────
@@ -320,20 +274,6 @@ async def _list_files(topic: str | None = None) -> list[types.TextContent]:
 
 async def _read_file(path: str, start: int = 1, count: int | None = None) -> list[types.TextContent]:
     log.info("read_file | path=%s start=%s count=%s", path, start, count)
-
-    # ── Handle note-style paths (e.g. "note: page_id / blob N") ──────────────
-    note_target = _resolve_note_path(path)
-    if note_target is not None:
-        try:
-            text = note_target.read_text(encoding="utf-8")
-        except OSError as e:
-            return [types.TextContent(type="text", text=f"Error reading note blob: {e}")]
-        rel = note_target.relative_to(NOTES_TEXT_DIR)
-        header = f"Note content ({rel}):\n\n"
-        return [types.TextContent(type="text", text=header + text)]
-    elif _NOTE_PATH_RE.match(path.strip()):
-        # It looked like a note reference but we couldn't resolve it
-        return [types.TextContent(type="text", text=f"Note not found: {path}. The page may have been deleted or renamed.")]
 
     raw = WORKSPACE_ROOT / path
     if _has_symlink_component(raw):

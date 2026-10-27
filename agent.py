@@ -420,13 +420,16 @@ async def _run_tool_loop(
     email_count = 0
     memory_count = 0
     tool_count = 0
-    # Per-turn counter for edits whose anchor didn't resolve at the gate. Each
-    # such edit is auto-rejected server-side with the specific error (so the
-    # model can re-propose) WITHOUT bothering the UI. After the cap we stop
-    # auto-retrying and surface the failed preview to the UI instead, so a model
-    # that can't land an anchor doesn't spin forever.
+    # PER-EDIT retry budget for edits whose anchor didn't resolve at the gate.
+    # Each failing edit is auto-rejected server-side with the specific error (so
+    # the model can re-propose) WITHOUT bothering the UI. The counter tracks
+    # retries for the CURRENT edit target and resets whenever the model moves on
+    # to a different edit (different path+anchor), so a long run of successful
+    # edits is never starved just because earlier edits each needed a retry.
+    # The cap only stops a model stuck re-proposing the SAME unresolvable anchor.
     invalid_edit_retries = 0
-    MAX_INVALID_EDIT_RETRIES = 2
+    last_failed_edit_key: tuple[str, str] | None = None
+    MAX_INVALID_EDIT_RETRIES = 3
     last_read_path = ""
     max_searches = CONFIG["max_searches"]
     max_emails = CONFIG["max_emails"]
@@ -962,14 +965,44 @@ async def _run_tool_loop(
 
                 preview = _resolve_preview(edit_inputs)
 
+                # ── Read-only path (policy denial) — terminal, never retried ──
+                # A notesAppText/ (or other read-only) target can never be made
+                # writable by fixing the anchor/content, so don't count it as an
+                # anchor retry or show a broken approval card. Answer the tool
+                # call with the specific reason and continue.
+                if not preview.get("ok") and preview.get("read_only"):
+                    err = preview.get("error", "this path is read-only.")
+                    result_content = _read_only_edit_result(err)
+                    conversation_history.append({
+                        "role": "tool",
+                        "tool_call_id": gate_tc.id,
+                        "content": result_content,
+                    })
+                    db.add_message(conversation_id, "tool", result_content, tool_call_id=gate_tc.id)
+                    yield _sse("edit_rejected", json.dumps({
+                        "path": edit_inputs["path"],
+                        "action": edit_inputs["action"],
+                        "error": err,
+                        "read_only": True,
+                    }))
+                    continue
+
                 # ── Auto-reject invalid edits before the UI sees them ─────────
                 # If the edit can't be resolved against the file as-it-is-now
                 # (anchor not found / not unique / file missing), don't bother
                 # the user with a broken approval card. Instead answer the gate
                 # tool call with the SPECIFIC error so the model can re-propose,
-                # and continue the loop. Capped at MAX_INVALID_EDIT_RETRIES so a
-                # model that can't land an anchor doesn't spin forever — past the
-                # cap we fall through and surface the failed preview to the UI.
+                # and continue the loop. The retry budget is PER EDIT: a new
+                # target (different path+anchor) resets the counter, so only a
+                # model stuck re-proposing the SAME unresolvable anchor is capped
+                # — past the cap we surface the failed preview to the UI.
+                if not preview.get("ok"):
+                    edit_key = (edit_inputs["path"], edit_inputs["anchor"])
+                    if edit_key != last_failed_edit_key:
+                        # Model moved on to a different edit — fresh budget.
+                        invalid_edit_retries = 0
+                        last_failed_edit_key = edit_key
+
                 if not preview.get("ok") and invalid_edit_retries < MAX_INVALID_EDIT_RETRIES:
                     invalid_edit_retries += 1
                     err = preview.get("error", "unknown error")
@@ -1073,7 +1106,7 @@ def _resolve_preview(edit_inputs: dict) -> dict:
 
     On success: ``{"ok": true, "old_content", "new_content", "target_path"}``."""
     from tools.files import WORKSPACE_ROOT
-    from tools.edit import resolve_edit
+    from tools.edit import resolve_edit, ReadOnlyPathError
 
     edit = {
         "path": edit_inputs.get("path", ""),
@@ -1083,6 +1116,10 @@ def _resolve_preview(edit_inputs: dict) -> dict:
     }
     try:
         resolved = resolve_edit(WORKSPACE_ROOT, edit)
+    except ReadOnlyPathError as e:
+        # Permanent policy denial (e.g. notesAppText/). Flag it so the gate can
+        # reject with a clear reason and NOT burn anchor-retry attempts.
+        return {"ok": False, "error": str(e), "read_only": True}
     except Exception as e:
         return {"ok": False, "error": str(e)}
     return {
@@ -1275,6 +1312,17 @@ def _invalid_edit_result(msg: str, attempt: int, max_attempts: int) -> str:
         f"(attempt {attempt} of {max_attempts}). Error: {msg}. "
         "Fix the anchor (copy the exact text from the file, add surrounding "
         "context to make it unique) and call propose_edit again."
+    )
+
+
+def _read_only_edit_result(msg: str) -> str:
+    """Tool result for an edit targeting a read-only path (policy denial). This
+    is terminal — the model must NOT retry or re-propose, since no anchor or
+    content change can make the path writable."""
+    return (
+        f"Edit NOT applied — {msg} Do NOT retry this edit or propose another "
+        "edit to the same path. If the user wants this content changed, tell "
+        "them it must be edited in the Notes app, not here."
     )
 
 

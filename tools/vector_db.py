@@ -1,9 +1,9 @@
 """
 tools/vector_db.py — SQLite-backed vector store.
 
-Two tables:
-  file_chunks  — indexed workspace file chunks (code, text, etc.)
-  note_blobs   — OCR'd handwritten note blobs from notesAppText/
+One table:
+  file_chunks  — indexed workspace file chunks (code, text, and recognized note
+                 text under notesAppText/<slug>/0.txt — all treated uniformly)
 
 Vectors stored as raw float32 BLOBs (numpy .tobytes() / np.frombuffer).
 IDs are sha1-based.
@@ -46,19 +46,6 @@ CREATE TABLE IF NOT EXISTS file_chunks (
 );
 
 CREATE INDEX IF NOT EXISTS idx_file_chunks_file ON file_chunks (file);
-
-CREATE TABLE IF NOT EXISTS note_blobs (
-    id            TEXT PRIMARY KEY,
-    page_id       TEXT NOT NULL,
-    blob_idx      INTEGER NOT NULL,
-    bbox          TEXT NOT NULL,
-    content_hash  TEXT NOT NULL,
-    text          TEXT NOT NULL,
-    vector        BLOB NOT NULL,
-    updated_at    TEXT NOT NULL
-);
-
-CREATE INDEX IF NOT EXISTS idx_note_blobs_page ON note_blobs (page_id);
 """
 
 
@@ -110,11 +97,7 @@ def _write_manifest() -> None:
         "<rel/path>": {"chunks": N, "last_indexed": "<iso8601>"}
         ...
       },
-      "note_blobs": {
-        "<page_id>": {"blobs": N, "last_updated": "<iso8601>"}
-        ...
-      },
-      "totals": {"files": N, "file_chunks": N, "note_pages": N, "note_blobs": N}
+      "totals": {"files": N, "file_chunks": N}
     }
     """
     if _manifest_path is None or _conn is None:
@@ -134,27 +117,14 @@ def _write_manifest() -> None:
                 iso = str(latest_mtime)
             file_chunks_section[file] = {"chunks": count, "last_indexed": iso}
 
-        # ── note_blobs: one entry per distinct page_id ────────────────────────
-        nb_rows = _conn.execute(
-            "SELECT page_id, COUNT(*) as n, MAX(updated_at) as latest FROM note_blobs GROUP BY page_id"
-        ).fetchall()
-
-        note_blobs_section: dict = {}
-        for page_id, count, latest_at in nb_rows:
-            note_blobs_section[page_id] = {"blobs": count, "last_updated": latest_at}
-
         total_fc = sum(v["chunks"] for v in file_chunks_section.values())
-        total_nb = sum(v["blobs"] for v in note_blobs_section.values())
 
         manifest = {
             "generated_at": datetime.now(timezone.utc).isoformat(),
             "file_chunks": dict(sorted(file_chunks_section.items())),
-            "note_blobs": dict(sorted(note_blobs_section.items())),
             "totals": {
                 "files": len(file_chunks_section),
                 "file_chunks": total_fc,
-                "note_pages": len(note_blobs_section),
-                "note_blobs": total_nb,
             },
         }
 
@@ -263,94 +233,25 @@ def search_file_chunks(query_vec: np.ndarray, k: int = 5) -> list[dict]:
 
 # ── note_blobs API ────────────────────────────────────────────────────────────
 
-def get_note_blob_hashes() -> dict[str, str]:
+def drop_note_blobs_table() -> None:
     """
-    Return {blob_id: content_hash} for every row in note_blobs.
-    Used by scan_note_blobs() to skip unchanged blobs.
+    Drop the retired note_blobs table, if present.
+
+    Recognized note text is now stored in notesAppText/<slug>/0.txt and indexed
+    as ordinary file_chunks, so the separate note_blobs table is obsolete. This
+    is a one-time cleanup invoked by the notes-layout migration; it is a no-op
+    once the table is gone.
     """
-    conn = _require_conn()
-    rows = conn.execute("SELECT id, content_hash FROM note_blobs").fetchall()
-    return {row_id: content_hash for row_id, content_hash in rows}
-
-
-def upsert_note_blob(blob: dict, vector: np.ndarray) -> None:
-    """
-    Insert or replace a single note_blob row.
-
-    blob keys: id, page_id, blob_idx, bbox (dict), content_hash, text, updated_at
-    """
-    conn = _require_conn()
-    vec_blob = vector.astype(np.float32).tobytes()
-    bbox_json = json.dumps(blob["bbox"]) if isinstance(blob["bbox"], dict) else blob["bbox"]
-
-    with _write_lock:
-        conn.execute(
-            """
-            INSERT OR REPLACE INTO note_blobs
-                (id, page_id, blob_idx, bbox, content_hash, text, vector, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                blob["id"],
-                blob["page_id"],
-                blob["blob_idx"],
-                bbox_json,
-                blob["content_hash"],
-                blob["text"],
-                vec_blob,
-                blob.get("updated_at", datetime.now(timezone.utc).isoformat()),
-            ),
-        )
-        conn.commit()
-        _write_manifest()
-
-
-def delete_note_blobs_for_page(page_id: str) -> None:
-    """Remove all blob rows for a given page."""
     conn = _require_conn()
     with _write_lock:
-        conn.execute("DELETE FROM note_blobs WHERE page_id = ?", (page_id,))
+        exists = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='note_blobs'"
+        ).fetchone()
+        if not exists:
+            return
+        conn.execute("DROP TABLE IF EXISTS note_blobs")
         conn.commit()
         _write_manifest()
-
-
-def delete_note_blob(blob_id: str) -> None:
-    """Remove a single blob row by its composite id (page_id__blob_idx)."""
-    conn = _require_conn()
-    with _write_lock:
-        conn.execute("DELETE FROM note_blobs WHERE id = ?", (blob_id,))
-        conn.commit()
-        _write_manifest()
-
-
-def search_note_blobs(query_vec: np.ndarray, k: int = 5) -> list[dict]:
-    """
-    Brute-force cosine similarity over all note_blob vectors.
-    Returns top-k dicts with keys: id, page_id, blob_idx, score.
-    query_vec must already be L2-normalised.
-    """
-    conn = _require_conn()
-    rows = conn.execute(
-        "SELECT id, page_id, blob_idx, vector FROM note_blobs"
-    ).fetchall()
-
-    if not rows:
-        return []
-
-    ids, page_ids, blob_idxs, blobs = zip(*rows)
-    mat = np.frombuffer(b"".join(blobs), dtype=np.float32).reshape(len(rows), -1)
-    scores = mat @ query_vec.astype(np.float32)
-
-    top_idx = np.argsort(scores)[::-1][:k]
-    return [
-        {
-            "id": ids[i],
-            "page_id": page_ids[i],
-            "blob_idx": blob_idxs[i],
-            "score": float(scores[i]),
-        }
-        for i in top_idx
-    ]
 
 
 # ── CLI smoke-test ────────────────────────────────────────────────────────────

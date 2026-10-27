@@ -30,6 +30,11 @@ SYSTEM_PROMPT = (
 
     "When modifying something, first locate and inspect it before editing or proposing changes. "
 
+    "NOTES ARE READ-ONLY: files under 'notesAppText/' are the user's handwritten-note text, owned by the Notes app. "
+    "You may search and read them freely like any other file, but you must NOT edit them — the text is regenerated from "
+    "the user's pen strokes, so any edit would be silently overwritten. propose_edit on a notesAppText/ path will be rejected. "
+    "If the user wants note content changed, tell them to edit it in the Notes app. "
+
     "Output rules: "
     "Report what you found, note gaps, and cite sources when available. "
     "For news, show the majority of non-duplicate headlines with summaries, then bullet-point links at the end. "

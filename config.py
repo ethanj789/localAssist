@@ -150,9 +150,13 @@ CONFIG = {
     # system prompt + full tool schemas + ~hundreds of image tokens overflow it,
     # the image tokens get truncated, and the model hallucinates the picture.
     "ollama_num_ctx":   int(os.getenv("OLLAMA_NUM_CTX", "32768")),
-    "max_searches":     int(os.getenv("MAX_SEARCHES", "2")),
+    "max_searches":     int(os.getenv("MAX_SEARCHES", "6")),
     "max_emails":       int(os.getenv("MAX_EMAILS", "1")),
-    "max_tools":        int(os.getenv("MAX_TOOLS", "10")),
+    # Master per-turn tool cap. Set very high so a long, legitimate run (e.g.
+    # many sequential file edits) is never cut off mid-task. It exists only as a
+    # runaway safety net against a stuck model that loops forever; it is not
+    # meant to constrain normal agentic work. Override with MAX_TOOLS if needed.
+    "max_tools":        int(os.getenv("MAX_TOOLS", "1000")),
     "max_tokens":       int(os.getenv("MAX_TOKENS", str(get_model_value("default", "max_tokens", 5000)))),
     "temperature":      float(os.getenv("TEMPERATURE", str(get_model_value("default", "temperature", 0.7)))),
     "mcp_server_cmd": os.getenv("MCP_CMD", f"{sys.executable} mcp_server.py"),

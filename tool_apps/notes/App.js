@@ -128,6 +128,9 @@ class NotesApp {
                 this.currentType = e.target.value;
                 this.currentFolderId = null;
                 await this.loadPagesList();
+                // Switching notes/art should land on a real page of the new
+                // type rather than leaving the previous page's ink on screen.
+                await this._openFirstPageOrEmpty();
             });
         });
 
@@ -135,6 +138,14 @@ class NotesApp {
             this.currentFolderId = null;
             await this.createNewPage('');
         });
+
+        const emptyNewBtn = document.getElementById('empty-state-new-btn');
+        if (emptyNewBtn) {
+            emptyNewBtn.addEventListener('click', async () => {
+                this.currentFolderId = null;
+                await this.createNewPage('');
+            });
+        }
 
         document.getElementById('new-folder-btn').addEventListener('click', async () => {
             await this.createNewFolder();
@@ -261,13 +272,13 @@ class NotesApp {
 
     _bindInput() {
         this.inputSource.onStrokeStart((point) => {
+            // No page selected (e.g. right after deleting the last page): the
+            // canvas is a dead empty state, so ignore input entirely. Drawing
+            // here used to create ghost strokes that were never saved.
+            if (!this.currentPageId) return;
+
             this._preStrokeSnapshot = this._cloneStrokes(this.canvasManager.strokes);
             this._clearActiveStrokePreview();
-            this.canvasManager.startStroke(point);
-            this.redoStack = [];
-            this._strokesDirty = true;
-
-            if (!this.currentPageId) return;
 
             if (point.button === 1) { // Middle click
                 this.isPanning = true;
@@ -478,17 +489,78 @@ class NotesApp {
         try {
             const res = await fetch(`/api/notes/pages/${page.type}/${page.id}`, { method: 'DELETE' });
             if (!res.ok) throw new Error('Delete failed');
-            if (this.currentPageId === page.id) {
+
+            const deletingActive = this.currentPageId === page.id;
+            // Pick the next page to open BEFORE the list is refreshed, choosing a
+            // neighbour of the one being removed so we don't land on a phantom.
+            let nextPage = null;
+            if (deletingActive) {
+                const sameType = (this.currentPages || []).filter(
+                    p => p.type === page.type && p.id !== page.id
+                );
+                const idx = (this.currentPages || []).findIndex(p => p.id === page.id);
+                // Prefer the page just after the deleted one, else just before,
+                // else any remaining page of this type.
+                nextPage = (this.currentPages || [])
+                    .slice(idx + 1).find(p => p.type === page.type && p.id !== page.id)
+                    || (this.currentPages || [])
+                        .slice(0, idx).reverse().find(p => p.type === page.type && p.id !== page.id)
+                    || sameType[0]
+                    || null;
+
+                // Cancel any in-flight debounced save/compaction for the page
+                // being removed so it can't re-PUT and resurrect it.
+                if (this.saveTimeout) { clearTimeout(this.saveTimeout); this.saveTimeout = null; }
+                if (this.compactTimeout) { clearTimeout(this.compactTimeout); this.compactTimeout = null; }
+                this._pendingSave = null;
+
+                // Clear the current page so the canvas never shows the deleted
+                // page's ink while we transition.
                 this.currentPageId = null;
                 this.currentPageMeta = null;
                 this.canvasManager.strokes = [];
                 this.canvasManager.clear();
                 localStorage.removeItem('notes_last_page');
             }
+
             await this.loadPagesList();
+
+            if (deletingActive) {
+                if (nextPage) {
+                    await this.loadPage(nextPage.type, nextPage.id);
+                } else {
+                    // No pages left for this type — show a clean empty state.
+                    this._showEmptyState();
+                }
+            }
         } catch (e) {
             console.error('Failed to delete page', e);
         }
+    }
+
+    /** Clear the canvas to a non-drawable "no page selected" state. */
+    _showEmptyState() {
+        this.currentPageId = null;
+        this.currentPageMeta = null;
+        this.currentFolderId = null;
+        this.canvasManager.strokes = [];
+        this.canvasManager.transform = { x: 0, y: 0, scale: 1 };
+        this.canvasManager.clear();
+        this.undoStack = [];
+        this.redoStack = [];
+        this._strokesDirty = false;
+        localStorage.removeItem('notes_last_page');
+        const status = document.getElementById('save-status');
+        if (status) status.innerText = '';
+        this._toggleEmptyState(true);
+    }
+
+    /** Show or hide the "no page open" overlay and lock/unlock the canvas. */
+    _toggleEmptyState(show) {
+        const overlay = document.getElementById('empty-state');
+        const container = document.getElementById('canvas-container');
+        if (overlay) overlay.classList.toggle('hidden', !show);
+        if (container) container.classList.toggle('no-page', show);
     }
 
     // ─── API Calls ────────────────────────────────────────────────────────────
@@ -536,7 +608,6 @@ class NotesApp {
         el.draggable = true;
         el.dataset.pageId = page.id;
         el.innerHTML = `
-            <img src="/api/notes/pages/${page.type}/${page.id}/page.png?ts=${new Date().getTime()}" onerror="this.style.display='none'" alt="thumb">
             <div class="page-title">${page.title || page.id}</div>
         `;
         el.addEventListener('click', () => this.loadPage(page.type, page.id));
@@ -786,13 +857,24 @@ class NotesApp {
     async loadPage(type, id) {
         try {
             const res = await fetch(`/api/notes/pages/${type}/${id}`);
-            if (!res.ok) throw new Error("Not found");
+            if (!res.ok) {
+                // Page is gone (deleted/renamed/missing). Don't leave a phantom
+                // blank page up — clear to the empty state and drop stale state.
+                if (res.status === 404) {
+                    const saved = localStorage.getItem('notes_last_page');
+                    if (saved && saved.includes(id)) localStorage.removeItem('notes_last_page');
+                    this._showEmptyState();
+                    return;
+                }
+                throw new Error(`Load failed (${res.status})`);
+            }
             const data = await res.json();
 
             this.currentPageId = id;
             this.currentType = type;
             this.currentPageMeta = data.meta;
             this.currentFolderId = data.meta.folderId || null;
+            this._toggleEmptyState(false);
 
             if (data.meta.viewTransform) {
                 this.canvasManager.transform = { ...data.meta.viewTransform };
@@ -814,10 +896,19 @@ class NotesApp {
             // Persist last opened page
             localStorage.setItem('notes_last_page', JSON.stringify({ type, id }));
 
-            this.loadPagesList(); // refresh active state
+            // Refresh only the active highlight instead of rebuilding the whole
+            // sidebar — avoids a visible re-render/stutter when switching pages.
+            this._updateActiveHighlight();
         } catch (e) {
             console.error("Failed to load page", e);
         }
+    }
+
+    /** Toggle the `active` class on existing sidebar items without rebuilding. */
+    _updateActiveHighlight() {
+        document.querySelectorAll('#page-list .page-item').forEach(el => {
+            el.classList.toggle('active', el.dataset.pageId === this.currentPageId);
+        });
     }
 
     async _resumeLastSession() {
@@ -825,21 +916,42 @@ class NotesApp {
         await this.loadPagesList();
 
         const saved = localStorage.getItem('notes_last_page');
-        if (!saved) return;
-
-        try {
-            const { type, id } = JSON.parse(saved);
-            // Switch the mode toggle to match
-            const radio = document.querySelector(`input[name="mode"][value="${type}"]`);
-            if (radio) {
-                radio.checked = true;
-                this.currentType = type;
+        if (saved) {
+            try {
+                const { type, id } = JSON.parse(saved);
+                // Only resume if the saved page still exists in the current list.
+                const stillExists = (this.currentPages || []).some(
+                    p => p.id === id && p.type === type
+                );
+                if (stillExists) {
+                    const radio = document.querySelector(`input[name="mode"][value="${type}"]`);
+                    if (radio) {
+                        radio.checked = true;
+                        this.currentType = type;
+                    }
+                    await this.loadPage(type, id);
+                    return;
+                }
+                // Saved page is gone — drop the stale pointer and fall through.
+                localStorage.removeItem('notes_last_page');
+            } catch (e) {
+                localStorage.removeItem('notes_last_page');
+                console.warn('Could not resume last session:', e);
             }
-            await this.loadPage(type, id);
-        } catch (e) {
-            // stale / invalid saved state — clear it
-            localStorage.removeItem('notes_last_page');
-            console.warn('Could not resume last session:', e);
+        }
+
+        // No valid saved session — open the first available page of the current
+        // type, or show the empty state if there are none.
+        await this._openFirstPageOrEmpty();
+    }
+
+    /** Open the first page of the current type, or show the empty state. */
+    async _openFirstPageOrEmpty() {
+        const firstPage = (this.currentPages || []).find(p => p.type === this.currentType);
+        if (firstPage) {
+            await this.loadPage(firstPage.type, firstPage.id);
+        } else {
+            this._showEmptyState();
         }
     }
 
@@ -887,10 +999,6 @@ class NotesApp {
                 meta: this.currentPageMeta,
                 strokes: this.canvasManager.getStrokesData()
             };
-
-            if (!viewOnly && this._strokesDirty) {
-                payload.pageDataUrl = this.canvasManager.getDataUrl();
-            }
 
             try {
                 const res = await fetch(`/api/notes/pages/${this.currentType}/${this.currentPageId}`, {

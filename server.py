@@ -208,13 +208,12 @@ async def reindex_ocr():
         try:
             await asyncio.get_running_loop().run_in_executor(None, backfill_ocr_for_existing_pages)
             logging.info("[reindex] Ink recognition backfill complete.")
-            # Re-run note blob scan to update the vector DB
-            from tools.index import scan_note_blobs
-            import tools.vector_db as vector_db
-            from tools.index import DB_FILE
-            vector_db.init_vector_db(DB_FILE)
-            await asyncio.get_running_loop().run_in_executor(None, scan_note_blobs)
-            logging.info("[reindex] Note blob scan complete.")
+            # Recognized note text is indexed as ordinary files now — a normal
+            # build_index picks up the regenerated 0.txt files (and runs the
+            # notes-layout migration/cleanup) in one pass.
+            from tools.index import build_index
+            await asyncio.get_running_loop().run_in_executor(None, build_index)
+            logging.info("[reindex] Workspace reindex complete.")
         except Exception as exc:
             logging.error(f"[reindex] Ink re-index failed: {exc}")
     asyncio.get_event_loop().create_task(_run())

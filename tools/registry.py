@@ -14,7 +14,7 @@ from tools.events import _recent_events
 from tools.emails import _draft_email
 from tools.search import _search_semantic
 from tools.memory import _manage_memory
-from tools.edit import resolve_edit
+from tools.edit import resolve_edit, ReadOnlyPathError
 from tools.files import WORKSPACE_ROOT
 import json
 
@@ -367,6 +367,11 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
 
             try:
                 preview = resolve_edit(WORKSPACE_ROOT, edit)
+            except ReadOnlyPathError as e:
+                # Terminal policy denial — make clear it must not be retried.
+                return [types.TextContent(type="text", text=(
+                    f"REJECTED (read-only): {str(e)} Do not retry this edit."
+                ))]
             except ValueError as e:
                 return [types.TextContent(type="text", text=f"REJECTED: Edit failed: {str(e)}")]
 

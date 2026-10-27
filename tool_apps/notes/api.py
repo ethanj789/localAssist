@@ -12,11 +12,13 @@ from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 from typing import Any, List, Optional
 
+from tool_apps.notes import recognition_state
+
 log = logging.getLogger(__name__)
 
 # ── OCR background task state ─────────────────────────────────────────────────
 
-OCR_DEBOUNCE_SECS: float = 30.0
+OCR_DEBOUNCE_SECS: float = 10.0
 _ocr_tasks: dict[str, asyncio.Task] = {}
 _ocr_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="ocr")
 
@@ -59,9 +61,14 @@ def _ocr_output_slug(title: str, page_id: str) -> str:
     return _slugify(page_id)
 
 
-def _rename_ocr_dir(page_id: str, old_title: str, new_title: str) -> None:
-    """Move the notesAppText output directory when a page is renamed."""
-    old_slug = _ocr_output_slug(old_title, page_id)
+def _rename_ocr_dir(page_id: str, page_type: str, old_title: str, new_title: str) -> None:
+    """Move the notesAppText output directory when a page is renamed.
+
+    The old slug is taken from the recognition map (authoritative) with a
+    fallback to re-deriving it from the old title; the map's slug entry is
+    updated to the new location so delete/rename stay collision-proof.
+    """
+    old_slug = recognition_state.get_slug(page_type, page_id) or _ocr_output_slug(old_title, page_id)
     new_slug = _ocr_output_slug(new_title, page_id)
     if old_slug == new_slug:
         return
@@ -70,12 +77,12 @@ def _rename_ocr_dir(page_id: str, old_title: str, new_title: str) -> None:
     if old_dir.exists() and not new_dir.exists():
         try:
             old_dir.rename(new_dir)
-            # Update the .page_meta.json sidecar so scan_note_blobs still finds page_id
-            sidecar = new_dir / ".page_meta.json"
-            sidecar.write_text(json.dumps({"page_id": page_id}), encoding="utf-8")
             log.info("OCR dir renamed: %s → %s", old_slug, new_slug)
         except Exception as exc:
             log.warning("Failed to rename OCR dir %s → %s: %s", old_slug, new_slug, exc)
+            return
+    # Keep the map pointing at the current text-dir slug.
+    recognition_state.update_slug(page_type, page_id, new_slug)
 
 
 # ── Recognition helpers ───────────────────────────────────────────────────────
@@ -173,7 +180,6 @@ class PageMeta(BaseModel):
 class SavePageRequest(BaseModel):
     meta: PageMeta
     strokes: dict
-    pageDataUrl: Optional[str] = None
 
 
 def get_base_dir(type_str: str) -> Path:
@@ -355,15 +361,6 @@ async def save_page(type: str, page_id: str, req: SavePageRequest):
     if legacy_json.exists():
         legacy_json.unlink()
 
-    if req.pageDataUrl and req.pageDataUrl.startswith("data:image/png;base64,"):
-        try:
-            b64_data = req.pageDataUrl.split(",")[1]
-            image_data = base64.b64decode(b64_data)
-            with open(page_dir / "page.png", "wb") as f:
-                f.write(image_data)
-        except Exception as e:
-            print(f"Failed to save page.png: {e}")
-
     # Schedule background recognition for any save that has strokes (debounced 30s).
     # The recognizer reads the strokes.json.gz we just wrote.
     if req.strokes.get("strokes"):
@@ -392,7 +389,7 @@ async def rename_page(type: str, page_id: str, req: RenamePageRequest):
             json.dump(meta, f, indent=2)
 
         # Rename the notesAppText output directory to match the new title slug
-        _rename_ocr_dir(page_id, old_title, meta["title"])
+        _rename_ocr_dir(page_id, type, old_title, meta["title"])
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to rename page: {str(e)}")
@@ -525,5 +522,27 @@ async def delete_page(type: str, page_id: str):
     if not page_dir.exists():
         raise HTTPException(status_code=404, detail="Page not found")
 
+    # Resolve the recognized-text dir BEFORE removing the page data. Prefer the
+    # recognition map (collision-proof); fall back to re-deriving the slug from
+    # the title so a page recognised under the old layout is still cleaned up.
+    text_slug = recognition_state.get_slug(type, page_id)
+    if not text_slug:
+        try:
+            with open(page_dir / "meta.json", "r", encoding="utf-8") as f:
+                title = json.load(f).get("title", "")
+            text_slug = _ocr_output_slug(title, page_id)
+        except Exception:
+            text_slug = None
+
+    # Remove the page's canonical data (meta + strokes).
     shutil.rmtree(page_dir)
+
+    # Remove the agent-visible recognized-text folder and drop the map entry so
+    # the deleted note stops showing up in keyword/semantic search.
+    if text_slug:
+        text_dir = OUTPUT_DIR / text_slug
+        if text_dir.exists():
+            shutil.rmtree(text_dir, ignore_errors=True)
+    recognition_state.remove_entry(type, page_id)
+
     return {"status": "ok"}

@@ -2,17 +2,23 @@
 tool_apps/notes/winink_recognizer.py — Windows Ink recognition wrapper.
 
 Drives the native C# Windows Ink CLI tool (winink/InkRecognizer) via subprocess,
-parses its JSON output, and writes the recognized page text into the notes text
-folder in the layout the indexer (tools/index.py scan_note_blobs) expects:
+parses its JSON output, and writes ONLY the recognized page text into the notes
+text folder, keeping that tree clean for the assistant to search/read:
 
     aiWorkspace/notesAppText/<title-slug>/
         0.txt            plain recognized page text (regions joined by blank lines)
-        0.hash           content fingerprint of the source strokes (skip-on-unchanged)
-        .page_meta.json  {"page_id": "..."} so the indexer can recover the page id
+
+All recognition bookkeeping (the source-strokes skip-gate hash and the
+page_id -> slug reverse map) lives OUTSIDE that tree, in the notes app's private
+data dir, via tool_apps/notes/recognition_state.py:
+
+    tool_apps/notes/data/<type>/_recognition.json
+        { "<page_id>": {"slug": "<title-slug>", "hash": "<strokes-sha1>"} }
 
 This replaces the retired image-OCR pipeline in tool_apps/notes/ocr/. We write a
-single blob (index 0) per page because Windows Ink already does spatial grouping
-internally; the whole page's recognized text goes into one file.
+single file (0.txt) per page because Windows Ink already does spatial grouping
+internally; the whole page's recognized text goes into one file. 0.txt is picked
+up by the normal mtime-gated workspace indexer like any other text file.
 
 process_page_winink() never raises — recognition failures are logged and skipped.
 """
@@ -25,6 +31,8 @@ import logging
 import re
 import subprocess
 from pathlib import Path
+
+from tool_apps.notes import recognition_state
 
 log = logging.getLogger(__name__)
 
@@ -70,15 +78,9 @@ def _slug_for_page(page_id: str, page_type: str) -> str:
     return _slugify(page_id)
 
 
-def _dir_owner(page_out: Path) -> str | None:
-    """Return the page_id that currently owns an output dir, via its sidecar."""
-    sidecar = page_out / ".page_meta.json"
-    if not sidecar.exists():
-        return None
-    try:
-        return json.loads(sidecar.read_text(encoding="utf-8")).get("page_id")
-    except Exception:
-        return None
+def _slug_owner(slug: str, page_type: str) -> str | None:
+    """Return the page_id that currently owns an output-dir slug, via the map."""
+    return recognition_state.slug_owner(page_type, slug)
 
 
 def _exists_in_both_types(page_id: str) -> bool:
@@ -96,8 +98,9 @@ def _page_output_dir(page_id: str, page_type: str, output_root: Path) -> Path:
     Uses the title slug for readability. Disambiguates by appending the type
     when either:
       - the same page_id exists under both notes/ and art/ (so the two type
-        variants never share a 0.txt / 0.hash), or
-      - the natural slug dir is already owned by a different page_id.
+        variants never share a 0.txt), or
+      - the natural slug dir is already owned by a different page_id
+        (ownership is tracked in the recognition map, not on disk).
     """
     slug = _slug_for_page(page_id, page_type)
 
@@ -105,16 +108,15 @@ def _page_output_dir(page_id: str, page_type: str, output_root: Path) -> Path:
     if _exists_in_both_types(page_id):
         return output_root / _slugify(f"{slug}-{page_type}")
 
-    candidate = output_root / slug
-    owner = _dir_owner(candidate)
+    owner = _slug_owner(slug, page_type)
     if owner is None or owner == page_id:
-        return candidate
+        return output_root / slug
 
     # Collision with a different page_id — suffix with type (then id if needed).
-    typed = output_root / _slugify(f"{slug}-{page_type}")
-    typed_owner = _dir_owner(typed)
+    typed_slug = _slugify(f"{slug}-{page_type}")
+    typed_owner = _slug_owner(typed_slug, page_type)
     if typed_owner is None or typed_owner == page_id:
-        return typed
+        return output_root / typed_slug
     return output_root / _slugify(f"{slug}-{page_type}-{page_id}")
 
 
@@ -129,20 +131,15 @@ def _hash_source(gz_path: Path) -> str:
     return h.hexdigest()
 
 
-def _read_stored_hash(txt_path: Path) -> str | None:
-    try:
-        return txt_path.with_suffix(".hash").read_text(encoding="utf-8").strip()
-    except OSError:
-        return None
-
-
 def _remove_stale_blobs(page_out: Path) -> None:
     """
-    Delete leftover N.txt / N.hash files with N >= 1 in a page's output dir.
+    Delete leftover N.txt files with N >= 1 in a page's output dir, plus any
+    legacy .hash / .page_meta.json sidecars from the retired layout.
 
-    Windows Ink writes a single blob (0.txt). The retired multi-blob pipeline
-    could leave 1.txt, 2.txt, ... behind; those would otherwise linger as
-    phantom blobs. (scan_note_blobs prunes the matching DB rows.)
+    Windows Ink writes a single file (0.txt). The retired multi-blob pipeline
+    could leave 1.txt, 2.txt, ... behind, and older runs wrote 0.hash /
+    .page_meta.json sidecars we no longer use; all of those would otherwise
+    linger in the agent-visible notes text tree.
     """
     for txt in page_out.glob("*.txt"):
         try:
@@ -151,12 +148,18 @@ def _remove_stale_blobs(page_out: Path) -> None:
             continue
         if idx <= 0:
             continue
-        for f in (txt, txt.with_suffix(".hash")):
-            try:
-                f.unlink()
-            except OSError:
-                pass
+        try:
+            txt.unlink()
+        except OSError:
+            pass
         log.info("winink: removed stale blob file %s", txt.name)
+
+    # Legacy sidecars that must never remain in the clean text tree.
+    for legacy in (*page_out.glob("*.hash"), page_out / ".page_meta.json"):
+        try:
+            legacy.unlink()
+        except OSError:
+            pass
 
 
 # ── CLI invocation ────────────────────────────────────────────────────────────────
@@ -223,11 +226,13 @@ def process_page_winink(
     page_type: str = "notes",
 ) -> None:
     """
-    Recognize one page via Windows Ink and write 0.txt / 0.hash / .page_meta.json
-    into output_dir/<title-slug>/.
+    Recognize one page via Windows Ink and write only 0.txt into
+    output_dir/<title-slug>/. The source-strokes hash and the slug are recorded
+    in the notes app's private recognition map (recognition_state), never in the
+    text tree.
 
-    Incremental: if the source-strokes hash matches the stored .hash sidecar, the
-    page is skipped. Never raises — failures are logged.
+    Incremental: if the source-strokes hash matches the hash stored in the map,
+    the page is skipped. Never raises — failures are logged.
 
     page_type ("notes" or "art") disambiguates the output dir when a page_id
     exists in both type directories.
@@ -240,9 +245,10 @@ def process_page_winink(
     page_out = _page_output_dir(page_id, page_type, output_dir)
     out_txt = page_out / "0.txt"
 
-    # Incremental skip: unchanged source strokes -> nothing to do.
+    # Incremental skip: unchanged source strokes -> nothing to do. We still
+    # require the text file to exist, so a cleared text tree re-recognises.
     content_hash = _hash_source(gz_path)
-    if _read_stored_hash(out_txt) == content_hash:
+    if recognition_state.get_hash(page_type, page_id) == content_hash and out_txt.exists():
         log.debug("winink: page %s unchanged, skipping.", page_id)
         return
 
@@ -254,26 +260,23 @@ def process_page_winink(
 
     page_out.mkdir(parents=True, exist_ok=True)
 
-    # .page_meta.json so the indexer can recover the real page_id from the slug dir.
-    meta_sidecar = page_out / ".page_meta.json"
-    try:
-        meta_sidecar.write_text(json.dumps({"page_id": page_id}), encoding="utf-8")
-    except Exception as exc:
-        log.warning("winink: failed writing page meta for %s: %s", page_id, exc)
-
-    # Plain text + hash sidecar (same shape the indexer expects for a blob).
+    # Plain recognized text — the only thing we put in the agent-visible tree.
     try:
         out_txt.write_text(page_text, encoding="utf-8")
-        out_txt.with_suffix(".hash").write_text(content_hash, encoding="utf-8")
     except Exception as exc:
         log.error("winink: failed writing output for page %s: %s", page_id, exc)
         return
 
-    # Windows Ink produces a single blob (index 0) per page. Older runs of the
-    # retired multi-blob pipeline may have left 1.txt, 2.txt, ... behind in this
-    # directory; remove them (and their .hash sidecars) so the indexer doesn't
-    # keep embedding stale phantom blobs. The matching DB rows are cleared by
-    # scan_note_blobs when their files disappear.
+    # Record the slug + source hash in the notes-app-private map (skip-gate +
+    # reverse lookup for delete/rename).
+    try:
+        recognition_state.set_entry(page_type, page_id, page_out.name, content_hash)
+    except Exception as exc:
+        log.warning("winink: failed updating recognition map for %s: %s", page_id, exc)
+
+    # Windows Ink produces a single file (index 0) per page. Remove any leftover
+    # 1.txt, 2.txt, ... from the retired multi-blob pipeline and any legacy
+    # .hash / .page_meta.json sidecars, so the text tree stays clean.
     _remove_stale_blobs(page_out)
 
     region_count = len(data.get("regions") or [])

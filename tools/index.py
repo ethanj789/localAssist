@@ -3,13 +3,13 @@ import json
 import time
 import logging
 import numpy as np
-from datetime import datetime
 from pathlib import Path
 from tools.files import get_file_chunks, WORKSPACE_ROOT, SKIP_DIRS
 from tools.embeddings import get_embeddings
 import tools.vector_db as vector_db
 
-# OCR blob output lives here — included in indexing, not in SKIP_DIRS
+# Recognized note text lives here. It is NOT in SKIP_DIRS: each <slug>/0.txt is
+# indexed as an ordinary workspace file (mtime-gated), not via a separate table.
 NOTES_TEXT_DIR = WORKSPACE_ROOT / "notesAppText"
 
 log = logging.getLogger(__name__)
@@ -79,143 +79,132 @@ def _delete_legacy_files() -> None:
             log.warning(f"Could not delete {path.name}: {e}")
 
 
-# ── Note blob scanning ────────────────────────────────────────────────────────
+# ── One-time notes-layout migration ───────────────────────────────────────────
 
-def _read_blob_file(txt_path: Path) -> dict | None:
+def migrate_notes_layout() -> None:
     """
-    Read a headerless blob .txt file and its .hash sidecar.
+    Migrate the notesAppText tree from the old blob layout to the clean one.
 
-    The output directory contains a .page_meta.json sidecar with the real page_id.
-    blob_idx is inferred from the filename stem (0.txt → 0).
+    Old layout per page dir: 0.txt + 0.hash + .page_meta.json, indexed into a
+    separate note_blobs table. New layout: 0.txt only, indexed like any other
+    workspace file; the page_id/slug/hash bookkeeping lives in the notes app's
+    private recognition map (_recognition.json).
 
-    Returns a dict with keys: page_id, blob_idx, content_hash, text.
-    Returns None if the file can't be read or parsed.
-    """
-    try:
-        text = txt_path.read_text(encoding="utf-8").strip()
-    except OSError:
-        return None
+    This pass is idempotent and does three things:
+      1. Backfill the recognition map from each dir's legacy sidecars (so the
+         next recognition run doesn't needlessly re-OCR every page), but only
+         for pages whose canonical note data still exists.
+      2. Garbage-collect orphaned text dirs — any notesAppText/<slug>/ whose
+         page_id no longer has a live note (e.g. a page deleted in the UI under
+         the old buggy delete that left this folder behind).
+      3. Strip legacy .hash / .page_meta.json sidecars from surviving dirs so
+         the agent-visible tree holds nothing but 0.txt.
 
-    # Read hash sidecar
-    hash_path = txt_path.with_suffix(".hash")
-    try:
-        content_hash = hash_path.read_text(encoding="utf-8").strip()
-    except OSError:
-        return None  # no hash = not a pipeline-produced file
-
-    # Infer blob_idx from filename
-    try:
-        blob_idx = int(txt_path.stem)
-    except ValueError:
-        return None
-
-    # Read page_id from .page_meta.json sidecar in same directory
-    meta_sidecar = txt_path.parent / ".page_meta.json"
-    try:
-        page_id = json.loads(meta_sidecar.read_text(encoding="utf-8")).get("page_id", "")
-    except Exception:
-        page_id = txt_path.parent.name  # fallback: directory name
-
-    if not page_id:
-        return None
-
-    return {
-        "page_id": page_id,
-        "blob_idx": blob_idx,
-        "content_hash": content_hash,
-        "text": text,
-    }
-
-
-def scan_note_blobs() -> None:
-    """
-    Walk notesAppText/**/*.txt, read plain text + .hash sidecars, and upsert
-    changed blobs into the note_blobs table.
-    Removes DB rows for page_ids whose output directories are gone.
+    Also drops the retired note_blobs table rows once, since those blobs are now
+    represented as ordinary file_chunks.
     """
     if not NOTES_TEXT_DIR.exists():
+        _drop_legacy_note_blobs()
         return
 
-    stored_hashes = vector_db.get_note_blob_hashes()
-    seen_page_ids: set[str] = set()
-    seen_blob_ids: set[str] = set()
-    upserted = skipped = 0
+    import shutil
+    from tool_apps.notes import recognition_state
 
-    for page_dir in sorted(NOTES_TEXT_DIR.iterdir()):
-        if not page_dir.is_dir():
+    # page_id -> page_type for every live note on disk.
+    live_pages: dict[str, str] = {}
+    notes_data_root = Path(__file__).resolve().parent.parent / "tool_apps" / "notes" / "data"
+    for page_type in ("notes", "art"):
+        type_dir = notes_data_root / page_type
+        if not type_dir.is_dir():
+            continue
+        for page_dir in type_dir.iterdir():
+            if page_dir.is_dir() and (page_dir / "meta.json").exists():
+                live_pages[page_dir.name] = page_type
+
+    # slug -> (page_id, page_type) from the recognition maps. This is the
+    # authoritative owner lookup AFTER migration (once sidecars are stripped),
+    # so a clean dir is never mistaken for an orphan on a later pass.
+    slug_to_page: dict[str, tuple[str, str]] = {}
+    for page_type in ("notes", "art"):
+        for pid, entry in recognition_state.load_map(page_type).items():
+            slug = entry.get("slug")
+            if slug:
+                slug_to_page[slug] = (pid, page_type)
+
+    removed_orphans = 0
+    stripped = 0
+    backfilled = 0
+
+    for slug_dir in sorted(NOTES_TEXT_DIR.iterdir()):
+        if not slug_dir.is_dir():
             continue
 
-        for txt_file in sorted(page_dir.glob("*.txt")):
-            parsed = _read_blob_file(txt_file)
-            if parsed is None:
-                log.debug("scan_note_blobs: skipping unrecognised file %s", txt_file)
-                continue
+        # Resolve the owning page_id from the legacy sidecar first (old layout),
+        # then fall back to the recognition map keyed by this dir's slug (new
+        # layout). Only when NEITHER resolves to a live note is it an orphan.
+        page_id = None
+        page_type = None
+        sidecar = slug_dir / ".page_meta.json"
+        if sidecar.exists():
+            try:
+                page_id = json.loads(sidecar.read_text(encoding="utf-8")).get("page_id")
+            except Exception:
+                page_id = None
+            if page_id in live_pages:
+                page_type = live_pages[page_id]
+            else:
+                page_id = None
 
-            seen_page_ids.add(parsed["page_id"])
-            blob_id = f"{parsed['page_id']}__{parsed['blob_idx']}"
-            seen_blob_ids.add(blob_id)
+        if page_id is None:
+            mapped = slug_to_page.get(slug_dir.name)
+            if mapped and mapped[0] in live_pages:
+                page_id, page_type = mapped
 
-            if stored_hashes.get(blob_id) == parsed["content_hash"]:
-                skipped += 1
-                continue
-
-            text = parsed["text"]
-            if not text.strip():
-                log.debug("scan_note_blobs: empty text in %s, skipping embed.", txt_file)
-                continue
-
-            embeddings = get_embeddings([text])
-            if not embeddings:
-                log.error("scan_note_blobs: failed to embed blob %s", blob_id)
-                continue
-
-            vec  = np.array(embeddings[0], dtype=np.float32)
-            norm = np.linalg.norm(vec)
-            if norm > 0:
-                vec = vec / norm
-
-            blob_row = {
-                "id":           blob_id,
-                "page_id":      parsed["page_id"],
-                "blob_idx":     parsed["blob_idx"],
-                "bbox":         "{}",   # no bbox in new format; placeholder
-                "content_hash": parsed["content_hash"],
-                "text":         text,
-                "updated_at":   datetime.utcnow().isoformat(),
-            }
-            vector_db.upsert_note_blob(blob_row, vec)
-            upserted += 1
-
-    # Remove stale rows. Two cases:
-    #   1. whole page gone  — delete every row for that page_id
-    #   2. page present but a specific blob file gone (e.g. the old multi-blob
-    #      pipeline left 1.txt behind and Ink now writes only 0.txt) — delete
-    #      just that orphaned blob row.
-    all_stored = vector_db.get_note_blob_hashes()
-    stored_page_ids: set[str] = set()
-    for blob_id in all_stored:
-        if "__" in blob_id:
-            stored_page_ids.add(blob_id.split("__")[0])
-
-    removed_pages = 0
-    removed_blobs = 0
-    for gone_page_id in stored_page_ids - seen_page_ids:
-        vector_db.delete_note_blobs_for_page(gone_page_id)
-        removed_pages += 1
-
-    for stale_blob_id in set(all_stored) - seen_blob_ids:
-        # Skip blobs belonging to a page we already deleted wholesale above.
-        page_id = stale_blob_id.split("__")[0] if "__" in stale_blob_id else stale_blob_id
-        if page_id not in seen_page_ids:
+        # Genuine orphan — its note no longer exists. Remove the stale text dir.
+        if page_id is None or page_type is None:
+            try:
+                shutil.rmtree(slug_dir, ignore_errors=True)
+                removed_orphans += 1
+                log.info("migrate_notes_layout: removed orphan text dir %s", slug_dir.name)
+            except Exception as exc:
+                log.warning("migrate_notes_layout: failed removing %s: %s", slug_dir.name, exc)
             continue
-        vector_db.delete_note_blob(stale_blob_id)
-        removed_blobs += 1
 
-    if upserted or skipped or removed_pages or removed_blobs:
+        # Surviving page: backfill map (slug + legacy source hash) if absent.
+        if recognition_state.get_entry(page_type, page_id) is None:
+            legacy_hash = ""
+            hash_file = slug_dir / "0.hash"
+            if hash_file.exists():
+                try:
+                    legacy_hash = hash_file.read_text(encoding="utf-8").strip()
+                except OSError:
+                    legacy_hash = ""
+            recognition_state.set_entry(page_type, page_id, slug_dir.name, legacy_hash)
+            backfilled += 1
+
+        # Strip legacy sidecars so only 0.txt remains in the clean tree.
+        for legacy in (*slug_dir.glob("*.hash"), sidecar):
+            try:
+                legacy.unlink()
+                stripped += 1
+            except OSError:
+                pass
+
+    _drop_legacy_note_blobs()
+
+    if removed_orphans or stripped or backfilled:
         log.info(
-            "scan_note_blobs: %d upserted, %d unchanged, %d page(s) removed, %d stale blob(s) removed.",
-            upserted, skipped, removed_pages, removed_blobs,
+            "migrate_notes_layout: %d orphan dir(s) removed, %d sidecar(s) stripped, %d map entr(ies) backfilled.",
+            removed_orphans, stripped, backfilled,
         )
+
+
+def _drop_legacy_note_blobs() -> None:
+    """Drop the retired note_blobs table (its rows are now file_chunks)."""
+    try:
+        vector_db.drop_note_blobs_table()
+    except Exception as exc:
+        log.debug("migrate_notes_layout: note_blobs drop skipped: %s", exc)
 
 
 def build_index(force: bool = False) -> None:
@@ -230,6 +219,9 @@ def build_index(force: bool = False) -> None:
     INDEX_DIR.mkdir(parents=True, exist_ok=True)
     vector_db.init_vector_db(DB_FILE)
     _migrate_legacy_index()
+    # Clean the notes text tree (orphan GC + sidecar strip) BEFORE the walk so
+    # orphaned note dirs are never indexed as files. Idempotent.
+    migrate_notes_layout()
 
     # ── Discover current files ────────────────────────────────────────────────
     current_files: dict[str, float] = {}
@@ -331,9 +323,6 @@ def build_index(force: bool = False) -> None:
     finally:
         if BUSY_LOCK_FILE.exists():
             BUSY_LOCK_FILE.unlink()
-
-    # ── Scan OCR'd note blobs ─────────────────────────────────────────────────
-    scan_note_blobs()
 
 
 if __name__ == "__main__":

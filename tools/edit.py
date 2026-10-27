@@ -6,6 +6,13 @@ from typing import Optional
 log = logging.getLogger(__name__)
 
 
+class ReadOnlyPathError(ValueError):
+    """Raised when an edit targets a path the agent may never write (a policy
+    denial, not a fixable validation error). Subclasses ValueError so existing
+    ``except ValueError`` handlers still catch it, while callers that care can
+    detect it explicitly and skip the pointless anchor-retry loop."""
+
+
 # ---------------------------------------------------------------------------
 # Invalid-JSON-escape sanitizer (applied to parsed tool-call arguments)
 # ---------------------------------------------------------------------------
@@ -308,9 +315,21 @@ def resolve_edit(workspace_root: Path, edit: dict) -> dict:
     target = (workspace_root / relative_path).resolve()
 
     try:
-        target.relative_to(workspace_root)
+        rel = target.relative_to(workspace_root)
     except ValueError:
         raise ValueError("Access denied: path is outside the aiWorkspace folder.")
+
+    # notesAppText/ holds handwritten-note text owned by the Notes app. It is
+    # searchable and readable, but read-only to the agent: the text is
+    # regenerated from pen strokes on every save, so any edit here would be
+    # silently overwritten. Block all writes under this subtree. This is a
+    # permanent policy denial (ReadOnlyPathError), not a retryable failure.
+    if rel.parts and rel.parts[0] == "notesAppText":
+        raise ReadOnlyPathError(
+            "Access denied: notesAppText/ is managed by the Notes app and is read-only. "
+            "You can read and search note text, but it cannot be edited here — "
+            "its content comes from the user's handwritten strokes."
+        )
 
     if target.is_symlink():
         raise ValueError("Access denied: symlinks not allowed.")

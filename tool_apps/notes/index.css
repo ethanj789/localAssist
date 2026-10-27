@@ -203,13 +203,6 @@ body {
     box-shadow: inset 0 0 0 1px var(--accent-color);
 }
 
-.page-item img {
-    max-width: 100%;
-    height: auto;
-    background-color: #fff;
-    border-radius: 3px;
-}
-
 .page-item .page-title {
     font-size: 11px;
     margin-top: 6px;
@@ -456,6 +449,47 @@ body {
 
 #drawing-canvas.eraser-active {
     cursor: none;
+}
+
+/* Empty / no-page-open state overlay */
+#empty-state {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background-color: var(--canvas-bg);
+    z-index: 5;
+}
+
+#empty-state.hidden {
+    display: none;
+}
+
+#empty-state .empty-state-inner {
+    text-align: center;
+    max-width: 340px;
+    padding: 24px;
+}
+
+#empty-state .empty-state-title {
+    font-size: 18px;
+    font-weight: 600;
+    color: var(--text-color);
+    margin-bottom: 8px;
+}
+
+#empty-state .empty-state-text {
+    font-size: 13px;
+    color: var(--text-muted);
+    line-height: 1.5;
+    margin-bottom: 18px;
+}
+
+/* When no page is open, make the canvas non-interactive so stray input
+   doesn't hit a phantom page. */
+#canvas-container.no-page #drawing-canvas {
+    pointer-events: none;
 }
 
 /* ═══════════════════════════════════════════
