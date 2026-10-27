@@ -208,32 +208,68 @@ function initCustomSelect() {
     // ── Ollama model chip-select ──
     const ollamaWrapper = document.getElementById('ollama-model-select-wrapper');
     const ollamaTrigger = document.getElementById('ollama-model-trigger');
-    const ollamaOptions = ollamaWrapper ? ollamaWrapper.querySelectorAll('.chip-option') : [];
+    const ollamaOptionsBox = document.getElementById('ollama-model-options');
     const ollamaHidden = document.getElementById('cfg-model');
 
-    if (ollamaWrapper && ollamaTrigger) {
+    if (ollamaWrapper && ollamaTrigger && ollamaOptionsBox) {
         ollamaTrigger.addEventListener('click', (e) => {
             e.stopPropagation();
             ollamaWrapper.classList.toggle('open');
         });
 
-        ollamaOptions.forEach(opt => {
-            opt.addEventListener('click', () => {
-                const val = opt.getAttribute('data-value');
-                const label = opt.textContent.trim();
-
-                ollamaHidden.value = val;
-                document.getElementById('ollama-model-label').textContent = label;
-
-                ollamaOptions.forEach(o => o.classList.remove('active'));
-                opt.classList.add('active');
-
-                ollamaWrapper.classList.remove('open');
-
-                // Auto-apply the model change
-                applyConfig();
+        // Select a model option: update the hidden input, label, active state,
+        // and push the change to the backend.
+        const selectModel = (val, label) => {
+            ollamaHidden.value = val;
+            document.getElementById('ollama-model-label').textContent = label;
+            ollamaOptionsBox.querySelectorAll('.chip-option').forEach(o => {
+                o.classList.toggle('active', o.getAttribute('data-value') === val);
             });
+            ollamaWrapper.classList.remove('open');
+            applyConfig();
+        };
+
+        // Add a model to the dropdown (if not already present) and return its
+        // option element. Used for custom models pasted from `ollama list`.
+        const ensureOption = (name) => {
+            let opt = ollamaOptionsBox.querySelector(
+                `.chip-option[data-value="${CSS.escape(name)}"]`
+            );
+            if (!opt) {
+                opt = document.createElement('div');
+                opt.className = 'chip-option';
+                opt.setAttribute('data-value', name);
+                opt.textContent = name;
+                // Insert before the custom-input row so it stays last.
+                const customRow = ollamaOptionsBox.querySelector('.chip-custom-row');
+                ollamaOptionsBox.insertBefore(opt, customRow);
+            }
+            return opt;
+        };
+
+        // Delegated click handler for the preset/custom model options.
+        ollamaOptionsBox.addEventListener('click', (e) => {
+            const opt = e.target.closest('.chip-option');
+            if (!opt) return;
+            selectModel(opt.getAttribute('data-value'), opt.textContent.trim());
         });
+
+        // Inline custom-model input: paste a name from `ollama list` and hit
+        // Enter to add + select it. Clicks inside the input must not bubble up
+        // to the document handler that closes the dropdown.
+        const customInput = document.getElementById('ollama-custom-model-input');
+        if (customInput) {
+            customInput.addEventListener('click', (e) => e.stopPropagation());
+            customInput.addEventListener('keydown', (e) => {
+                if (e.key !== 'Enter') return;
+                e.preventDefault();
+                const name = customInput.value.trim();
+                if (!name) return;
+                ensureOption(name);
+                selectModel(name, name);
+                customInput.value = '';
+            });
+        }
 
         document.addEventListener('click', () => {
             ollamaWrapper.classList.remove('open');

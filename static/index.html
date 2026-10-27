@@ -180,6 +180,10 @@
             <div class="chip-dropdown" id="ollama-model-options">
               <div class="chip-option active" data-value="gemma4:e2b">gemma4:e2b</div>
               <div class="chip-option" data-value="gemma4:latest">gemma4:4b</div>
+              <div class="chip-custom-row">
+                <input type="text" id="ollama-custom-model-input" class="chip-custom-input"
+                       placeholder="paste model from `ollama list`… ↵" autocomplete="off" spellcheck="false">
+              </div>
             </div>
             <input type="hidden" id="cfg-model" value="gemma4:e2b">
           </div>

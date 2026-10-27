@@ -64,13 +64,26 @@ export async function loadConfig() {
         const cfg = await r.json();
 
         const modelEl = document.getElementById('cfg-model');
-        if (modelEl) modelEl.value = cfg.model || 'gemma4:e2b';
+        // Sanitize the stored model: `__custom__` is a legacy sentinel that was
+        // never a real model name and must never reach Ollama. Fall back to the
+        // default and heal the backend so the junk value doesn't persist.
+        let currentModel = cfg.model || 'gemma4:e2b';
+        if (currentModel === '__custom__' || !currentModel.trim()) {
+            currentModel = 'gemma4:e2b';
+            try {
+                await fetch(`${API}/config`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ model: currentModel }),
+                });
+            } catch { /* non-fatal — UI still shows the default */ }
+        }
+        if (modelEl) modelEl.value = currentModel;
 
         // Sync the ollama model chip label with the loaded value
         const ollamaModelLabel = document.getElementById('ollama-model-label');
         const ollamaOptions = document.querySelectorAll('#ollama-model-options .chip-option');
         if (ollamaModelLabel && ollamaOptions.length) {
-            const currentModel = cfg.model || 'gemma4:e2b';
             let matched = false;
             ollamaOptions.forEach(opt => {
                 if (opt.getAttribute('data-value') === currentModel) {
@@ -81,7 +94,20 @@ export async function loadConfig() {
                     opt.classList.remove('active');
                 }
             });
-            if (!matched) ollamaModelLabel.textContent = currentModel;
+            // Persisted custom model (not one of the hardcoded options): add it
+            // back to the dropdown as a selectable entry, just before the input row.
+            if (!matched) {
+                ollamaModelLabel.textContent = currentModel;
+                const optionsBox = document.getElementById('ollama-model-options');
+                if (optionsBox) {
+                    const opt = document.createElement('div');
+                    opt.className = 'chip-option active';
+                    opt.setAttribute('data-value', currentModel);
+                    opt.textContent = currentModel;
+                    const customRow = optionsBox.querySelector('.chip-custom-row');
+                    optionsBox.insertBefore(opt, customRow);
+                }
+            }
         }
 
         const maxSearchesEl = document.getElementById('cfg-max-searches');

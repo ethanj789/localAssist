@@ -112,6 +112,33 @@
     font-size: 14px;
 }
 
+.chip-custom-row {
+    border-top: 1px solid var(--border);
+    padding: 8px;
+}
+
+.chip-custom-input {
+    width: 100%;
+    box-sizing: border-box;
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 7px 10px;
+    font-family: var(--sans);
+    font-size: 12px;
+    color: var(--text);
+    outline: none;
+    transition: border-color 0.12s;
+}
+
+.chip-custom-input::placeholder {
+    color: var(--muted);
+}
+
+.chip-custom-input:focus {
+    border-color: var(--accent);
+}
+
 /* ── Chip toggle button (cloud, thinking) ── */
 .chip-toggle {
     display: inline-flex;
