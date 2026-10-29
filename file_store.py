@@ -58,7 +58,7 @@ MAX_B64_CHARS = 20_000_000
 
 # Hard cap on rendered pages per file; a truncation note is shown to the model
 # when a file exceeds this (handled in prep_file).
-MAX_PAGES = 5
+MAX_PAGES = 10
 
 # data:<mime>;base64,<payload>  →  capture mime + payload. Deliberately NOT
 # image-only: PDFs arrive as data:application/pdf;base64,...
