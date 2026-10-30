@@ -329,6 +329,7 @@ def _pending_edit_payload(conversation_id: str) -> dict | None:
         "action": edit_args.get("action", "replace"),
         "anchor": edit_args.get("anchor", ""),
         "content": edit_args.get("content", ""),
+        "replace_all": bool(edit_args.get("replace_all", False)),
         "summary": edit_args.get("summary", ""),
     }
     preview = agent._resolve_preview(edit_inputs)
@@ -340,6 +341,7 @@ def _pending_edit_payload(conversation_id: str) -> dict | None:
             "path": edit_inputs["path"],
             "action": edit_inputs["action"],
             "anchor": edit_inputs["anchor"],
+            "replace_all": edit_inputs["replace_all"],
             "summary": edit_inputs["summary"],
         },
         "preview": preview,

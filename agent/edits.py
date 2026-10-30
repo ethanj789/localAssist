@@ -100,6 +100,7 @@ def _resolve_preview(edit_inputs: dict) -> dict:
         "action": edit_inputs.get("action", "replace"),
         "anchor": edit_inputs.get("anchor", ""),
         "content": edit_inputs.get("content", ""),
+        "replace_all": edit_inputs.get("replace_all", False),
     }
     try:
         resolved = resolve_edit(WORKSPACE_ROOT, edit)

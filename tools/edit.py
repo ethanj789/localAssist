@@ -1,3 +1,4 @@
+import difflib
 import logging
 import re
 from pathlib import Path
@@ -135,81 +136,282 @@ def _build_norm_map(text: str) -> tuple[str, list[int]]:
     return ''.join(norm), pos_map
 
 
-# ---------------------------------------------------------------------------
-# Anchor finding — 3-tier matching
-# ---------------------------------------------------------------------------
+# Decoration characters that small models routinely add, drop, or mangle when
+# copying an anchor out of markdown-ish text: emphasis/heading/quote markers and
+# the smart-quote variants of ' and ". Tier 4 neutralizes these so an anchor
+# like "Summary:" still matches "**Summary:**" in the file. Kept deliberately
+# small — we only strip presentational noise, never letters/digits/structure.
+_MD_DECORATION_CHARS = frozenset('*_`#>~')
+_SMART_QUOTE_MAP = {
+    '\u2018': "'", '\u2019': "'",   # ' '
+    '\u201c': '"', '\u201d': '"',   # " "
+    '\u2013': '-', '\u2014': '-',   # en/em dash
+}
 
-def _find_anchor(content: str, anchor: str) -> tuple[int, int]:
+
+def _build_md_norm_map(text: str) -> tuple[str, list[int]]:
     """
-    Find anchor text in content. Returns (start, end) indices in original content.
-    Tries three tiers:
-      1. Case-sensitive exact match
-      2. Case-insensitive exact match
-      3. Whitespace-tolerant match
+    Like ``_build_norm_map`` (whitespace-collapsing, newline-agnostic) but ALSO
+    drops markdown decoration characters (``* _ ` # > ~``) and folds smart
+    quotes/dashes to their ASCII form. Used only as the last-resort matching
+    tier, so a model that writes ``Summary:`` or ``"quote"`` still lands on the
+    file's ``**Summary:**`` / ``"quote"``.
 
-    Raises ValueError if not found or ambiguous (multiple matches).
+    Returns (normalized_text, position_map) where position_map[i] is the index
+    in the ORIGINAL text that produced normalized char i, so a match can be
+    mapped back to an exact original span.
     """
-    # --- Tier 1: Case-sensitive ---
-    if anchor in content:
-        count = content.count(anchor)
-        if count > 1:
-            raise ValueError(
-                f"Anchor matched {count} times (case-sensitive). "
-                f"Provide more context to make it unique.\n{anchor}"
-            )
-        start = content.index(anchor)
-        return (start, start + len(anchor))
+    norm: list[str] = []
+    pos_map: list[int] = []
+    i = 0
+    length = len(text)
+    line_start = True
 
-    # --- Tier 2: Case-insensitive ---
-    escaped = re.escape(anchor)
-    ci_matches = list(re.finditer(escaped, content, flags=re.IGNORECASE))
-    if len(ci_matches) == 1:
-        m = ci_matches[0]
-        return (m.start(), m.end())
-    if len(ci_matches) > 1:
-        raise ValueError(
-            f"Anchor matched {len(ci_matches)} times (case-insensitive). "
-            f"Provide more context.\n{anchor}"
-        )
+    while i < length:
+        ch = text[i]
+        folded = _SMART_QUOTE_MAP.get(ch, ch)
 
-    # --- Tier 3: Whitespace-tolerant ---
-    log.debug("Anchor not found with exact/CI, trying whitespace-tolerant.")
-    norm_content, content_map = _build_norm_map(content)
-    norm_anchor, _ = _build_norm_map(anchor)
+        if folded in (' ', '\t', '\n', '\r'):
+            if line_start:
+                i += 1
+            else:
+                if not norm or norm[-1] != ' ':
+                    norm.append(' ')
+                    pos_map.append(i)
+                i += 1
+        elif folded in _MD_DECORATION_CHARS:
+            # Drop the decoration char entirely; do NOT flip line_start, so a
+            # line that opens with "## " or "> " still has its leading space run
+            # treated as leading (skipped) rather than becoming a real space.
+            i += 1
+        else:
+            line_start = False
+            norm.append(folded)
+            pos_map.append(i)
+            i += 1
 
+    while norm and norm[-1] == ' ':
+        norm.pop()
+        pos_map.pop()
+
+    return ''.join(norm), pos_map
+
+
+# ---------------------------------------------------------------------------
+# Rich failure context — show the model the ACTUAL file text near its miss
+# ---------------------------------------------------------------------------
+
+def _closest_snippets(content: str, anchor: str, limit: int = 2) -> list[str]:
+    """
+    Find the passages of ``content`` that most resemble ``anchor`` so a failed
+    match can tell the model what to copy instead of just echoing its own bad
+    anchor back. Slides a window the size of the anchor across the file (line by
+    line, newline-agnostic) and ranks by difflib similarity. Returns up to
+    ``limit`` distinct original-text snippets, best first. Best-effort: returns
+    [] rather than raising on any edge case.
+    """
+    try:
+        norm_anchor, _ = _build_norm_map(anchor)
+        if not norm_anchor:
+            return []
+        lines = content.splitlines(keepends=True)
+        if not lines:
+            return []
+
+        # Choose a window (in lines) roughly covering the anchor's length.
+        approx_lines = max(1, anchor.count('\n') + 1)
+        window = min(len(lines), approx_lines + 2)
+
+        matcher = difflib.SequenceMatcher(a=norm_anchor)
+        scored: list[tuple[float, str]] = []
+        for i in range(len(lines)):
+            chunk = ''.join(lines[i:i + window])
+            norm_chunk, _ = _build_norm_map(chunk)
+            if not norm_chunk:
+                continue
+            matcher.set_seq2(norm_chunk)
+            ratio = matcher.quick_ratio()
+            if ratio > 0.4:
+                scored.append((ratio, chunk.strip('\n')))
+
+        scored.sort(key=lambda t: t[0], reverse=True)
+        out: list[str] = []
+        seen: set[str] = set()
+        for _ratio, snip in scored:
+            key = snip.strip()
+            if key and key not in seen:
+                seen.add(key)
+                out.append(snip)
+            if len(out) >= limit:
+                break
+        return out
+    except Exception:
+        return []
+
+
+def _format_snippets(snippets: list[str]) -> str:
+    """Render snippet list for an error message, each clearly delimited so the
+    model can copy one verbatim as its next anchor."""
+    if not snippets:
+        return ""
+    parts = ["\nClosest matching text in the file (copy one of these EXACTLY as your anchor):"]
+    for s in snippets:
+        parts.append("-----")
+        parts.append(s)
+        parts.append("-----")
+    return "\n".join(parts)
+
+
+def _match_contexts(content: str, spans: list[tuple[int, int]], limit: int = 4) -> str:
+    """For an ambiguous ('too many matches') anchor, show each occurrence with a
+    little surrounding text so the model can see what DISTINGUISHES them and pick
+    a longer unique anchor. Spans are (start, end) indices into ``content``."""
+    parts = [
+        "\nThe anchor occurs at these locations (shown with the line before and "
+        "after each — add some of that neighboring text to your anchor to target ONE):"
+    ]
+    for idx, (start, end) in enumerate(spans[:limit], 1):
+        # Show the matched line plus ONE neighboring line on each side. For
+        # identical repeated lines the match itself is not distinguishing, so the
+        # neighbor lines are exactly what the model must fold into its anchor.
+        line_start = content.rfind("\n", 0, start) + 1
+        prev_start = content.rfind("\n", 0, line_start - 1) + 1 if line_start > 0 else 0
+        line_end = content.find("\n", end)
+        line_end = len(content) if line_end == -1 else line_end
+        next_end = content.find("\n", line_end + 1)
+        next_end = len(content) if next_end == -1 else next_end
+        snippet = content[prev_start:next_end].replace("\n", "⏎")
+        parts.append(f"  {idx}. {snippet}")
+    if len(spans) > limit:
+        parts.append(f"  … and {len(spans) - limit} more.")
+    return "\n".join(parts)
+
+
+# ---------------------------------------------------------------------------
+# Anchor finding — 4-tier matching
+# ---------------------------------------------------------------------------
+
+def _norm_find_all(content: str, anchor: str, md: bool) -> list[tuple[int, int]]:
+    """Run a single normalized matching pass and return ALL original-text spans
+    it resolves to. ``md=False`` is the whitespace-tolerant tier; ``md=True``
+    additionally neutralizes markdown decoration + smart quotes. Returns [] when
+    the (normalized) anchor is empty or not present."""
+    build = _build_md_norm_map if md else _build_norm_map
+    norm_content, content_map = build(content)
+    norm_anchor, _ = build(anchor)
     if not norm_anchor:
-        raise ValueError(f"Anchor is empty or whitespace-only.\n{anchor}")
+        return []
 
-    matches = []
+    spans: list[tuple[int, int]] = []
     start_pos = 0
     while True:
         idx = norm_content.find(norm_anchor, start_pos)
         if idx == -1:
             break
-        matches.append(idx)
+        match_end_norm = idx + len(norm_anchor) - 1
+        orig_start = content_map[idx]
+        orig_end = content_map[match_end_norm] + 1
+        # Extend to include trailing spaces/tabs (not newlines).
+        while orig_end < len(content) and content[orig_end] in (' ', '\t'):
+            orig_end += 1
+        spans.append((orig_start, orig_end))
         start_pos = idx + 1
+    return spans
 
-    if len(matches) == 0:
-        raise ValueError(
-            f"Anchor not found (tried exact, case-insensitive, whitespace-tolerant).\n{anchor}"
-        )
-    if len(matches) > 1:
-        raise ValueError(
-            f"Anchor matched {len(matches)} times (whitespace-tolerant). "
-            f"Provide more context.\n{anchor}"
-        )
 
-    match_start_norm = matches[0]
-    match_end_norm = matches[0] + len(norm_anchor) - 1
+def _find_anchor(content: str, anchor: str, find_all: bool = False):
+    """
+    Find anchor text in content. Returns (start, end) indices in original
+    content — or, when ``find_all`` is True, a list of ALL non-overlapping
+    (start, end) spans (for replace_all).
 
-    orig_start = content_map[match_start_norm]
-    orig_end = content_map[match_end_norm] + 1
+    Four tiers, tried in order and stopping at the first that finds ANY match:
+      1. Case-sensitive exact
+      2. Case-insensitive
+      3. Whitespace-tolerant (newline-agnostic)
+      4. Markdown/punctuation-insensitive (drops * _ ` # > ~, folds smart quotes)
 
-    # Extend to include trailing whitespace (not newlines)
-    while orig_end < len(content) and content[orig_end] in (' ', '\t'):
-        orig_end += 1
+    Raises ValueError if not found, or — when ``find_all`` is False — if the
+    anchor is ambiguous (matches more than once). Failure messages carry the
+    ACTUAL nearby file text so the model can fix the anchor instead of guessing.
+    """
+    def _result(spans: list[tuple[int, int]]):
+        return list(spans) if find_all else spans[0]
 
-    return (orig_start, orig_end)
+    # --- Tier 1: Case-sensitive exact ---
+    if anchor in content:
+        spans = []
+        start_pos = 0
+        while True:
+            idx = content.find(anchor, start_pos)
+            if idx == -1:
+                break
+            spans.append((idx, idx + len(anchor)))
+            start_pos = idx + len(anchor)
+        if find_all:
+            return spans
+        if len(spans) > 1:
+            raise ValueError(
+                f"Anchor matched {len(spans)} times (case-sensitive). "
+                "Add surrounding words to target exactly one occurrence, or set "
+                "replace_all=true to change every occurrence."
+                + _match_contexts(content, spans)
+            )
+        return spans[0]
+
+    # --- Tier 2: Case-insensitive ---
+    escaped = re.escape(anchor)
+    ci = [(m.start(), m.end()) for m in re.finditer(escaped, content, flags=re.IGNORECASE)]
+    if ci:
+        if find_all:
+            return ci
+        if len(ci) > 1:
+            raise ValueError(
+                f"Anchor matched {len(ci)} times (case-insensitive). "
+                "Add surrounding words to target exactly one occurrence, or set "
+                "replace_all=true to change every occurrence."
+                + _match_contexts(content, ci)
+            )
+        return ci[0]
+
+    # --- Tier 3: Whitespace-tolerant ---
+    log.debug("Anchor not found with exact/CI, trying whitespace-tolerant.")
+    if not _build_norm_map(anchor)[0]:
+        raise ValueError(f"Anchor is empty or whitespace-only.\n{anchor}")
+    ws = _norm_find_all(content, anchor, md=False)
+    if ws:
+        if find_all:
+            return ws
+        if len(ws) > 1:
+            raise ValueError(
+                f"Anchor matched {len(ws)} times (whitespace-tolerant). "
+                "Add surrounding words to target exactly one occurrence, or set "
+                "replace_all=true to change every occurrence."
+                + _match_contexts(content, ws)
+            )
+        return ws[0]
+
+    # --- Tier 4: Markdown / punctuation-insensitive (last resort) ---
+    log.debug("Anchor not found with whitespace-tolerant, trying markdown-insensitive.")
+    mdm = _norm_find_all(content, anchor, md=True)
+    if mdm:
+        if find_all:
+            return mdm
+        if len(mdm) > 1:
+            raise ValueError(
+                f"Anchor matched {len(mdm)} times (ignoring markdown formatting). "
+                "Add surrounding words to target exactly one occurrence, or set "
+                "replace_all=true to change every occurrence."
+                + _match_contexts(content, mdm)
+            )
+        return mdm[0]
+
+    # --- Nothing matched in any tier: show the closest actual text ---
+    raise ValueError(
+        "Anchor not found (tried exact, case-insensitive, whitespace-tolerant, "
+        "and markdown-insensitive). The text you gave does not appear in the file."
+        + _format_snippets(_closest_snippets(content, anchor))
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -232,6 +434,7 @@ def _apply_single_edit(content: str, edit: dict) -> str:
     action = edit.get("action", "replace")
     anchor = edit.get("anchor", "")
     new_text = edit.get("content", "")
+    replace_all = bool(edit.get("replace_all", False))
 
     if action == "create":
         # Full file creation — content is the entire file
@@ -240,7 +443,30 @@ def _apply_single_edit(content: str, edit: dict) -> str:
     if not anchor:
         raise ValueError(f"Action '{action}' requires a non-empty anchor.")
 
-    # Find the anchor
+    # replace_all only makes sense for span-affecting actions. For insert it is
+    # ambiguous (insert before/after WHICH occurrence?), so reject it loudly.
+    if replace_all and action not in ("replace", "delete"):
+        raise ValueError(
+            f"replace_all is only valid with action 'replace' or 'delete', not '{action}'."
+        )
+
+    if replace_all:
+        # Resolve EVERY occurrence and rewrite right-to-left so earlier indices
+        # stay valid as we splice. One anchor, many sites — blast radius is the
+        # match count (surfaced to the user in the summary/preview).
+        spans = _find_anchor(content, anchor, find_all=True)
+        for start, end in sorted(spans, key=lambda s: s[0], reverse=True):
+            if action == "replace":
+                content = content[:start] + new_text + content[end:]
+            else:  # delete
+                del_end = end
+                at_line_start = start == 0 or content[start - 1] == '\n'
+                if at_line_start and del_end < len(content) and content[del_end] == '\n':
+                    del_end += 1
+                content = content[:start] + content[del_end:]
+        return content
+
+    # Find the single anchor (raises on ambiguity).
     start, end = _find_anchor(content, anchor)
 
     if action == "replace":

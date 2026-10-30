@@ -221,11 +221,17 @@ async def list_tools() -> list[types.Tool]:
                 "  - 'create': make a new file; anchor is ignored, content is the ENTIRE file.\n"
                 "\n"
                 "Anchor rules:\n"
-                "  - The anchor must match the file text exactly (whitespace and line breaks are ignored, so a single-line anchor may span wrapped lines).\n"
+                "  - The anchor must match the file text (whitespace and line breaks are ignored, so a single-line anchor may span wrapped lines; "
+                "markdown decoration like **bold** and smart quotes are also tolerated).\n"
                 "  - Keep anchors focused: a unique phrase (roughly 5-20 words), just long enough to appear exactly once.\n"
-                "  - If the anchor appears more than once, the edit is rejected — add a few more words to make it unique.\n"
+                "  - If the anchor appears more than once the edit is rejected — the error lists each occurrence with surrounding context so you can "
+                "add a few words to target one, OR set replace_all=true to change EVERY occurrence at once.\n"
+                "  - If the anchor is not found, the error shows the closest actual text in the file — copy it EXACTLY as your next anchor.\n"
                 "\n"
-                "To make multiple changes, call propose_edit once per change."
+                "replace_all (optional, replace/delete only): when true, applies the action to EVERY occurrence of the anchor instead of requiring "
+                "a unique match. Use deliberately — it changes all matches at once.\n"
+                "\n"
+                "To make multiple DIFFERENT changes, call propose_edit once per change."
             ),
             inputSchema={
                 "type": "object",
@@ -246,6 +252,10 @@ async def list_tools() -> list[types.Tool]:
                     "content": {
                         "type": "string",
                         "description": "For 'replace': the rewritten version of the anchored text that takes its place (same span, edited). For insert: the new line(s) to add. For 'create': the entire file contents. Ignored for 'delete'."
+                    },
+                    "replace_all": {
+                        "type": "boolean",
+                        "description": "Optional. For 'replace'/'delete' only. When true, applies the action to EVERY occurrence of the anchor instead of requiring a unique match. Default false."
                     },
                     "summary": {
                         "type": "string",
@@ -363,6 +373,7 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
                 "action": arguments.get("action", "replace"),
                 "anchor": arguments.get("anchor", ""),
                 "content": arguments.get("content", ""),
+                "replace_all": bool(arguments.get("replace_all", False)),
             }
 
             try:

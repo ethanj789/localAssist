@@ -601,6 +601,7 @@ async def _run_tool_loop(
                     "action": gate_args.get("action", "replace"),
                     "anchor": gate_args.get("anchor", ""),
                     "content": gate_args.get("content", ""),
+                    "replace_all": bool(gate_args.get("replace_all", False)),
                     "summary": gate_args.get("summary", ""),
                 }
 
@@ -615,6 +616,7 @@ async def _run_tool_loop(
                     "action": edit_inputs["action"],
                     "anchor": edit_inputs["anchor"],
                     "content": edit_inputs["content"],
+                    "replace_all": edit_inputs["replace_all"],
                     "summary": edit_inputs["summary"],
                 }))
 
@@ -688,6 +690,7 @@ async def _run_tool_loop(
                         "path": edit_inputs["path"],
                         "action": edit_inputs["action"],
                         "anchor": edit_inputs["anchor"],
+                        "replace_all": edit_inputs["replace_all"],
                         "summary": edit_inputs["summary"],
                     },
                     "preview": preview,
