@@ -175,9 +175,9 @@ def get_messages(conversation_id: str) -> list[dict]:
         return messages
 
 # Tools whose tool call must be confirmed by the user before it is answered.
-# Kept here (not imported from agent) to avoid a db<-agent import cycle; the
-# canonical copy lives in agent.REQUIRES_CONFIRMATION and must match this set.
-REQUIRES_CONFIRMATION = {"propose_edit"}
+# The canonical set lives in config (a leaf module), so both `db` and `agent`
+# import it from there without forming a db<->agent import cycle.
+from config import REQUIRES_CONFIRMATION
 
 
 def get_pending_tool_call(conversation_id: str) -> dict | None:

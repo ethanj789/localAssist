@@ -1,2 +1,0 @@
-list_files: {}
-read_file: {"path": "hello world.txt"}

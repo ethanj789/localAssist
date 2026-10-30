@@ -240,3 +240,21 @@ def save_memory(data: dict):
     import json
     MEMORY_FILE.write_text(json.dumps(data, indent=4))
 
+
+# ─── Edit-confirmation policy ───────────────────────────────────────────────
+# The single source of truth for which tools must be confirmed by the user
+# before their tool call is answered (break-and-resume). It lives here (a leaf
+# module that imports nothing project-local) because BOTH `db`
+# (get_pending_tool_call) and `agent` (the tool loop) need it, and `db` must not
+# import `agent` or we'd get a db<->agent import cycle. Previously `db.py` kept
+# its own duplicate of this set that had to be manually kept in sync.
+#
+# The edit-RESULT strings (applied/stale/invalid/read-only/reject) and the
+# extra-edit auto-reject message live in agent/edits.py, not here — those are
+# agent-turn contract vocabulary, used only inside the agent package, and are
+# behavior rather than configuration.
+
+# Tools whose call must be confirmed by the user (break-and-resume): when one
+# is called, the turn ends with the tool call left UNANSWERED in the DB and the
+# UI surfaces a pending approval derived from DB truth.
+REQUIRES_CONFIRMATION = {"propose_edit"}
