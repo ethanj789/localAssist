@@ -230,6 +230,21 @@
         <button id="close-memory-modal" class="close-modal">&times;</button>
       </div>
       <div class="modal-body">
+        <form id="memory-add-form" class="memory-add-form">
+          <input id="memory-add-key" class="memory-add-input" type="text" placeholder="key (e.g. preferred_language)" autocomplete="off" />
+          <input id="memory-add-value" class="memory-add-input" type="text" placeholder="value (e.g. Python)" autocomplete="off" />
+          <div class="chip-select chip-select-down" id="memory-bucket-select">
+            <button type="button" class="chip-trigger" id="memory-bucket-trigger" title="Which section to save into">
+              <span class="chip-icon">📌</span> <span id="memory-bucket-label">Manual</span>
+            </button>
+            <div class="chip-dropdown" id="memory-bucket-options">
+              <div class="chip-option active" data-value="manual"><span class="chip-opt-icon">📌</span><span class="chip-opt-label">Manual</span></div>
+              <div class="chip-option" data-value="agent_managed"><span class="chip-opt-icon">🤖</span><span class="chip-opt-label">Agent</span></div>
+            </div>
+            <input type="hidden" id="memory-add-bucket" value="manual">
+          </div>
+          <button type="submit" class="btn-add-slot">Add</button>
+        </form>
         <div id="memory-slots">
           <!-- Slots rendered here -->
         </div>

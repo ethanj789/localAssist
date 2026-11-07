@@ -1,4 +1,5 @@
 import asyncio
+import datetime
 import os
 import sys
 import uuid
@@ -281,16 +282,70 @@ async def get_memory():
     return get_raw_memory()
 
 
-@app.delete("/memory/{key}")
-async def delete_memory_slot(key: str):
+class MemorySlotIn(BaseModel):
+    key: str
+    value: str
+    bucket: str = "agent_managed"  # "manual" | "agent_managed" (UI always sends explicit)
+
+
+def _normalize_mem_key(key: str) -> str:
+    # Mirror tools.memory._normalize_key so UI-written keys collapse the same way
+    # (case/spacing) as agent-written ones.
+    return "_".join(key.strip().lower().split())
+
+
+@app.put("/memory")
+async def upsert_memory_slot(slot: MemorySlotIn):
+    bucket = slot.bucket
+    if bucket not in ("manual", "agent_managed"):
+        raise HTTPException(status_code=400, detail=f"Invalid bucket '{bucket}'.")
+
+    k = _normalize_mem_key(slot.key)
+    value = (slot.value or "").strip()
+    if not k:
+        raise HTTPException(status_code=400, detail="Key is empty after normalization.")
+    if not value:
+        raise HTTPException(status_code=400, detail="Value is required.")
+
     data = get_raw_memory()
-    agent_managed = data.get("agent_managed", {})
-    if not isinstance(agent_managed, dict):
-        agent_managed = {}
-    if key not in agent_managed:
-        raise HTTPException(status_code=404, detail=f"Preference '{key}' not found")
-    del agent_managed[key]
+    manual = data.get("manual") if isinstance(data.get("manual"), dict) else {}
+    agent_managed = data.get("agent_managed") if isinstance(data.get("agent_managed"), dict) else {}
+
+    if bucket == "manual":
+        # A key lives in exactly one bucket: promoting to manual drops any
+        # agent-managed entry with the same key.
+        agent_managed.pop(k, None)
+        manual[k] = value  # manual entries are plain key -> value strings
+    else:
+        manual.pop(k, None)
+        existed = k in agent_managed
+        created = agent_managed.get(k, {}).get("created") if existed else None
+        now = datetime.datetime.now().isoformat()
+        agent_managed[k] = {
+            "value": value,
+            "created": created or now,
+            "updated": now,
+        }
+
+    data["manual"] = manual
     data["agent_managed"] = agent_managed
+    save_memory(data)
+    return {"status": "ok", "bucket": bucket, "key": k}
+
+
+@app.delete("/memory/{bucket}/{key}")
+async def delete_memory_slot(bucket: str, key: str):
+    if bucket not in ("manual", "agent_managed"):
+        raise HTTPException(status_code=400, detail=f"Invalid bucket '{bucket}'.")
+
+    data = get_raw_memory()
+    section = data.get(bucket)
+    if not isinstance(section, dict):
+        section = {}
+    if key not in section:
+        raise HTTPException(status_code=404, detail=f"'{key}' not found in {bucket}.")
+    del section[key]
+    data[bucket] = section
     save_memory(data)
     return {"status": "ok"}
 

@@ -135,6 +135,101 @@
     flex: 1;
 }
 
+/* Add Memory Form — single row on desktop: key | value | bucket | Add.
+   Reflows to a 2-row grid on narrow/mobile widths (see media query below). */
+.memory-add-form {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto auto;
+    gap: 8px;
+    align-items: center;
+    margin-bottom: 16px;
+}
+
+.memory-add-input {
+    min-width: 0;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 9px 12px;
+    color: var(--text);
+    font-family: var(--sans);
+    font-size: 13px;
+    transition: border-color 0.2s;
+}
+
+.memory-add-input:focus {
+    outline: none;
+    border-color: var(--accent);
+}
+
+.memory-add-input::placeholder {
+    color: var(--muted);
+}
+
+/* Bucket chip-select — reuses global .chip-* styling (input.css) but opens
+   downward since the add form sits at the top of the modal. */
+.memory-add-form .chip-trigger {
+    padding: 9px 12px;
+    font-size: 13px;
+    border-radius: 10px;
+    width: 100%;
+    justify-content: center;
+}
+
+.chip-select-down .chip-dropdown {
+    bottom: auto;
+    top: calc(100% + 6px);
+    min-width: 100%;
+    width: max-content;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+}
+
+/* Keep option icon + label tight so the menu hugs its content */
+.memory-add-form .chip-option {
+    gap: 8px;
+    padding: 9px 14px;
+}
+
+.btn-add-slot {
+    background: var(--accent);
+    color: var(--bg);
+    border: none;
+    border-radius: 10px;
+    padding: 9px 18px;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s;
+    white-space: nowrap;
+}
+
+.btn-add-slot:hover {
+    filter: brightness(1.1);
+    transform: translateY(-1px);
+}
+
+/* Section labels + bucket badges */
+.memory-section-label {
+    font-family: var(--mono);
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--muted);
+    margin: 14px 0 8px;
+}
+
+.memory-section-label:first-child {
+    margin-top: 0;
+}
+
+.empty-state-inline {
+    padding: 10px 0 4px;
+    text-align: left;
+    font-size: 13px;
+}
+
+
+
 /* Memory Slot Styles */
 .memory-slot {
     background: var(--bg);
@@ -209,6 +304,15 @@
 
 /* Mobile Adjustments */
 @media (max-width: 768px) {
+    /* Reflow the add form: key + value on their own full-width row each,
+       bucket chip and Add button share the bottom row. */
+    .memory-add-form {
+        grid-template-columns: 1fr 1fr;
+    }
+    .memory-add-input {
+        grid-column: 1 / -1;
+    }
+
     .memory-btn .label, .app-btn .label {
         display: none;
     }
