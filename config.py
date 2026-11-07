@@ -214,13 +214,14 @@ def load_memory() -> str:
                 for k, v in manual.items():
                     output.append(f"- {k}: {v}")
             
-            # Agent-managed memories
-            agent_managed = data.get("agent_managed", [])
-            if agent_managed:
+            # Agent-managed preferences (keyed key -> value store).
+            agent_managed = data.get("agent_managed", {})
+            if isinstance(agent_managed, dict) and agent_managed:
                 if output: output.append("") # spacer
-                output.append("Memories:")
-                for slot in agent_managed:
-                    output.append(f"- {slot['content']}")
+                output.append("User preferences:")
+                for k, slot in agent_managed.items():
+                    val = slot.get("value", "") if isinstance(slot, dict) else slot
+                    output.append(f"- {k}: {val}")
             
             return "\n".join(output)
     except Exception:
@@ -234,7 +235,7 @@ def get_raw_memory() -> dict:
             return json.loads(MEMORY_FILE.read_text())
     except Exception:
         pass
-    return {"manual": {}, "agent_managed": []}
+    return {"manual": {}, "agent_managed": {}}
 
 def save_memory(data: dict):
     import json

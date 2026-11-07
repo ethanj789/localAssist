@@ -281,14 +281,16 @@ async def get_memory():
     return get_raw_memory()
 
 
-@app.delete("/memory/{index}")
-async def delete_memory_slot(index: int):
+@app.delete("/memory/{key}")
+async def delete_memory_slot(key: str):
     data = get_raw_memory()
-    agent_managed = data.get("agent_managed", [])
-    new_list = [s for s in agent_managed if s["index"] != index]
-    if len(new_list) == len(agent_managed):
-        raise HTTPException(status_code=404, detail=f"Slot {index} not found")
-    data["agent_managed"] = new_list
+    agent_managed = data.get("agent_managed", {})
+    if not isinstance(agent_managed, dict):
+        agent_managed = {}
+    if key not in agent_managed:
+        raise HTTPException(status_code=404, detail=f"Preference '{key}' not found")
+    del agent_managed[key]
+    data["agent_managed"] = agent_managed
     save_memory(data)
     return {"status": "ok"}
 

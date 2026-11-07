@@ -171,26 +171,30 @@ async def list_tools() -> list[types.Tool]:
         types.Tool(
             name="save_user_preference",
             description=(
-                "Persistent personal memory ONLY. "
-                "Use this tool only for long-term user preferences, identity details, habits, or explicitly requested remembered information. "
-                "Examples: favorite editor, preferred coding language, recurring workflows, personal preferences. "
-                "Never use for project code, documentation, implementations, file contents, search results, temporary findings, task outputs, or general knowledge. "
-                "Do not use this tool unless the user clearly wants something remembered across conversations."            ),
+                "Persistent keyed store of the USER'S PREFERENCES ABOUT THEMSELVES and how they want help. "
+                "Each preference is a key -> value pair, e.g. key='preferred_language', value='Python'. "
+                "Writing an existing key OVERWRITES its value (upsert); you do not need to delete first to change one. "
+                "USE ONLY FOR: stable facts/preferences about the user — favorite editor or language, formatting/style preferences, "
+                "communication style, units, recurring personal habits, or something the user explicitly asks to be remembered. "
+                "NEVER USE FOR: feature requests, things to build, project TODOs or backlog items (e.g. 'add a graph to search', "
+                "'build a token estimator'), code, file contents, search results, task outputs, or anything temporary. "
+                "If the user is describing something they want built or changed in the project, that is NOT a preference — do not store it here."
+            ),
             inputSchema={
                 "type": "object",
                 "properties": {
                     "action": {
                         "type": "string",
-                        "enum": ["write", "delete", "edit", "clear_all"],
-                        "description": "The action to perform."
+                        "enum": ["write", "delete", "clear_all"],
+                        "description": "'write' to add or overwrite a preference by key, 'delete' to remove one by key, 'clear_all' to wipe agent-managed preferences."
                     },
-                    "content": {
+                    "key": {
                         "type": "string",
-                        "description": "The content to remember (for 'write') or the search target (for 'delete' or 'edit')."
+                        "description": "Short stable snake_case identifier for the preference, e.g. 'preferred_language', 'editor', 'response_style'. Required for 'write' and 'delete'. Writing an existing key overwrites it."
                     },
-                    "new_content": {
+                    "value": {
                         "type": "string",
-                        "description": "The new content to replace the matched memory (required for 'edit')."
+                        "description": "The preference value to store (required for 'write')."
                     }
                 },
                 "required": ["action"]
@@ -363,7 +367,7 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
     elif name == "draft_email":
         return await _draft_email(arguments.get("to", ""), arguments.get("subject", ""), arguments.get("body", ""))
     elif name == "save_user_preference":
-        result = await _manage_memory(arguments["action"], arguments.get("content"), arguments.get("new_content"))
+        result = await _manage_memory(arguments["action"], arguments.get("key"), arguments.get("value"))
         return [types.TextContent(type="text", text=result)]
     elif name == "propose_edit":
         try:

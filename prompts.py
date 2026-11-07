@@ -65,20 +65,22 @@ SYSTEM_PROMPT = (
     "When you call propose_edit and receive 'edit pending approval', that means SUCCESS — the edit was proposed and is waiting for the user to accept or reject it in the UI. "
     "Your job is simply to summarize what the edit does. Do NOT retry, do NOT apologize, do NOT say it failed. The edit is live and pending. "
 
-    "Memory is only for long-term user preferences, persistent facts, or explicit save requests. "
-    "Do not store code details, temporary findings, search results, or project state in memory unless explicitly asked. "
+    "save_user_preference stores stable facts/preferences about the USER as key -> value pairs. "
+    "Use it only for things true about the user over time (preferred language, editor, units, response style, habits, explicit save requests). "
+    "NEVER store feature requests, things to build, project TODOs, code, search results, or temporary state — those are not preferences. "
 )
 
 MEMORY_MANAGEMENT_PROMPT = (
-    "You have 10 memory slots. Write memories that are long-term useful: "
-    "user preferences, project facts, recurring corrections. Do NOT memorize "
-    "things already in the system prompt or current conversation. When full, "
-    "delete the least useful memory first, then write. "
-    "Manage memories using semantic search — you can edit or delete by providing "
-    "a string that matches the memory's meaning. "
-    "CRITICAL: Once you have successfully called the save_user_preference tool and received a success response, "
-    "DO NOT call it again for the same request. Your task for that memory is complete. "
-    "Simply respond to the user in a final message confirming that the memory was updated."
+    "save_user_preference is a KEYED store of stable facts about the user. Each entry is key -> value "
+    "(e.g. key='preferred_language', value='Python'). "
+    "To add or change a preference, 'write' with that key — writing an existing key OVERWRITES its value, "
+    "so you never need to delete first to update one. Use short snake_case keys and reuse the same key for the same concept. "
+    "'delete' removes a preference by key. "
+    "Only store things that are true about the USER over time. Do NOT store feature requests, things to build, "
+    "project TODOs or backlog items, code, or anything temporary — if the user is describing work to do on the project, that is NOT a preference. "
+    "Do not re-store something already present in the user preferences or system prompt. "
+    "CRITICAL: Once save_user_preference returns a success response, DO NOT call it again for the same request — "
+    "just reply confirming the preference was updated."
 )
 
 SUMMARIZE_HISTORY_PROMPT = "Summarize the following conversation history concisely in 3-5 sentences, preserving key facts and context."

@@ -63,4 +63,52 @@ def _extract_tool_call_from_text(content: str, available_tools: list[dict]) -> S
                     except json.JSONDecodeError:
                         continue
 
+    # Python-kwargs call form: name(key='value', key2="value2", ...)
+    # Some models emit tool calls as a Python function call rather than JSON.
+    # This has no surrounding { } so the patterns above miss it. Parse the
+    # kwargs into an args dict. Only string values are supported (what tools
+    # here take); bare numbers/booleans are also accepted.
+    names_alt = "|".join(re.escape(n) for n in tool_names)
+    kwargs_call = re.search(
+        rf'(?<![\w.])({names_alt})\s*\(([^)]*)\)',
+        stripped,
+        re.DOTALL,
+    ) if tool_names else None
+    if kwargs_call:
+        name = kwargs_call.group(1)
+        inner = kwargs_call.group(2).strip()
+        if name and inner:
+            # Match key=<quoted string> | key=number | key=true/false/none
+            pair_re = re.compile(
+                r"""(\w+)\s*=\s*(?:"((?:[^"\\]|\\.)*)"|'((?:[^'\\]|\\.)*)'|([-\d.]+|true|false|none))""",
+                re.IGNORECASE,
+            )
+            args = {}
+            for m in pair_re.finditer(inner):
+                k = m.group(1)
+                if m.group(2) is not None:
+                    args[k] = m.group(2).encode().decode("unicode_escape")
+                elif m.group(3) is not None:
+                    args[k] = m.group(3).encode().decode("unicode_escape")
+                else:
+                    raw = m.group(4)
+                    low = raw.lower()
+                    if low in ("true", "false"):
+                        args[k] = (low == "true")
+                    elif low == "none":
+                        args[k] = None
+                    else:
+                        try:
+                            args[k] = int(raw) if raw.lstrip("-").isdigit() else float(raw)
+                        except ValueError:
+                            args[k] = raw
+            if args:
+                return SimpleNamespace(
+                    id=f"call_{name}_extracted",
+                    function=SimpleNamespace(
+                        name=name,
+                        arguments=json.dumps(args),
+                    ),
+                )
+
     return None
