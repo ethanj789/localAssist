@@ -316,7 +316,7 @@ async def _fetch_news_raw(query: str) -> list[dict]:
         params = {
             "category": query_clean if query_clean in general_categories else "general",
             "lang": "en",
-            "max": 5,
+            "max": 10,
             "token": GNEWS_API_KEY,
         }
     else:
@@ -373,7 +373,7 @@ async def _gnews(query: str) -> list[types.TextContent]:
     return [types.TextContent(type="text", text=text)]
 
 
-async def get_news_dashboard(query: str, limit: int = 5) -> list[dict]:
+async def get_news_dashboard(query: str, limit: int = 10) -> list[dict]:
     """Dashboard entry point — cached articles trimmed to the fields the UI uses."""
     articles = await get_news_cached(query)
     out = []
