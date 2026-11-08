@@ -2,6 +2,7 @@ import { API } from './constants.js';
 import { showToast, scrollToBottom, escHtml } from './utils/dom.js';
 import { initThemes } from './ui/theme.js';
 import { loadConfig, applyConfig, bindReindexButtons, reflectProvider, setProviderLocked, providerLocked } from './api/config.js';
+import { bindMcpPanel } from './api/mcp.js';
 import {
     sendMessage,
     cancelStream,
@@ -35,6 +36,7 @@ async function init() {
     initAutoScroll();
     initSkillsAutocomplete();
     bindReindexButtons();
+    bindMcpPanel();
     bindSettingsAccordion();
     initAttachments(showToast);
 
@@ -661,25 +663,23 @@ function startNewChat(showNotification = true) {
 
 // ====== SETTINGS ACCORDION ======
 
-function bindSettingsAccordion() {
-    const toggleBtn = document.getElementById('settings-toggle-btn');
-    const content = document.getElementById('settings-content');
-    const arrow = document.getElementById('settings-arrow');
+function bindAccordion(toggleId, contentId, arrowId) {
+    const toggleBtn = document.getElementById(toggleId);
+    const content = document.getElementById(contentId);
+    const arrow = document.getElementById(arrowId);
+    if (!toggleBtn || !content) return;
 
-    if (toggleBtn && content) {
-        toggleBtn.addEventListener('click', () => {
-            const isHidden = content.style.display === 'none';
-            if (isHidden) {
-                content.style.display = 'flex';
-                toggleBtn.classList.add('open');
-                arrow.textContent = '▾';
-            } else {
-                content.style.display = 'none';
-                toggleBtn.classList.remove('open');
-                arrow.textContent = '▸';
-            }
-        });
-    }
+    toggleBtn.addEventListener('click', () => {
+        const isHidden = content.style.display === 'none';
+        content.style.display = isHidden ? 'flex' : 'none';
+        toggleBtn.classList.toggle('open', isHidden);
+        if (arrow) arrow.textContent = isHidden ? '▾' : '▸';
+    });
+}
+
+function bindSettingsAccordion() {
+    bindAccordion('mcp-toggle-btn', 'mcp-content', 'mcp-arrow');
+    bindAccordion('settings-toggle-btn', 'settings-content', 'settings-arrow');
 }
 
 // Start application

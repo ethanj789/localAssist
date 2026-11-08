@@ -19,6 +19,7 @@ from pydantic import BaseModel
 from config import CONFIG, get_raw_memory, save_memory
 import llm_provider
 from mcp_infra import MCPClient, MCPAggregator
+from mcp_infra import config as mcp_config
 import agent
 from agent import agent_loop
 from tools.index import BUSY_LOCK_FILE, build_index
@@ -296,6 +297,81 @@ async def reload_mcp_servers():
     (same refresh path used at startup). New/removed tools take effect on the
     NEXT turn for all conversations (KV-cache reset accepted). Local tools are
     unaffected."""
+    await mcp.refresh()
+    return {"status": "ok", "servers": mcp.external_status()}
+
+
+# ── MCP config writes (add / delete / enable-disable), each auto-reloads ──────
+#
+# These mutate mcp_servers.json / mcp_meta.json then rebuild external servers so
+# the change is live without a restart. Secrets (env/headers) are accepted on
+# add but never echoed back — the response is the same sanitized list the read
+# endpoint returns. Add/delete edit the standard config; toggle only flips the
+# sidecar's `enabled`.
+
+class McpServerIn(BaseModel):
+    name: str
+    # A standard mcpServers block: stdio (command/args/env) or remote (url/
+    # headers, optional type:"sse"). Validated + canonicalized server-side.
+    command: str | None = None
+    args: list[str] = []
+    env: dict[str, str] = {}
+    url: str | None = None
+    headers: dict[str, str] = {}
+    transport: str | None = None  # only "sse" is meaningful (http is default)
+    overwrite: bool = False
+
+
+class McpToggleIn(BaseModel):
+    name: str
+    enabled: bool
+
+
+@app.post("/mcp/servers")
+async def add_mcp_server(server: McpServerIn):
+    """Add a server to mcp_servers.json, then reload. Returns the fresh
+    sanitized list so the UI re-renders in one round-trip."""
+    block: dict = {}
+    if server.command:
+        block["command"] = server.command
+        if server.args:
+            block["args"] = server.args
+        if server.env:
+            block["env"] = server.env
+    elif server.url:
+        block["url"] = server.url
+        if (server.transport or "").strip().lower() == "sse":
+            block["type"] = "sse"
+        if server.headers:
+            block["headers"] = server.headers
+    try:
+        mcp_config.add_server(server.name, block, overwrite=server.overwrite)
+    except mcp_config.ConfigWriteError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    await mcp.refresh()
+    return {"status": "ok", "servers": mcp.external_status()}
+
+
+@app.delete("/mcp/servers/{name}")
+async def delete_mcp_server(name: str):
+    """Remove a server from mcp_servers.json (and prune its sidecar), then
+    reload."""
+    try:
+        mcp_config.remove_server(name)
+    except mcp_config.ConfigWriteError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    await mcp.refresh()
+    return {"status": "ok", "servers": mcp.external_status()}
+
+
+@app.post("/mcp/servers/toggle")
+async def toggle_mcp_server(body: McpToggleIn):
+    """Enable/disable a server (sidecar only — config untouched), then reload so
+    a disabled server drops its tools and an enabled one connects."""
+    try:
+        mcp_config.set_enabled(body.name, body.enabled)
+    except mcp_config.ConfigWriteError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
     await mcp.refresh()
     return {"status": "ok", "servers": mcp.external_status()}
 

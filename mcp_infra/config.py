@@ -16,7 +16,10 @@ Two files, kept deliberately separate:
            }
          }
 
-     We NEVER write to this file — it stays pristine for paste-in.
+     Historically we never wrote this file (kept pristine for paste-in). The
+     UI now edits it through the add/remove helpers below, which mutate ONLY the
+     `mcpServers` object and write atomically, preserving any other top-level
+     keys. Enable/disable never touches this file — it flips the sidecar.
 
   2. The METADATA sidecar (`mcp_meta.json`), keyed by the same server name,
      holding OUR runtime/UI state so the standard config stays clean:
@@ -258,3 +261,141 @@ def write_status(name: str, *, status: str, error: str | None = None, tool_count
     entry["tool_count"] = tool_count
     meta[name] = entry
     save_meta(meta)
+
+
+# ── UI-driven config mutations (add / remove / toggle) ────────────────────────
+#
+# These are the write side the reload UI needs. `write_status` above and
+# `save_meta` are best-effort (log and swallow). These, by contrast, raise
+# ConfigWriteError on failure so the HTTP layer can surface a real error instead
+# of silently losing a user's add. All three re-use the same read-modify-write
+# shape and leave unrelated top-level config keys untouched.
+
+class ConfigWriteError(Exception):
+    """Raised when a UI-driven config/sidecar write fails or is rejected."""
+
+
+def _atomic_write_json_strict(path: Path, data: dict) -> None:
+    """Like `_atomic_write_json` but raises on failure (for UI writes that must
+    not fail silently)."""
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    tmp.replace(path)
+
+
+def _normalize_block(block: dict) -> dict:
+    """Validate + canonicalize a single server block the UI submitted. Keeps
+    only recognized keys, coerces types, and verifies it names a transport
+    (command or url). Raises ConfigWriteError if malformed."""
+    if not isinstance(block, dict):
+        raise ConfigWriteError("server block must be an object")
+
+    out: dict = {}
+    command = block.get("command")
+    url = block.get("url")
+
+    if command:
+        out["command"] = str(command)
+        args = block.get("args")
+        if isinstance(args, list) and args:
+            out["args"] = [str(a) for a in args]
+        env = block.get("env")
+        if isinstance(env, dict) and env:
+            out["env"] = {str(k): str(v) for k, v in env.items()}
+    elif url:
+        out["url"] = str(url)
+        # Preserve the SSE override; http is the default and needs no marker.
+        override = str(block.get("type") or block.get("transport") or "").strip().lower()
+        if override == "sse":
+            out["type"] = "sse"
+        headers = block.get("headers")
+        if isinstance(headers, dict) and headers:
+            out["headers"] = {str(k): str(v) for k, v in headers.items()}
+    else:
+        raise ConfigWriteError("server needs either a 'command' (stdio) or a 'url' (remote)")
+
+    return out
+
+
+def add_server(name: str, block: dict, *, overwrite: bool = False) -> None:
+    """Add (or overwrite) a server block in `mcp_servers.json` and ensure a
+    sidecar entry exists for it. Validates the block; raises ConfigWriteError on
+    a bad name, a duplicate (unless overwrite), or a write failure."""
+    name = (name or "").strip()
+    if not name:
+        raise ConfigWriteError("server name is required")
+
+    normalized = _normalize_block(block)
+
+    config = load_raw_config()
+    if name in config and not overwrite:
+        raise ConfigWriteError(f"a server named {name!r} already exists")
+    config[name] = normalized
+
+    data = _read_json(CONFIG_PATH)
+    if not isinstance(data, dict):
+        data = {}
+    data["mcpServers"] = config
+    try:
+        _atomic_write_json_strict(CONFIG_PATH, data)
+    except Exception as exc:
+        raise ConfigWriteError(f"failed to write config: {exc}") from exc
+
+    # Give the new server a sidecar entry so it's immediately enabled and
+    # ordered after existing ones. backfill_meta assigns the next order.
+    meta = load_meta()
+    meta, _ = backfill_meta(config, meta)
+    save_meta(meta)
+
+
+def remove_server(name: str) -> None:
+    """Delete a server from `mcp_servers.json` and prune its sidecar entry.
+    Raises ConfigWriteError if the server isn't configured or the write fails."""
+    name = (name or "").strip()
+    if not name:
+        raise ConfigWriteError("server name is required")
+
+    config = load_raw_config()
+    if name not in config:
+        raise ConfigWriteError(f"no server named {name!r}")
+    config.pop(name, None)
+
+    data = _read_json(CONFIG_PATH)
+    if not isinstance(data, dict):
+        data = {}
+    data["mcpServers"] = config
+    try:
+        _atomic_write_json_strict(CONFIG_PATH, data)
+    except Exception as exc:
+        raise ConfigWriteError(f"failed to write config: {exc}") from exc
+
+    # Prune the orphaned sidecar entry too (keeps the two files in step).
+    meta = load_meta()
+    if name in meta:
+        meta.pop(name, None)
+        save_meta(meta)
+
+
+def set_enabled(name: str, enabled: bool) -> None:
+    """Flip a server's `enabled` flag in the sidecar ONLY — the standard config
+    is never touched. Raises ConfigWriteError if the server isn't configured."""
+    name = (name or "").strip()
+    if not name:
+        raise ConfigWriteError("server name is required")
+
+    config = load_raw_config()
+    if name not in config:
+        raise ConfigWriteError(f"no server named {name!r}")
+
+    meta = load_meta()
+    entry = meta.get(name)
+    if not isinstance(entry, dict):
+        # Backfill a default entry (assigns order) then flip it.
+        meta, _ = backfill_meta(config, meta)
+        entry = meta.get(name, _default_meta_entry(0))
+    entry["enabled"] = bool(enabled)
+    meta[name] = entry
+    try:
+        _atomic_write_json_strict(META_PATH, meta)
+    except Exception as exc:
+        raise ConfigWriteError(f"failed to write sidecar: {exc}") from exc

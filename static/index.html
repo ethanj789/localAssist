@@ -16,6 +16,7 @@
   <link rel="stylesheet" href="/static/css/edit.css">
   <link rel="stylesheet" href="/static/css/skills.css">
   <link rel="stylesheet" href="/static/css/dashboard.css">
+  <link rel="stylesheet" href="/static/css/mcp.css">
   <link rel="stylesheet" href="/static/css/mobile.css">
 </head>
 
@@ -35,6 +36,29 @@
     <div class="conversations-section">
       <div id="conversation-list" class="conversation-list">
         <!-- Rendered conversations go here -->
+      </div>
+    </div>
+
+    <!-- MCP Servers Section (its own block, above Settings) -->
+    <div class="settings-accordion mcp-accordion">
+      <button class="settings-toggle-btn" id="mcp-toggle-btn">
+        <span>🔌 MCP Servers</span>
+        <span class="arrow-icon" id="mcp-arrow">▸</span>
+      </button>
+      <div class="settings-content" id="mcp-content" style="display: none;">
+        <div class="settings-group">
+          <div class="config-group" style="gap: 6px;">
+            <div class="mcp-toolbar">
+              <button class="mcp-reload-btn" id="btn-mcp-reload" title="Re-read config and reconnect servers">
+                <span class="mcp-reload-icon">⟳</span> reload
+              </button>
+            </div>
+            <div id="mcp-server-list" class="mcp-server-list">
+              <div class="mcp-empty">loading…</div>
+            </div>
+            <button class="btn btn-reindex" id="btn-mcp-add">+ add server</button>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -207,6 +231,76 @@
         </form>
         <div id="memory-slots">
           <!-- Slots rendered here -->
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="mcp-modal" class="modal">
+    <div class="modal-content mcp-modal-content">
+      <div class="modal-header">
+        <h2>Add MCP Server</h2>
+        <button id="close-mcp-modal" class="close-modal">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="mcp-transport-tabs">
+          <button type="button" class="mcp-tab active" data-transport="stdio">stdio (local)</button>
+          <button type="button" class="mcp-tab" data-transport="http">http (remote)</button>
+          <button type="button" class="mcp-tab" data-transport="sse">sse (remote)</button>
+        </div>
+
+        <form id="mcp-add-form" class="mcp-add-form">
+          <label class="mcp-field">
+            <span class="mcp-field-label">name</span>
+            <input id="mcp-f-name" class="mcp-input" type="text" placeholder="e.g. time" autocomplete="off" spellcheck="false" />
+            <span class="mcp-field-hint">the tool prefix other clients use, e.g. <code>time__get_current_time</code></span>
+          </label>
+
+          <!-- stdio fields -->
+          <div class="mcp-group" data-group="stdio">
+            <label class="mcp-field">
+              <span class="mcp-field-label">command</span>
+              <input id="mcp-f-command" class="mcp-input" type="text" placeholder="e.g. uvx" autocomplete="off" spellcheck="false" />
+            </label>
+            <label class="mcp-field">
+              <span class="mcp-field-label">args <span class="mcp-field-hint-inline">(one per line)</span></span>
+              <textarea id="mcp-f-args" class="mcp-input mcp-textarea" rows="3" placeholder="mcp-server-time" spellcheck="false"></textarea>
+            </label>
+            <label class="mcp-field">
+              <span class="mcp-field-label">env <span class="mcp-field-hint-inline">(KEY=value per line, optional — kept secret)</span></span>
+              <textarea id="mcp-f-env" class="mcp-input mcp-textarea" rows="2" placeholder="API_KEY=sk-..." spellcheck="false"></textarea>
+            </label>
+          </div>
+
+          <!-- remote fields -->
+          <div class="mcp-group" data-group="remote" style="display:none;">
+            <label class="mcp-field">
+              <span class="mcp-field-label">url</span>
+              <input id="mcp-f-url" class="mcp-input" type="text" placeholder="https://example.com/mcp" autocomplete="off" spellcheck="false" />
+            </label>
+            <label class="mcp-field">
+              <span class="mcp-field-label">headers <span class="mcp-field-hint-inline">(Key: value per line, optional — kept secret)</span></span>
+              <textarea id="mcp-f-headers" class="mcp-input mcp-textarea" rows="2" placeholder="Authorization: Bearer ..." spellcheck="false"></textarea>
+            </label>
+          </div>
+        </form>
+
+        <div class="mcp-preview-wrap">
+          <div class="mcp-preview-label">
+            <span>config block</span>
+            <span class="mcp-preview-hint">written to <code>mcpServers</code> in <code>mcp_servers.json</code></span>
+          </div>
+          <pre id="mcp-preview" class="mcp-preview"></pre>
+        </div>
+
+        <div class="mcp-note">
+          Adding writes this block to <code>mcp_servers.json</code> and reloads automatically.
+          New tools apply on the next turn. Secrets (<code>env</code> / <code>headers</code>)
+          are saved but never shown back.
+        </div>
+
+        <div class="mcp-modal-actions">
+          <button type="submit" class="btn btn-reindex" id="btn-mcp-submit" form="mcp-add-form">add server</button>
         </div>
       </div>
     </div>
