@@ -14,6 +14,9 @@ tool_apps/notes/data/*
 pending_edits.json
 events_cache.json
 events_cache.json.tmp
+mcp_servers.json
+mcp_meta.json
+mcp_meta.json.tmp
 chat_images/
 chat_files/
 docs/

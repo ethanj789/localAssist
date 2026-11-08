@@ -1,6 +1,7 @@
 """
-mcp_server.py — MCP server entry point.
+mcp_infra/server.py — local MCP server entry point.
 Configures logging, imports the tool registry, and runs the stdio transport.
+Spawned as a subprocess via CONFIG["mcp_server_cmd"] (python -m mcp_infra.server).
 """
 import asyncio
 import logging

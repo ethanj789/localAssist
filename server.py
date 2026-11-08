@@ -18,7 +18,7 @@ from pydantic import BaseModel
 
 from config import CONFIG, get_raw_memory, save_memory
 import llm_provider
-from mcp_client import MCPClient
+from mcp_infra import MCPClient, MCPAggregator
 import agent
 from agent import agent_loop
 from tools.index import BUSY_LOCK_FILE, build_index
@@ -54,7 +54,11 @@ logging.getLogger("httpcore").setLevel(logging.WARNING)
 
 
 STARTUP_TOKEN = str(uuid.uuid4())
-mcp = MCPClient(CONFIG["mcp_server_cmd"])
+# The aggregator wraps the unchanged local MCPClient (hand-rolled stdio subprocess
+# running tools.registry.app) PLUS any external MCP servers from mcp_servers.json.
+# It exposes the same async list_tools()/call_tool() surface, so it's a drop-in for
+# the old raw MCPClient everywhere downstream (agent_loop, resume, skills, warmup).
+mcp = MCPAggregator(MCPClient(CONFIG["mcp_server_cmd"]))
 
 # DEAD CODE — Whisper model no longer used, transcription handled by browser Web Speech API
 # whisper_model = WhisperModel("tiny.en", device="cpu", compute_type="int8")
@@ -79,8 +83,15 @@ async def lifespan(app: FastAPI):
         logging.warning(f"[events] Cache prune failed (non-fatal): {exc}")
     print("[server] Loading Whisper model...")
     # Whisper no longer loaded — dead code
-    await asyncio.get_event_loop().run_in_executor(None, mcp.start)
-    print(f"[server] MCP client started | model={CONFIG['model']} | use_provider={CONFIG.get('use_provider')} | cloud model={CONFIG.get('groq_model')}")
+    # Starts the local MCP client AND connects external MCP servers (startup and
+    # POST /mcp/reload share the same refresh path inside the aggregator).
+    await mcp.open()
+    try:
+        _ext = mcp.external_status()
+        _ext_enabled = [s["name"] for s in _ext if s.get("enabled")]
+        print(f"[server] MCP started | local + external({len(_ext_enabled)}): {_ext_enabled} | model={CONFIG['model']} | use_provider={CONFIG.get('use_provider')} | cloud model={CONFIG.get('groq_model')}")
+    except Exception:
+        print(f"[server] MCP started | model={CONFIG['model']} | use_provider={CONFIG.get('use_provider')} | cloud model={CONFIG.get('groq_model')}")
 
     # Kick off a full index build in the background so pre-existing workspace
     # files are indexed and manifest.json is written without blocking startup.
@@ -139,7 +150,7 @@ async def lifespan(app: FastAPI):
     asyncio.get_event_loop().create_task(_warmup_ollama_kv())
 
     yield
-    await asyncio.get_event_loop().run_in_executor(None, mcp.stop)
+    await mcp.aclose()
 
 
 app = FastAPI(title="Local MCP Search Agent", lifespan=lifespan)
@@ -269,6 +280,24 @@ async def update_config(updates: dict):
         else:
             CONFIG[k] = v
     return {"status": "ok", "config": {k: CONFIG[k] for k in ("model", "max_searches", "max_tokens", "temperature", "use_provider", "use_external_provider") if k in CONFIG}}
+
+
+@app.get("/mcp/servers")
+async def get_mcp_servers():
+    """Sanitized external MCP server list for the UI (no secret headers/env).
+    Reflects the current config + sidecar, so disabled/failed servers appear
+    too. The in-memory tool list is authoritative; this is config/status view."""
+    return {"servers": mcp.external_status()}
+
+
+@app.post("/mcp/reload")
+async def reload_mcp_servers():
+    """Re-read mcp_servers.json / mcp_meta.json and rebuild external servers
+    (same refresh path used at startup). New/removed tools take effect on the
+    NEXT turn for all conversations (KV-cache reset accepted). Local tools are
+    unaffected."""
+    await mcp.refresh()
+    return {"status": "ok", "servers": mcp.external_status()}
 
 
 @app.get("/memory")

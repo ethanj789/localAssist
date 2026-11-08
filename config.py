@@ -159,7 +159,7 @@ CONFIG = {
     "max_tools":        int(os.getenv("MAX_TOOLS", "1000")),
     "max_tokens":       int(os.getenv("MAX_TOKENS", str(get_model_value("default", "max_tokens", 5000)))),
     "temperature":      float(os.getenv("TEMPERATURE", str(get_model_value("default", "temperature", 0.7)))),
-    "mcp_server_cmd": os.getenv("MCP_CMD", f"{sys.executable} mcp_server.py"),
+    "mcp_server_cmd": os.getenv("MCP_CMD", f"{sys.executable} -m mcp_infra.server"),
     # Ollama thinking mode — set OLLAMA_THINKING=true to enable for all requests.
     # Can also be set per-request via request_kwargs["thinking"] = True/False.
     "ollama_thinking": os.getenv("OLLAMA_THINKING", "false").lower() == "true",
