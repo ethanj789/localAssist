@@ -45,53 +45,11 @@
         <span class="arrow-icon" id="settings-arrow">▸</span>
       </button>
       <div class="settings-content" id="settings-content" style="display: none;">
-        <div class="settings-group">
-          <div class="section-label">Provider</div>
-          <div class="config-group">
-            <div class="toggle-row">
-              <label>use cloud</label>
-              <label class="toggle">
-                <input id="cfg-use-cloud" type="checkbox">
-                <span class="toggle-slider"></span>
-              </label>
-            </div>
-            <div class="toggle-row" id="ollama-thinking-row">
-              <label>ollama thinking</label>
-              <label class="toggle">
-                <input id="cfg-ollama-thinking" type="checkbox">
-                <span class="toggle-slider"></span>
-              </label>
-            </div>
-          </div>
-        </div>
-
-        <div class="settings-group">
-          <div class="section-label">Model</div>
-          <div class="config-group">
-            <div class="config-row">
-              <label>cloud model</label>
-              <input id="cfg-cloud-model" type="text" placeholder="openai/gpt-oss-20b">
-            </div>
-          </div>
-        </div>
-
-        <div class="settings-group">
-          <div class="section-label">Search</div>
-          <div class="config-group">
-            <div class="range-row">
-              <label>max searches/turn <span id="max-searches-val">5</span></label>
-              <input id="cfg-max-searches" type="range" min="1" max="10" value="5">
-            </div>
-          </div>
-        </div>
-
-        <div class="settings-group">
-          <div class="section-label">System Prompt</div>
-          <div class="config-row">
-            <textarea id="cfg-system-prompt"
-              rows="3">You are a helpful assistant with access to web search tools. Use web_search to look up current information when needed. Always cite your sources.</textarea>
-          </div>
-        </div>
+        <!-- Provider / thinking state is driven by the chips in the chat input bar.
+             These hidden inputs are the backing state the chips read/write and
+             that applyConfig() persists to /config. -->
+        <input id="cfg-use-cloud" type="checkbox" hidden>
+        <input id="cfg-ollama-thinking" type="checkbox" hidden>
 
         <div class="settings-group">
           <div class="section-label">Appearance</div>
@@ -129,9 +87,6 @@
             </div>
           </div>
         </div>
-
-        <button class="btn btn-apply">apply settings</button>
-        <button class="btn btn-clear">clear all chats</button>
 
         <div class="settings-group" style="margin-top: 12px;">
           <div class="section-label">Reindex</div>

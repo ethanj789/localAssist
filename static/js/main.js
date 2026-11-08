@@ -1,11 +1,10 @@
 import { API } from './constants.js';
-import { showToast, setInputDisplay, scrollToBottom, escHtml } from './utils/dom.js';
+import { showToast, scrollToBottom, escHtml } from './utils/dom.js';
 import { initThemes } from './ui/theme.js';
 import { loadConfig, applyConfig, bindReindexButtons, reflectProvider, setProviderLocked, providerLocked } from './api/config.js';
 import {
     sendMessage,
     cancelStream,
-    clearHistory,
     currentConversationId,
     setCurrentConversationId,
     getConversations,
@@ -98,13 +97,6 @@ function startStatusPolling() {
 }
 
 function bindInputEvents() {
-    const maxSearches = document.getElementById('cfg-max-searches');
-    if (maxSearches) {
-        maxSearches.addEventListener('input', e => {
-            setInputDisplay('max-searches-val', e.target.value);
-        });
-    }
-
     const sendBtn = document.getElementById('send-btn');
     const stopBtn = document.getElementById('stop-btn');
 
@@ -132,12 +124,6 @@ function bindInputEvents() {
 }
 
 function bindButtons() {
-    const applyBtn = document.querySelector('.btn-apply');
-    if (applyBtn) applyBtn.addEventListener('click', applyConfig);
-
-    const clearBtn = document.querySelector('.btn-clear');
-    if (clearBtn) clearBtn.addEventListener('click', clearHistory);
-
     const newChatBtn = document.getElementById('new-chat-btn');
     if (newChatBtn) newChatBtn.addEventListener('click', startNewChat);
 

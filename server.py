@@ -253,15 +253,12 @@ class ChatRequest(BaseModel):
 
 @app.get("/config")
 async def get_config():
-    exposed = {k: v for k, v in CONFIG.items() if k != "mcp_server_cmd"}
-    # Expose groq_model under the friendlier cloud_model key for the frontend
-    exposed["cloud_model"] = exposed.get("groq_model", "")
-    return exposed
+    return {k: v for k, v in CONFIG.items() if k != "mcp_server_cmd"}
 
 
 @app.post("/config")
 async def update_config(updates: dict):
-    allowed = {"model", "max_searches", "max_tokens", "temperature", "use_provider", "use_external_provider", "cloud_model"}
+    allowed = {"model", "max_searches", "max_tokens", "temperature", "use_provider", "use_external_provider"}
     for k, v in updates.items():
         if k not in allowed:
             continue
@@ -269,21 +266,9 @@ async def update_config(updates: dict):
             provider = str(v).strip().lower() if isinstance(v, str) else ""
             CONFIG["use_provider"] = provider if provider in {"groq", "openrouter", "ollama"} else "ollama"
             CONFIG["use_external_provider"] = CONFIG["use_provider"] in {"groq", "openrouter"}
-        elif k == "cloud_model":
-            # Frontend sends cloud_model; store it under the internal groq_model key
-            CONFIG["groq_model"] = v
         else:
             CONFIG[k] = v
-    return {"status": "ok", "config": {k: CONFIG[k] for k in ("model", "max_searches", "max_tokens", "temperature", "use_provider", "use_external_provider", "groq_model") if k in CONFIG}}
-
-
-@app.delete("/history")
-async def clear_history():
-    # db.clear_all_conversations()
-    # Pending edits are now DB truth (no in-memory globals to clear). Clearing
-    # chat history would remove any dangling confirm tool calls along with it.
-    return {"status": "cleared"}
-
+    return {"status": "ok", "config": {k: CONFIG[k] for k in ("model", "max_searches", "max_tokens", "temperature", "use_provider", "use_external_provider") if k in CONFIG}}
 
 
 @app.get("/memory")

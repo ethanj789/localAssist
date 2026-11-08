@@ -1,5 +1,5 @@
 import { API } from '../constants.js';
-import { setStatus, showToast, setInputDisplay } from '../utils/dom.js';
+import { setStatus, showToast } from '../utils/dom.js';
 
 export let currentUseProvider = 'ollama';
 
@@ -110,18 +110,7 @@ export async function loadConfig() {
             }
         }
 
-        const maxSearchesEl = document.getElementById('cfg-max-searches');
-        if (maxSearchesEl) maxSearchesEl.value = cfg.max_searches || 5;
-
-        setInputDisplay('max-searches-val', cfg.max_searches || 5);
-
-        const sysPromptEl = document.getElementById('cfg-system-prompt');
-        if (cfg.system_prompt && sysPromptEl) sysPromptEl.value = cfg.system_prompt;
-
         setStatus(true, 'connected');
-
-        const cloudModelEl = document.getElementById('cfg-cloud-model');
-        if (cloudModelEl) cloudModelEl.value = cfg.cloud_model || cfg.groq_model || 'openai/gpt-oss-20b';
 
         // Always open in Local mode regardless of the backend's persisted global
         // provider. The user opens a fresh (empty) chat on load, and switching
@@ -133,7 +122,7 @@ export async function loadConfig() {
                 await fetch(`${API}/config`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ use_provider: 'ollama', use_external_provider: false }),
+                    body: JSON.stringify({ use_provider: 'ollama' }),
                 });
             } catch { /* non-fatal — UI still shows Local */ }
         }
@@ -165,13 +154,11 @@ export async function applyConfig() {
         return;
     }
 
+    // The backend derives use_external_provider from use_provider, so we only
+    // need to send model + use_provider.
     const updates = {
         model: document.getElementById('cfg-model').value.trim(),
-        max_searches: parseInt(document.getElementById('cfg-max-searches').value, 10),
-        system_prompt: document.getElementById('cfg-system-prompt').value.trim(),
         use_provider: nextProvider,
-        use_external_provider: useCloud,
-        cloud_model: document.getElementById('cfg-cloud-model').value.trim(),
     };
 
     try {

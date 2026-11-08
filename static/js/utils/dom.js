@@ -2,11 +2,6 @@ export function escHtml(s) {
     return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
-export function setInputDisplay(id, value) {
-    const el = document.getElementById(id);
-    if (el) el.textContent = value;
-}
-
 export function setStatus(ok, text) {
     const dot = document.getElementById('status-dot');
     if (dot) {

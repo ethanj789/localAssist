@@ -23,16 +23,6 @@ export function cancelStream() {
     }
 }
 
-export async function clearHistory() {
-    await fetch(`${API}/history`, { method: 'DELETE' });
-    currentConversationId = null;
-    const messagesEl = document.getElementById('messages');
-    if (messagesEl) messagesEl.innerHTML = '';
-    document.dispatchEvent(new CustomEvent('conversations-updated'));
-    document.dispatchEvent(new CustomEvent('conversation-cleared'));
-    showToast('All conversations cleared');
-}
-
 export async function getConversations() {
     const res = await fetch(`${API}/conversations`);
     if (!res.ok) throw new Error('Failed to fetch conversations');
