@@ -2,6 +2,11 @@ import { escHtml } from '../utils/dom.js';
 
 export function appendMsg(role, content, id) {
     const msgs = document.getElementById('messages');
+    // Drop the empty-chat home dashboard the moment a real message appears.
+    // It's pure chrome (never part of history); removing the node here covers
+    // every entry path (send, voice, history restore) in one place.
+    const dash = msgs && msgs.querySelector('#dashboard');
+    if (dash) dash.remove();
     const div = document.createElement('div');
     div.className = `msg ${role}`;
     if (id) div.id = id;

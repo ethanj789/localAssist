@@ -20,6 +20,7 @@ import { initEditPanel, loadPendingEdit, clearPendingEdit, maybeAutoApprovePendi
 import { appendMsg, appendMsgAttachments, appendPill, renderMarkdown, renderMath, appendEditPill, toolRequestLabel, appendToolResultPill } from './ui/chatRenderer.js';
 import { initSkillsAutocomplete, loadSkills, isDropdownVisible } from './ui/skillsAutocomplete.js';
 import { initAttachments } from './ui/attachments.js';
+import { renderDashboard } from './ui/dashboard.js';
 
 async function init() {
     initThemes();
@@ -639,7 +640,13 @@ function startNewChat(showNotification = true) {
     closeSidebar();
     setCurrentConversationId(null);
     const messagesEl = document.getElementById('messages');
-    if (messagesEl) messagesEl.innerHTML = '';
+    if (messagesEl) {
+        messagesEl.innerHTML = '';
+        // Empty chat → show the home dashboard (clock + weather + news). It's
+        // pure chrome and gets wiped the moment a message is sent or another
+        // conversation is opened (both clear #messages).
+        renderDashboard(messagesEl);
+    }
 
     // A fresh chat has no pending edit — hide any stale modal and unlock input.
     clearPendingEdit();

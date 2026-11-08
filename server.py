@@ -68,6 +68,15 @@ async def lifespan(app: FastAPI):
     db.init_db()
     print("[db] Cleaning up old conversations...")
     db.cleanup_old_conversations()
+    # Sweep stale weather/news cache entries so one-off agent news queries don't
+    # pile up in events_cache.json across restarts.
+    try:
+        from tools import events
+        pruned = events.prune_stale_cache()
+        if pruned:
+            print(f"[events] Pruned {pruned} stale cache entr{'y' if pruned == 1 else 'ies'}.")
+    except Exception as exc:
+        logging.warning(f"[events] Cache prune failed (non-fatal): {exc}")
     print("[server] Loading Whisper model...")
     # Whisper no longer loaded — dead code
     await asyncio.get_event_loop().run_in_executor(None, mcp.start)
@@ -439,6 +448,42 @@ async def respond(req: RespondRequest):
 async def get_skills():
     """Return available skills for the frontend autocomplete."""
     return list_skills()
+
+
+# ============ DASHBOARD (empty-chat home panel) ============
+
+@app.get("/api/dashboard")
+async def get_dashboard(city: str = "", news: str = "general"):
+    """Serve the empty-chat dashboard data (weather + news).
+
+    Both come from the persistent `events_cache.json` cache in tools.events:
+    weather refetches at most once per 15 min per city, news at most once per
+    hour per query. A stale entry is refreshed lazily on this call (not on a
+    timer), so the limited GNews budget is only spent when a dashboard is
+    actually viewed. `city` empty => wttr.in geolocates by IP.
+    """
+    from tools import events
+
+    async def _weather():
+        try:
+            return await events.get_weather_dashboard(city)
+        except Exception as exc:
+            logging.warning("[dashboard] weather failed: %s", exc)
+            return None
+
+    async def _news():
+        try:
+            return await events.get_news_dashboard(news)
+        except Exception as exc:
+            logging.warning("[dashboard] news failed: %s", exc)
+            return []
+
+    weather, news_items = await asyncio.gather(_weather(), _news())
+    return {
+        "weather": weather,
+        "news": news_items,
+        "fetched_at": datetime.datetime.now().isoformat(),
+    }
 
 
 @app.post("/chat")

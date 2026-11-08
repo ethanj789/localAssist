@@ -1,0 +1,152 @@
+/* dashboard.css — empty-chat home panel. Uses theme CSS variables so it
+   adapts to every theme automatically.
+
+   Alignment: the dashboard lives inside #messages (padding 32px 40px) and must
+   share the same left edge + column width as chat messages and the input
+   column (both max-width ~760px, left-aligned), so it does NOT center. */
+
+.dashboard {
+    width: 100%;
+    max-width: 760px;
+    /* Top gap so the clock clears the Notes/Memory buttons that sit over the
+       top of the message area (the old logo header used to provide this). */
+    padding-top: 40px;
+    font-family: var(--mono);
+    color: var(--text);
+    animation: dash-fade 0.3s ease;
+}
+
+@keyframes dash-fade {
+    from { opacity: 0; transform: translateY(6px); }
+    to   { opacity: 1; transform: translateY(0); }
+}
+
+.dash-grid {
+    display: flex;
+    flex-direction: column;
+    gap: 22px;
+}
+
+/* ── Card shell ── */
+.dash-card {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.dash-card-title {
+    font-size: 12px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--accent);
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 4px;
+    margin-bottom: 2px;
+}
+
+/* ── Clock ── */
+.dash-clock-time {
+    font-size: 40px;
+    font-weight: 500;
+    line-height: 1.05;
+    color: var(--text);
+    font-variant-numeric: tabular-nums;
+}
+.dash-clock-date {
+    font-size: 14px;
+    color: var(--muted);
+}
+
+/* ── Weather ── */
+.dash-weather-main {
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+}
+.dash-weather-temp {
+    font-size: 22px;
+    color: var(--text);
+}
+.dash-weather-desc {
+    font-size: 14px;
+    color: var(--muted);
+}
+.dash-weather-meta {
+    font-size: 13px;
+    color: var(--muted);
+}
+.dash-weather-empty,
+.dash-news-empty {
+    font-size: 13px;
+    color: var(--muted);
+    opacity: 0.8;
+}
+
+/* ── News ──
+   Each item is a bordered row so articles read as distinct cards rather than a
+   wall of text. Title on its own line; a meta row (source) sits beneath it in a
+   smaller muted font, so the two never collide on one line. */
+.dash-news-list {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+.dash-news-item {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    text-decoration: none;
+    color: var(--text);
+    padding: 9px 10px;
+    border-radius: 7px;
+    border: 1px solid transparent;
+    border-left: 2px solid var(--border);
+    transition: background 0.12s ease, border-color 0.12s ease;
+}
+.dash-news-item:hover {
+    background: var(--surface);
+    border-left-color: var(--accent);
+}
+.dash-news-title {
+    font-size: 13.5px;
+    line-height: 1.4;
+    /* Clamp to 2 lines so one long headline can't dominate the panel. */
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+.dash-news-item:hover .dash-news-title {
+    color: var(--accent);
+}
+.dash-news-source {
+    font-size: 10.5px;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+    color: var(--muted);
+    opacity: 0.7;
+}
+
+/* ── Mobile / narrow sidebar ──
+   The sidebar webview is very narrow. Tighten spacing, shrink the clock, and
+   cap the news list height with a scroll so it never pushes the whole panel
+   long. The grid gap closes up too. */
+@media (max-width: 768px) {
+    .dash-grid { gap: 16px; }
+    .dash-clock-time { font-size: 30px; }
+    .dash-clock-date { font-size: 12.5px; }
+    .dash-weather-temp { font-size: 19px; }
+
+    .dash-news-list {
+        max-height: 230px;
+        overflow-y: auto;
+        gap: 1px;
+    }
+    .dash-news-item { padding: 7px 8px; }
+    .dash-news-title { font-size: 12.5px; }
+    .dash-news-list::-webkit-scrollbar { width: 3px; }
+    .dash-news-list::-webkit-scrollbar-thumb {
+        background: var(--border);
+        border-radius: 2px;
+    }
+}

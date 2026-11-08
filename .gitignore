@@ -12,6 +12,8 @@ update.bat
 *.db
 tool_apps/notes/data/*
 pending_edits.json
+events_cache.json
+events_cache.json.tmp
 chat_images/
 chat_files/
 docs/
