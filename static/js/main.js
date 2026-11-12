@@ -612,7 +612,21 @@ function renderConversationHistory(messages, conversationId) {
         }
     });
 
-    scrollToBottom(msgs);
+    scrollToBottom(msgs, true);
+    pinToBottomAfterLayout(msgs);
+}
+
+function pinToBottomAfterLayout(container) {
+    if (!container) return;
+    requestAnimationFrame(() => scrollToBottom(container, true));
+    setTimeout(() => scrollToBottom(container, true), 120);
+    setTimeout(() => scrollToBottom(container, true), 400);
+
+    container.querySelectorAll('img').forEach(img => {
+        if (!img.complete) {
+            img.addEventListener('load', () => scrollToBottom(container, true), { once: true });
+        }
+    });
 }
 
 // Collapse the slide-in sidebar (mobile / narrow side-panel layout). No-op on
