@@ -82,8 +82,6 @@ async def lifespan(app: FastAPI):
             print(f"[events] Pruned {pruned} stale cache entr{'y' if pruned == 1 else 'ies'}.")
     except Exception as exc:
         logging.warning(f"[events] Cache prune failed (non-fatal): {exc}")
-    print("[server] Loading Whisper model...")
-    # Whisper no longer loaded — dead code
     # Starts the local MCP client AND connects external MCP servers (startup and
     # POST /mcp/reload share the same refresh path inside the aggregator).
     await mcp.open()
