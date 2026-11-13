@@ -17,12 +17,7 @@ def _load_model_settings() -> dict[str, dict[str, Any]]:
         "default": {
             "provider": "ollama",
             "model": "gemma4:e2b",
-            # Local agentic loop: a low temperature keeps tool selection stable
-            # without being brittle. NOTE: temperature does NOT affect the KV
-            # cache — cache reuse depends only on the input token prefix being
-            # byte-identical turn to turn, which sampling params don't touch.
-            # Lower it further toward 0 only if you see tool-selection wobble.
-            "temperature": 0.3,
+            "temperature": 0.7,
             "max_tokens": 5000,
             "reasoning_effort": "",
             "thinking": False,
