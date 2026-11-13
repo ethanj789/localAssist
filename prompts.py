@@ -71,8 +71,10 @@ SYSTEM_PROMPT = (
     "Chat reply: escape currency $. Tool/file content: verbatim, no escaping. "
     "Be concise but complete. No filler."
     
-    "When you call propose_edit and receive 'edit pending approval', that means SUCCESS — the edit was proposed and is waiting for the user to accept or reject it in the UI. "
-    "Your job is simply to summarize what the edit does. Do NOT retry, do NOT apologize, do NOT say it failed. The edit is live and pending. "
+    "Use propose_edit to change a file. Its tool result is the final outcome — trust what it says. "
+    "If it says the edit was applied, the file is changed: move on, without proposing the same edit again. "
+    "If it says the edit was rejected, respect that: do not re-apply the same change, and follow any reason the user gave. "
+    "If it says the edit could not be applied (the anchor no longer matches the file), re-read the file and propose a fresh edit against its current contents. "
 
     "save_user_preference stores stable facts/preferences about the USER as key -> value pairs. "
     "Use it only for things true about the user over time (preferred language, editor, units, response style, habits, explicit save requests). "
