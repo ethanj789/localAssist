@@ -13,25 +13,32 @@ log = logging.getLogger(__name__)
 async def generate_and_save_title(conversation_id: str, first_message: str):
     import db
     try:
-        provider = llm_provider.get_effective_provider(CONFIG)
-        if provider == "ollama":
-            return
-
         title_prompt = prompts.TITLE_GENERATION_PROMPT_TEMPLATE.format(first_message=first_message)
         title = ""
         provider = llm_provider.get_effective_provider(CONFIG)
         title_settings = get_model_setting("title", "default")
-        request_kwargs = {
-            "model": CONFIG["model"] if provider == "ollama" else llm_provider.get_model_name_for_provider(title_settings, provider, SUMMARY_MODEL),
-            "messages": [
-                {"role": "user", "content": title_prompt}
-            ],
-            "max_completion_tokens": title_settings.get("max_tokens", 200),
-            "temperature": title_settings.get("temperature", 0.5),
-        }
-        reasoning_effort = title_settings.get("reasoning_effort")
-        if isinstance(reasoning_effort, str) and reasoning_effort.strip():
-            request_kwargs["reasoning_effort"] = reasoning_effort.strip()
+
+        if provider == "ollama":
+            # never think:true for granite — it 400s.
+            from .subagents.core import WORKER_MODEL, WORKER_NUM_CTX
+            request_kwargs = {
+                "model": WORKER_MODEL,
+                "messages": [{"role": "user", "content": title_prompt}],
+                "max_completion_tokens": title_settings.get("max_tokens", 200),
+                "temperature": title_settings.get("temperature", 0.5),
+                "num_ctx": WORKER_NUM_CTX,
+                "thinking": False,
+            }
+        else:
+            request_kwargs = {
+                "model": llm_provider.get_model_name_for_provider(title_settings, provider, SUMMARY_MODEL),
+                "messages": [{"role": "user", "content": title_prompt}],
+                "max_completion_tokens": title_settings.get("max_tokens", 200),
+                "temperature": title_settings.get("temperature", 0.5),
+            }
+            reasoning_effort = title_settings.get("reasoning_effort")
+            if isinstance(reasoning_effort, str) and reasoning_effort.strip():
+                request_kwargs["reasoning_effort"] = reasoning_effort.strip()
 
         response = await llm_provider.chat_completion_with_retry(provider, request_kwargs, CONFIG)
         title = response.choices[0].message.content.strip()
