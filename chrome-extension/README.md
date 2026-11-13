@@ -32,12 +32,40 @@ a new address and hit **Retry**. The address is saved and reused next time.
 
 You can also edit `DEFAULT_URL` in `sidepanel.js`.
 
+## Highlight-to-quote
+
+While the side panel is open, highlighting text on the page you're browsing
+arms a **quote** in the chat composer — a removable pill (like an attachment)
+that rides along with your next message as quoted context. It follows the
+active tab: switch tabs and the pill reflects that tab's current selection;
+clear the selection and the pill clears.
+
+How it works (and why it's unobtrusive):
+
+- The panel tells the service worker when it's open. Only then does the worker
+  inject a tiny reader (`selection-reader.js`) into the **active tab**, and
+  re-inject on tab switch / navigation. If you never open the panel, nothing is
+  ever injected into any page.
+- The reader is **read-only and passive**: it reads `getSelection()` on a
+  debounced `selectionchange`, never touches the page DOM, adds no elements,
+  and sets no page globals — so a site has no observable trace of it.
+- Restricted pages (`chrome://`, the web store, etc.) can't be injected; the
+  feature just no-ops there.
+- The selection is relayed worker → panel → iframe via the same strict-origin
+  `postMessage` the screenshot uses, then staged as a `quote`-type attachment
+  (text only, no file on disk).
+
 ## Files
 
-- `manifest.json` — MV3 manifest, declares the side panel and permissions.
-- `background.js` — makes the toolbar icon open the side panel.
+- `manifest.json` — MV3 manifest, declares the side panel and permissions
+  (`sidePanel`, `storage`, `tabs`, `scripting`).
+- `background.js` — opens the side panel on icon click, serves tab screenshots,
+  and manages selection-reader injection + relay for highlight-to-quote.
+- `selection-reader.js` — read-only selection reporter injected into the active
+  tab on demand (never bundled into pages ahead of time).
 - `sidepanel.html` / `.css` / `.js` — the panel: an iframe plus an offline
-  fallback that probes `/startup-token` before loading.
+  fallback that probes `/startup-token` before loading; also bridges selection
+  messages into the app.
 - `gen_icons.py` — regenerates the PNG icons (pure Python, no Pillow).
 
 ## Notes

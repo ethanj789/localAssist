@@ -55,6 +55,31 @@ def _file_text_block(conversation_id: str, file_objs: list[dict]) -> str:
     return "\n\n".join(blocks)
 
 
+def _quote_text_block(file_objs: list[dict]) -> str:
+    """Model-facing text for a turn's quote entries (highlighted page text).
+
+    A quote's text lives inline in its lean ``files`` object (no disk), so we
+    rebuild the labeled block deterministically from the object each turn,
+    keeping the KV-cache prefix byte-identical."""
+    blocks: list[str] = []
+    for obj in file_objs or []:
+        if not isinstance(obj, dict) or obj.get("type") != "quote":
+            continue
+        text = (obj.get("text") or "").strip()
+        if not text:
+            continue
+        title = (obj.get("title") or "").strip()
+        url = (obj.get("url") or "").strip()
+        if title and url:
+            src = f"{title} ({url})"
+        else:
+            src = title or url
+        header = f"[Quoted by the user from {src}]" if src else "[Quoted by the user from the page]"
+        quoted = "\n".join(f"> {line}" for line in text.splitlines())
+        blocks.append(f"{header}\n{quoted}")
+    return "\n\n".join(blocks)
+
+
 def _apply_file_context(conversation_id: str, msg: dict) -> None:
     """Fold a user message's attachment page-images AND extracted text into the
     message as MODEL-ONLY context, leaving the stored `content` (display text)
@@ -64,8 +89,18 @@ def _apply_file_context(conversation_id: str, msg: dict) -> None:
     file_objs = msg.get("files")
     if not file_objs:
         return
-    # Append the attachment text block to the content the model sees.
-    text_block = _file_text_block(conversation_id, file_objs)
+    # Build the model-only text: file-extracted text first (from disk), then any
+    # highlighted-page quotes (inline from the stored objects). Both are appended
+    # to the content the model sees; the stored DB `content` is left untouched.
+    parts = []
+    file_block = _file_text_block(conversation_id, file_objs)
+    if file_block:
+        parts.append(file_block)
+    quote_block = _quote_text_block(file_objs)
+    if quote_block:
+        parts.append(quote_block)
+    text_block = "\n\n".join(parts)
+
     if text_block:
         base = (msg.get("content") or "").strip()
         msg["content"] = f"{base}\n\n{text_block}" if base else text_block

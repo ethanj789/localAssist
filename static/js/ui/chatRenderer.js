@@ -196,6 +196,74 @@ export function appendMsgAttachments(msgDiv, items) {
 }
 
 /**
+ * Render quote cards (highlighted page text) above a message's text. Each item
+ * is { text, url, title, source }. Used by both send and history restore.
+ */
+export function appendMsgQuotes(msgDiv, items) {
+    if (!msgDiv || !items || !items.length) return;
+    const body = msgDiv.querySelector('.msg-body');
+    if (!body) return;
+
+    const container = document.createElement('div');
+    container.className = 'msg-quotes';
+
+    items.forEach(q => {
+        if (!q || !q.text) return;
+        const card = document.createElement('div');
+        card.className = 'msg-quote';
+
+        const textEl = document.createElement('div');
+        textEl.className = 'msg-quote-text';
+        textEl.textContent = q.text;
+        card.appendChild(textEl);
+
+        // Clamp long quotes to a few lines with a show more / less toggle. The
+        // clamp is purely visual (full text stays in the DOM). We only add the
+        // toggle when the text actually overflows the clamp.
+        requestAnimationFrame(() => {
+            textEl.classList.add('clamped');
+            if (textEl.scrollHeight - textEl.clientHeight < 2) {
+                textEl.classList.remove('clamped'); // fits — no clamp needed
+                return;
+            }
+            const toggle = document.createElement('button');
+            toggle.type = 'button';
+            toggle.className = 'msg-quote-toggle';
+            toggle.textContent = 'show more';
+            toggle.addEventListener('click', () => {
+                const clamped = textEl.classList.toggle('clamped');
+                toggle.textContent = clamped ? 'show more' : 'show less';
+            });
+            textEl.after(toggle);
+        });
+
+        const label = q.title || q.url;
+        if (label) {
+            const src = q.url
+                ? (() => {
+                    const a = document.createElement('a');
+                    a.href = q.url;
+                    a.target = '_blank';
+                    a.rel = 'noopener noreferrer';
+                    return a;
+                })()
+                : document.createElement('div');
+            src.className = 'msg-quote-source';
+            src.textContent = label;
+            src.title = q.url || q.title;
+            card.appendChild(src);
+        }
+
+        container.appendChild(card);
+    });
+
+    if (container.childNodes.length) {
+        // Quotes sit above attachment thumbnails/chips and the text.
+        body.insertBefore(container, body.firstChild);
+    }
+}
+
+/**
  * Upgrade a message's optimistic (link-less) file chips into real links once
  * the server reports the persisted file objects. Matches chips to file objects
  * by name and replaces the placeholder <div> with an <a> that opens the stored

@@ -12,7 +12,11 @@ body {
     font-weight: 400;
     height: 100dvh;
     display: grid;
-    grid-template-columns: 240px 1fr;
+    /* minmax(0, 1fr), not plain 1fr: a plain fr track has min-width:auto and
+       refuses to shrink below its content, so a long non-wrapping quote would
+       widen the whole layout (and force dragging the sidebar out). minmax(0,…)
+       lets the content column shrink so messages/quotes wrap instead. */
+    grid-template-columns: 240px minmax(0, 1fr);
     grid-template-rows: 100dvh;
     overflow: hidden
 }
@@ -21,4 +25,5 @@ main {
     display: flex;
     flex-direction: column;
     overflow: hidden;
+    min-width: 0;
 }

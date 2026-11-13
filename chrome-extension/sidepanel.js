@@ -50,6 +50,7 @@ function showAssistant(baseUrl) {
     activeOrigin = null;
   }
   if (toolbarZone) toolbarZone.classList.remove("hidden");
+  announcePanelOpen(); // app is live — start watching the active tab's selection
 }
 
 function showOffline(baseUrl, message) {
@@ -90,6 +91,47 @@ function captureAndAttach() {
 if (screenshotBtn) {
   screenshotBtn.addEventListener("click", captureAndAttach);
 }
+
+// Forward selection relays from the worker into the iframe'd app, scoped
+// strictly to the loaded server origin, where the composer arms a quote pill.
+chrome.runtime.onMessage.addListener((msg) => {
+  if (!msg || typeof msg.type !== "string") return;
+  if (!activeOrigin) return; // app isn't loaded (offline) — nothing to deliver to
+
+  if (msg.type === "localassist:selection") {
+    frame.contentWindow.postMessage(
+      {
+        type: "localassist:selection",
+        text: typeof msg.text === "string" ? msg.text : "",
+        url: msg.url || "",
+        title: msg.title || "",
+        source: msg.source || "tab-highlight",
+      },
+      activeOrigin
+    );
+  } else if (msg.type === "localassist:selection-clear") {
+    frame.contentWindow.postMessage(
+      { type: "localassist:selection-clear" },
+      activeOrigin
+    );
+  }
+});
+
+// Tell the worker the panel is open (start watching the active tab) / closed.
+function announcePanelOpen() {
+  try {
+    chrome.runtime.sendMessage({ type: "localassist:panel-open" });
+  } catch (_) {
+    /* ignore */
+  }
+}
+window.addEventListener("pagehide", () => {
+  try {
+    chrome.runtime.sendMessage({ type: "localassist:panel-closed" });
+  } catch (_) {
+    /* ignore */
+  }
+});
 
 async function connect() {
   hint.textContent = "";

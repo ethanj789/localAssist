@@ -39,8 +39,25 @@ async def agent_loop(user_message: str, mcp, model_override: str = "default", co
         # the model this turn and re-attached deterministically on later turns.
         import prep_file as prep_file_mod
 
+        # Quotes (highlighted page text) ride the same attachments bucket but
+        # carry type:"quote" and have no bytes — they skip prep_file and are
+        # stored as lean objects in `files`, folded into model-only context by
+        # _apply_file_context (inline, not from disk).
         prepared = []
+        quote_objs = []
         for item in attachments or []:
+            if isinstance(item, dict) and item.get("type") == "quote":
+                text = (item.get("text") or "").strip()
+                if not text:
+                    continue
+                quote_objs.append({
+                    "type": "quote",
+                    "text": text,
+                    "source": item.get("source") or "tab-highlight",
+                    "url": item.get("url") or "",
+                    "title": item.get("title") or "",
+                })
+                continue
             name = None
             data_url = item
             if isinstance(item, dict):
@@ -54,17 +71,19 @@ async def agent_loop(user_message: str, mcp, model_override: str = "default", co
             if pf:
                 prepared.append(pf)
 
-        file_objs = [pf.db_object for pf in prepared]
+        # Persisted `files` list = real file objects + quote objects, in order.
+        file_objs = [pf.db_object for pf in prepared] + quote_objs
 
         # Tell the UI about the freshly-persisted files so it can upgrade the
         # optimistic chips (shown at send time with no link) into real links to
         # the stored originals. Without this, a chip only becomes clickable after
         # a full conversation reload. Carries the conversation id so the frontend
         # can build /chat-file/<conv>/raw/<file_id>.<ext> URLs.
-        if file_objs:
+        real_file_objs = [pf.db_object for pf in prepared]
+        if real_file_objs:
             yield _sse("files_prepared", json.dumps({
                 "conversation_id": conversation_id,
-                "files": file_objs,
+                "files": real_file_objs,
             }))
 
         current_page_b64s: list[str] = []

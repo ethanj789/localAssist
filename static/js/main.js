@@ -17,9 +17,10 @@ import {
 import { initWebSpeechVoice, bindWebSpeechButton } from './api/webSpeechVoice.js';
 import { initMemoryUI } from './ui/memory.js';
 import { initEditPanel, loadPendingEdit, clearPendingEdit, maybeAutoApprovePending } from './ui/editPanel.js';
-import { appendMsg, appendMsgAttachments, appendPill, renderMarkdown, renderMath, appendEditPill, toolRequestLabel, appendToolResultPill } from './ui/chatRenderer.js';
+import { appendMsg, appendMsgAttachments, appendMsgQuotes, appendPill, renderMarkdown, renderMath, appendEditPill, toolRequestLabel, appendToolResultPill } from './ui/chatRenderer.js';
 import { initSkillsAutocomplete, loadSkills, isDropdownVisible } from './ui/skillsAutocomplete.js';
 import { initAttachments } from './ui/attachments.js';
+import { initQuotes } from './ui/quotes.js';
 import { renderDashboard } from './ui/dashboard.js';
 
 async function init() {
@@ -39,6 +40,7 @@ async function init() {
     bindMcpPanel();
     bindSettingsAccordion();
     initAttachments(showToast);
+    initQuotes();
 
     // Hook up custom events
     document.addEventListener('conversations-updated', loadConversations);
@@ -530,8 +532,16 @@ function renderConversationHistory(messages, conversationId) {
             // server-side). Non-image files also get a chip linking to the
             // original. The extracted text already lives in msg.content.
             if (msg.files && msg.files.length) {
-                const items = msg.files.map(f => fileObjectToAttachment(f, conversationId));
-                appendMsgAttachments(userDiv, items);
+                // The files channel holds two kinds: real file objects
+                // (pdf/image → thumbnails/chips) and `type:"quote"` entries
+                // (highlighted page text → a quote card). Split and render each.
+                const quotes = msg.files.filter(f => f && f.type === 'quote');
+                const realFiles = msg.files.filter(f => !f || f.type !== 'quote');
+                if (quotes.length) appendMsgQuotes(userDiv, quotes);
+                if (realFiles.length) {
+                    const items = realFiles.map(f => fileObjectToAttachment(f, conversationId));
+                    appendMsgAttachments(userDiv, items);
+                }
             }
             lastAssistantDiv = null;
         } else if (msg.role === 'assistant') {

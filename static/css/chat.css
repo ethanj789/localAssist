@@ -1,10 +1,12 @@
 #messages {
     flex: 1;
     overflow-y: auto;
+    overflow-x: hidden;
     padding: 32px 40px;
     display: flex;
     flex-direction: column;
     gap: 24px;
+    min-width: 0;
 }
 
 
@@ -25,7 +27,10 @@
     display: flex;
     flex-direction: column;
     gap: 6px;
-    max-width: 760px;
+    /* Cap at 760px on wide screens but never exceed the (narrow sidebar)
+       container, so quote cards and content wrap instead of overflowing. */
+    max-width: min(760px, 100%);
+    min-width: 0;
     animation: fadeUp .2s ease
 }
 
@@ -76,6 +81,12 @@
     border-radius: 8px 8px 2px 8px;
     color: #b8d4f0;
     font-size: 15px;
+    /* Never exceed the message column; include padding in the width so a long
+       quote can't push the bubble off-screen. */
+    max-width: 100%;
+    min-width: 0;
+    box-sizing: border-box;
+    overflow-wrap: anywhere;
 }
 
 .msg.assistant .msg-body {
@@ -627,6 +638,85 @@ a.msg-file-chip:hover {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+}
+
+/* ── Quote cards on a user message ──
+   Highlighted page text the user pulled in as context (a `type:"quote"` entry
+   on the files channel). Rendered as a quoted block so it reads as a citation,
+   distinct from the user's typed text. */
+.msg-quotes {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-bottom: 8px;
+    /* Don't let a long one-line quote stretch the card past the column.
+       min-width:0 lets this flex child shrink so its text wraps instead. */
+    min-width: 0;
+    max-width: 100%;
+}
+
+.msg-quote {
+    border-left: 3px solid var(--accent);
+    background: var(--surface);
+    border-radius: 0 8px 8px 0;
+    padding: 8px 12px;
+    min-width: 0;
+    max-width: 100%;
+}
+
+.msg-quote-text {
+    font-size: 13.5px;
+    line-height: 1.5;
+    color: var(--text);
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+    /* width:100% (not just max-width) pins the text to the container so it can
+       never size to its own content and push the bubble off-screen. */
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
+    box-sizing: border-box;
+}
+
+/* Collapsed by default: cap height to ~6 lines. Uses max-height (not
+   -webkit-box line-clamp, which can size to content width) so the width stays
+   pinned. Full text remains in the DOM; the toggle removes the cap. */
+.msg-quote-text.clamped {
+    max-height: calc(1.5em * 6);
+    overflow: hidden;
+}
+
+.msg-quote-toggle {
+    margin-top: 4px;
+    padding: 0;
+    background: none;
+    border: 0;
+    font: inherit;
+    font-size: 11px;
+    color: var(--accent);
+    cursor: pointer;
+}
+
+.msg-quote-toggle:hover {
+    text-decoration: underline;
+}
+
+.msg-quote-source {
+    display: block;
+    margin-top: 5px;
+    font-size: 11px;
+    letter-spacing: 0.02em;
+    color: var(--muted);
+    text-decoration: none;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+a.msg-quote-source:hover {
+    color: var(--accent);
+    text-decoration: underline;
 }
 
 /* ── Fullscreen in-window image lightbox ── */

@@ -1,8 +1,9 @@
 import { API } from '../constants.js';
 import { escHtml, setStatus, showToast, scrollToBottom } from '../utils/dom.js';
-import { appendMsg, appendMsgAttachments, appendPill, renderLinkCard, renderMarkdown, renderActionButton, createThinkingBlock, appendOllamaStats, renderMath, upgradeFileChipLinks, appendEditPill, appendEditRejectPill, toolRequestLabel, appendToolResultPill } from '../ui/chatRenderer.js';
+import { appendMsg, appendMsgAttachments, appendMsgQuotes, appendPill, renderLinkCard, renderMarkdown, renderActionButton, createThinkingBlock, appendOllamaStats, renderMath, upgradeFileChipLinks, appendEditPill, appendEditRejectPill, toolRequestLabel, appendToolResultPill } from '../ui/chatRenderer.js';
 import { handleConfirmRequired, hasPendingEdit } from '../ui/editPanel.js';
 import { getPendingAttachments, hasPendingAttachments, clearPendingAttachments } from '../ui/attachments.js';
+import { getPendingQuote, hasPendingQuote, clearPendingQuote } from '../ui/quotes.js';
 
 export let isStreaming = false;
 export let currentConversationId = null;
@@ -85,8 +86,17 @@ export async function sendMessage(customText = null) {
     // Capture any staged attachments, then clear the composer strip so a
     // follow-up message doesn't re-send them. Each is a {name, dataUrl} object.
     const attachments = hasPendingAttachments() ? getPendingAttachments() : [];
-    if (!text && attachments.length === 0) return;
+
+    // A highlighted-page quote rides the SAME attachments channel as a
+    // `type:"quote"` object (text only — not a file). The server routes it
+    // around prep_file and folds it into model-only context. Captured and
+    // cleared alongside attachments so a follow-up message doesn't re-send it.
+    const quote = hasPendingQuote() ? getPendingQuote() : null;
+    const outgoing = quote ? [...attachments, quote] : attachments;
+
+    if (!text && outgoing.length === 0) return;
     clearPendingAttachments();
+    clearPendingQuote();
 
     setIsStreaming(true);
     document.getElementById('send-btn').disabled = true;
@@ -94,6 +104,7 @@ export async function sendMessage(customText = null) {
 
     const userDiv = appendMsg('user', escHtml(text));
     if (attachments.length) appendMsgAttachments(userDiv, attachments);
+    if (quote) appendMsgQuotes(userDiv, [quote]);
     scrollToBottom(document.getElementById('messages'), true);
 
     // Build the assistant bubble + streaming state. userDiv is passed so the
@@ -118,7 +129,7 @@ export async function sendMessage(customText = null) {
                 model: model,
                 conversation_id: currentConversationId,
                 ollama_thinking: ollamaThinking,
-                attachments: attachments,
+                attachments: outgoing,
             }),
             signal,
         });
