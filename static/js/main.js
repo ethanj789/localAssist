@@ -54,6 +54,12 @@ async function init() {
         setProviderLocked(true);
         loadConversations();
     });
+    document.addEventListener('conversation-title-updated', (e) => {
+        const { id, title } = e.detail;
+        if (!id || !title) return;
+        pendingTitles.set(id, title);
+        if (!applyPendingTitle(id)) loadConversations();
+    });
     document.addEventListener('conversation-cleared', startNewChat);
 
     await loadConfig();
@@ -322,6 +328,22 @@ function initCustomSelect() {
 
 // ====== CONVERSATION MANAGEMENT ======
 
+// Titles streamed over SSE before the sidebar has (re)rendered their row.
+// Keyed by conversation id; consumed by loadConversations/applyPendingTitle.
+const pendingTitles = new Map();
+
+function applyPendingTitle(id) {
+    const title = pendingTitles.get(id);
+    if (!title) return false;
+    const item = document.querySelector(`.conversation-item[data-id="${id}"]`);
+    const titleEl = item && item.querySelector('.conversation-title');
+    if (titleEl) {
+        titleEl.textContent = title;
+        return true;
+    }
+    return false;
+}
+
 async function loadConversations() {
     const listEl = document.getElementById('conversation-list');
     if (!listEl) return;
@@ -348,7 +370,10 @@ async function loadConversations() {
 
             const titleEl = document.createElement('div');
             titleEl.className = 'conversation-title';
-            titleEl.textContent = conv.title || 'Untitled Chat';
+            // A streamed title (pendingTitles) wins over the fetched row: the DB
+            // write and this fetch can race, so the freshest title is the one we
+            // just received over SSE.
+            titleEl.textContent = pendingTitles.get(conv.id) || conv.title || 'Untitled Chat';
             textContainer.appendChild(titleEl);
             item.appendChild(textContainer);
 

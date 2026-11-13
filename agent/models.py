@@ -10,7 +10,7 @@ import prompts
 log = logging.getLogger(__name__)
 
 
-async def generate_and_save_title(conversation_id: str, first_message: str):
+async def generate_and_save_title(conversation_id: str, first_message: str) -> str | None:
     import db
     try:
         title_prompt = prompts.TITLE_GENERATION_PROMPT_TEMPLATE.format(first_message=first_message)
@@ -48,8 +48,10 @@ async def generate_and_save_title(conversation_id: str, first_message: str):
             title = title[:50]  # truncate to prevent layout issues
             db.update_conversation_title(conversation_id, title)
             log.info(f"Generated title for {conversation_id}: {title}")
+            return title
     except Exception as e:
         log.error(f"Failed to generate title for {conversation_id}: {e}")
+    return None
 
 
 def _resolve_turn_models(resolved_provider: str, use_remote_provider: bool, model_override: str, user_message: str) -> tuple[str, str]:

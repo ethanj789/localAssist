@@ -1,4 +1,3 @@
-import asyncio
 import json
 import traceback
 import logging
@@ -127,10 +126,13 @@ async def agent_loop(user_message: str, mcp, model_override: str = "default", co
         _rehydrate_history_files(conversation_id, conversation_history[:-1])
         yield _sse("status", "history appended")
 
-        # Background title generation if it's currently a new chat
+        # Generate the title up front for a new chat so it can stream to the UI
+        # before the main answer, instead of landing only on the final refresh.
         title = db.get_conversation_title(conversation_id)
         if title == "New Chat" or not title:
-            asyncio.create_task(generate_and_save_title(conversation_id, clean_message))
+            new_title = await generate_and_save_title(conversation_id, clean_message)
+            if new_title:
+                yield _sse("title", json.dumps({"conversation_id": conversation_id, "title": new_title}))
 
         resolved_provider = db.resolve_conversation_provider(
             conversation_id,

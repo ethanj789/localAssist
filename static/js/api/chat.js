@@ -316,6 +316,15 @@ export function handleStreamEvent(event, data, state) {
         document.dispatchEvent(new CustomEvent('conversation-id-updated', { detail: data }));
     }
 
+    if (event === 'title') {
+        try {
+            const payload = typeof data === 'string' ? JSON.parse(data) : data;
+            document.dispatchEvent(new CustomEvent('conversation-title-updated', {
+                detail: { id: payload.conversation_id, title: payload.title },
+            }));
+        } catch (_) { /* malformed title payload — the done refresh still catches it */ }
+    }
+
     if (event === 'files_prepared') {
         // The server persisted this turn's attachments. Upgrade the optimistic
         // (link-less) file chips into real links to the stored originals so they
