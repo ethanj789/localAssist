@@ -51,40 +51,6 @@ export function initEditPanel() {
     const panel = document.getElementById('edit-panel');
     if (!panel) return;
 
-    const closeBtn = document.getElementById('close-edit-panel');
-    if (closeBtn) {
-        // Closing only hides the panel — the pending edit stays pending
-        // server-side and the modal re-opens on reload or when re-fetched.
-        closeBtn.addEventListener('click', () => panel.classList.remove('open'));
-    }
-
-    // Resizer logic
-    const resizer = document.getElementById('edit-resizer');
-    let isResizing = false;
-
-    if (resizer) {
-        resizer.addEventListener('mousedown', () => {
-            isResizing = true;
-            document.body.style.cursor = 'ew-resize';
-            document.body.style.userSelect = 'none';
-        });
-
-        window.addEventListener('mousemove', (e) => {
-            if (!isResizing) return;
-            const newWidth = window.innerWidth - e.clientX;
-            if (newWidth > 300 && newWidth < window.innerWidth - 100) {
-                panel.style.width = newWidth + 'px';
-            }
-        });
-
-        window.addEventListener('mouseup', () => {
-            if (isResizing) {
-                isResizing = false;
-                document.body.style.cursor = '';
-                document.body.style.userSelect = '';
-            }
-        });
-    }
 
     // Approve / Reject for the single pending edit
     const approveBtn = document.getElementById('btn-approve-edit');
@@ -281,6 +247,9 @@ export function clearPendingEdit() {
  * honest so that never fires in normal use.
  */
 function setInputPending(pending) {
+    // Flag on <body> so CSS can react (e.g. hide the composer on mobile, where
+    // the edit card can't fully cover it).
+    document.body.classList.toggle('edit-pending', pending);
     const input = document.getElementById('user-input');
     const sendBtn = document.getElementById('send-btn');
     if (input) {

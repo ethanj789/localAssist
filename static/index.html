@@ -12,8 +12,10 @@
   <link rel="stylesheet" href="/static/css/chat.css">
   <link rel="stylesheet" href="/static/css/input.css">
   <link rel="stylesheet" href="/static/css/toast.css">
+  <link rel="stylesheet" href="/static/css/drawer.css">
   <link rel="stylesheet" href="/static/css/memory.css">
   <link rel="stylesheet" href="/static/css/edit.css">
+  <link rel="stylesheet" href="/static/css/subagents.css">
   <link rel="stylesheet" href="/static/css/skills.css">
   <link rel="stylesheet" href="/static/css/dashboard.css">
   <link rel="stylesheet" href="/static/css/mcp.css">
@@ -145,7 +147,50 @@
       <span class="icon">🧠</span>
       <span class="label">Memory</span>
     </button>
+    <button id="subagent-btn" class="memory-btn subagent-btn" title="View subagent activity">
+      <span class="icon">🤖</span>
+      <span class="label">Subagents</span>
+      <span id="subagent-badge" class="subagent-badge" hidden>0</span>
+    </button>
     <div id="messages"></div>
+
+    <div id="edit-panel" class="edit-panel">
+      <div class="edit-header">
+        <h2>Proposed Edit</h2>
+      </div>
+      <div class="edit-content">
+        <div class="edit-single" id="edit-single">
+          <div class="edit-single-header">
+            <span class="badge action-badge" id="edit-action-badge"></span>
+            <span class="edit-card-path" id="edit-path"></span>
+          </div>
+          <div class="edit-summary-text" id="edit-summary-text"></div>
+          <div class="edit-card-anchor" id="edit-anchor" style="display:none;"></div>
+          <div class="edit-error" id="edit-error" style="display:none;"></div>
+          <div class="edit-card-diff" id="edit-diff">
+            <div class="diff-pane">
+              <div class="diff-pane-header">Before</div>
+              <div class="diff-code" id="edit-diff-old"></div>
+            </div>
+            <div class="diff-pane">
+              <div class="diff-pane-header">After</div>
+              <div class="diff-code" id="edit-diff-new"></div>
+            </div>
+          </div>
+        </div>
+        <div class="edit-actions-bar">
+          <div class="edit-reason" id="edit-reason-wrap">
+            <label for="edit-reject-reason" class="edit-reason-label">rejection reason (optional)</label>
+            <textarea id="edit-reject-reason" class="edit-reject-reason"
+              rows="1" placeholder="why are you rejecting this? the model sees this..."></textarea>
+          </div>
+          <div class="edit-actions-buttons">
+            <button class="btn-approve-edit" id="btn-approve-edit">Approve</button>
+            <button class="btn-reject-edit" id="btn-reject-edit">Reject</button>
+          </div>
+        </div>
+      </div>
+    </div>
 
     <div class="input-area">
       <div class="input-toolbar">
@@ -203,12 +248,13 @@
         <button id="stop-btn" class="hidden">■</button>
       </div>
     </div>
+
   </main>
 
   <div class="toast" id="toast"></div>
 
-  <div id="memory-modal" class="modal">
-    <div class="modal-content">
+  <div id="memory-modal" class="modal drawer-modal">
+    <div class="modal-content drawer-surface">
       <div class="modal-header">
         <h2>Agent Memory</h2>
         <button id="close-memory-modal" class="close-modal">&times;</button>
@@ -306,42 +352,15 @@
     </div>
   </div>
 
-  <div id="edit-panel" class="edit-panel">
-    <div id="edit-resizer" class="edit-resizer"></div>
-    <div class="edit-header">
-      <h2>Proposed Edit</h2>
-      <button class="close-edit-panel" id="close-edit-panel">&times;</button>
+  <div id="subagent-panel" class="subagent-panel drawer-panel">
+    <div id="subagent-resizer" class="subagent-resizer"></div>
+    <div class="subagent-header">
+      <h2>🤖 Subagent activity</h2>
+      <button class="close-subagent-panel" id="close-subagent-panel" title="Hide">&times;</button>
     </div>
-    <div class="edit-content">
-      <div class="edit-single" id="edit-single">
-        <div class="edit-single-header">
-          <span class="badge action-badge" id="edit-action-badge"></span>
-          <span class="edit-card-path" id="edit-path"></span>
-        </div>
-        <div class="edit-summary-text" id="edit-summary-text"></div>
-        <div class="edit-card-anchor" id="edit-anchor" style="display:none;"></div>
-        <div class="edit-error" id="edit-error" style="display:none;"></div>
-        <div class="edit-card-diff" id="edit-diff">
-          <div class="diff-pane">
-            <div class="diff-pane-header">Before</div>
-            <div class="diff-code" id="edit-diff-old"></div>
-          </div>
-          <div class="diff-pane">
-            <div class="diff-pane-header">After</div>
-            <div class="diff-code" id="edit-diff-new"></div>
-          </div>
-        </div>
-      </div>
-      <div class="edit-reason" id="edit-reason-wrap">
-        <label for="edit-reject-reason" class="edit-reason-label">rejection reason (optional)</label>
-        <textarea id="edit-reject-reason" class="edit-reject-reason"
-          rows="2" placeholder="why are you rejecting this? the model sees this..."></textarea>
-      </div>
-      <div class="edit-actions-bar">
-        <div class="edit-actions-buttons">
-          <button class="btn-approve-edit" id="btn-approve-edit">Approve</button>
-          <button class="btn-reject-edit" id="btn-reject-edit">Reject</button>
-        </div>
+    <div class="subagent-content">
+      <div id="subagent-list" class="subagent-list">
+        <div class="subagent-empty">No subagent runs in this chat yet.</div>
       </div>
     </div>
   </div>

@@ -17,6 +17,8 @@ import {
 import { initWebSpeechVoice, bindWebSpeechButton } from './api/webSpeechVoice.js';
 import { initMemoryUI } from './ui/memory.js';
 import { initEditPanel, loadPendingEdit, clearPendingEdit, maybeAutoApprovePending } from './ui/editPanel.js';
+import { initSubagentPanel, loadSubagentRuns } from './ui/subagentPanel.js';
+import { initDrawers } from './ui/drawer.js';
 import { appendMsg, appendMsgAttachments, appendMsgQuotes, appendPill, renderMarkdown, renderMath, appendEditPill, toolRequestLabel, appendToolResultPill } from './ui/chatRenderer.js';
 import { initSkillsAutocomplete, loadSkills, isDropdownVisible } from './ui/skillsAutocomplete.js';
 import { initAttachments } from './ui/attachments.js';
@@ -33,6 +35,8 @@ async function init() {
     bindButtons();
     initMemoryUI();
     initEditPanel();
+    initSubagentPanel();
+    initDrawers(); // shared backdrop + click-outside for the bare .drawer-panel surfaces
     initCustomSelect();
     initAutoScroll();
     initSkillsAutocomplete();
@@ -475,6 +479,10 @@ async function selectConversation(id) {
         // one exists, otherwise clears any stale modal.
         loadPendingEdit(id);
 
+        // Restore this conversation's past subagent runs into the panel (panel
+        // stays hidden by default — the user opens it via the button).
+        loadSubagentRuns(id);
+
         showToast('Resumed conversation');
     } catch (err) {
         showToast('Error loading conversation');
@@ -662,6 +670,9 @@ function startNewChat(showNotification = true) {
 
     // A fresh chat has no pending edit — hide any stale modal and unlock input.
     clearPendingEdit();
+
+    // Fresh chat → clear any subagent runs from the previous conversation.
+    loadSubagentRuns(null);
 
     const userInput = document.getElementById('user-input');
     if (userInput) {

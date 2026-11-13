@@ -1,0 +1,240 @@
+/* ═══════════════════════════════════════════════════════════════
+   Subagent activity — slide-out panel for live + past subagent runs.
+   Mirrors the edit-panel pattern (fixed, right:-100% → .open right:0) so it
+   feels like the edit-approval popup. Trigger button clones .memory-btn,
+   stacked directly under it.
+   ═══════════════════════════════════════════════════════════════ */
+
+/* ── Trigger button (under the Memory/brain button) ───────────────────────── */
+.subagent-btn {
+    top: 60px; /* sits directly beneath .memory-btn (top:12px, ~40px tall) */
+    right: 12px;
+}
+
+.subagent-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 18px;
+    height: 18px;
+    padding: 0 5px;
+    border-radius: 9px;
+    background: var(--accent, #7cffb6);
+    color: #0d1017;
+    font-size: 11px;
+    font-weight: 700;
+    line-height: 1;
+}
+.subagent-badge[hidden] { display: none; }
+
+/* A subtle pulse on the button while a run is active. */
+.subagent-btn.running {
+    border-color: var(--accent, #7cffb6);
+    box-shadow: 0 0 14px rgba(124, 255, 182, 0.25), 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+
+/* ── Slide-out panel ──────────────────────────────────────────────────────── */
+/* Positioning / slide behavior comes from the shared .drawer-panel component
+   (drawer.css); defaults (520px desktop sidebar) already match, so nothing to
+   override here. Only subagent-specific look lives below. */
+
+.subagent-resizer {
+    position: absolute;
+    top: 0;
+    left: -4px;
+    width: 8px;
+    height: 100%;
+    cursor: ew-resize;
+    z-index: 201;
+}
+.subagent-resizer:hover { background: var(--accent); opacity: 0.5; }
+
+.subagent-header {
+    padding: 14px 20px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    background: var(--surface);
+}
+.subagent-header h2 {
+    margin: 0;
+    font-size: 1rem;
+    font-weight: 500;
+}
+.close-subagent-panel {
+    background: none;
+    border: none;
+    color: var(--text-dim);
+    font-size: 1.5rem;
+    cursor: pointer;
+    line-height: 1;
+}
+.close-subagent-panel:hover { color: var(--text); }
+
+.subagent-content {
+    flex: 1;
+    overflow-y: auto;
+    min-height: 0;
+    padding: 14px 16px;
+}
+.subagent-list {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.subagent-empty {
+    color: var(--text-dim);
+    font-size: 13px;
+    text-align: center;
+    padding: 32px 12px;
+}
+
+/* Separator between live runs and restored past runs. */
+.subagent-sep {
+    color: var(--text-dim);
+    font-size: 10.5px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    text-align: center;
+    margin: 6px 0 2px;
+    opacity: 0.7;
+}
+
+/* ── Run card ─────────────────────────────────────────────────────────────── */
+.subagent-card {
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    background: var(--surface);
+    overflow: hidden;
+}
+.subagent-card.running { border-color: rgba(124, 255, 182, 0.45); }
+.subagent-card.failed  { border-color: rgba(255, 120, 120, 0.4); }
+/* Restored past runs are dimmer + collapsed by default. */
+.subagent-card.past { opacity: 0.85; }
+
+.subagent-card-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 12px;
+    cursor: pointer;
+    user-select: none;
+}
+.subagent-card-head:hover { background: rgba(255, 255, 255, 0.03); }
+
+.subagent-status-dot {
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    flex: none;
+    background: var(--text-dim);
+}
+.subagent-card.running .subagent-status-dot {
+    background: var(--accent, #7cffb6);
+    animation: subagent-pulse 1.2s ease-in-out infinite;
+}
+.subagent-card.done   .subagent-status-dot { background: var(--accent, #7cffb6); }
+.subagent-card.failed .subagent-status-dot { background: #ff7878; }
+
+@keyframes subagent-pulse {
+    0%, 100% { opacity: 1; }
+    50%      { opacity: 0.3; }
+}
+
+.subagent-agent {
+    font-family: var(--mono, monospace);
+    font-size: 12px;
+    color: var(--text);
+}
+.subagent-card.running .subagent-agent { color: var(--accent, #7cffb6); }
+
+.subagent-timer {
+    margin-left: auto;
+    font-size: 11px;
+    color: var(--text-dim);
+    font-variant-numeric: tabular-nums;
+}
+.subagent-caret {
+    font-size: 11px;
+    color: var(--text-dim);
+    transition: transform 0.15s ease;
+}
+.subagent-card.expanded .subagent-caret { transform: rotate(90deg); }
+
+.subagent-task {
+    padding: 0 12px 10px;
+    font-size: 12.5px;
+    color: var(--text);
+    word-break: break-word;
+}
+
+/* Expandable body: steps + digest. Collapsed by default. */
+.subagent-body {
+    display: none;
+    border-top: 1px solid var(--border);
+    padding: 10px 12px;
+    flex-direction: column;
+    gap: 6px;
+}
+.subagent-card.expanded .subagent-body { display: flex; }
+
+.subagent-step {
+    font-size: 11.5px;
+    color: var(--text-dim);
+    font-family: var(--mono, monospace);
+    word-break: break-word;
+}
+.subagent-step.result { color: var(--text); opacity: 0.8; }
+
+/* Live "typing" line: streamed content tokens for the in-flight round. */
+.subagent-live {
+    font-size: 12px;
+    color: var(--text);
+    white-space: pre-wrap;
+    word-break: break-word;
+    opacity: 0.9;
+}
+.subagent-live[hidden] { display: none; }
+.subagent-live::after {
+    content: '▋';
+    margin-left: 1px;
+    color: var(--accent, #7cffb6);
+    animation: subagent-caret-blink 1s step-end infinite;
+}
+@keyframes subagent-caret-blink {
+    0%, 100% { opacity: 1; }
+    50%      { opacity: 0; }
+}
+
+.subagent-digest {
+    margin-top: 4px;
+    padding: 10px 12px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    font-size: 12px;
+    color: var(--text);
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+.subagent-digest-label {
+    display: block;
+    font-size: 10px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--accent, #7cffb6);
+    margin-bottom: 4px;
+}
+
+/* Collapsed digest preview shown in the head row when not expanded. */
+.subagent-preview {
+    padding: 0 12px 10px;
+    font-size: 11.5px;
+    color: var(--text-dim);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.subagent-card.expanded .subagent-preview { display: none; }

@@ -1,0 +1,154 @@
+/* ═══════════════════════════════════════════════════════════════
+   Drawer — shared responsive panel appearance.
+
+   One place that defines how our slide-out surfaces behave at every width:
+     • Desktop (min-width > 768px): a right-hand SIDEBAR that slides in from
+       the right edge (right: -100% → 0).
+     • Mobile  (max-width: 768px): a BOTTOM SHEET that slides up from the
+       bottom (translateY(100%) → 0), rounded top corners, capped height.
+
+   Two flavours, because our panels come in two structural shapes:
+
+     .drawer-panel   The root element IS the sliding surface. Visibility is
+                     toggled with the `.open` class, with a shared backdrop.
+                     Used by: subagent panel.
+                     (The edit panel is deliberately NOT a drawer — it's
+                     confined to the chat window; see .edit-panel in edit.css.)
+
+     .drawer-modal   The root is a full-screen backdrop; its direct child
+                     `.drawer-surface` is the sliding surface. Visibility is
+                     toggled with the `.active` class.
+                     Used by: memory modal.
+
+   Panel-specific look (colors, header, inner layout) stays in each panel's
+   own stylesheet; only the slide/position/sizing lives here so all three
+   feel like the same component.
+   ═══════════════════════════════════════════════════════════════ */
+
+:root {
+    --drawer-width: 520px;          /* default desktop sidebar width */
+    --drawer-ease: cubic-bezier(0.16, 1, 0.3, 1);
+    --drawer-sheet-max-h: 90vh;     /* mobile bottom-sheet height cap */
+}
+
+/* ── Flavour A: bare sliding panel (subagent) ──────────────────────────────── */
+/* z-index sits in the same band as the memory modal (2000) so this panel —
+   like memory — renders ABOVE the floating memory/subagent buttons (z-index 900)
+   rather than tucked behind them. */
+.drawer-panel {
+    position: fixed;
+    top: 0;
+    right: -100%;
+    width: var(--drawer-width);
+    max-width: 92vw;
+    height: 100vh;
+    z-index: 2001;
+    display: flex;
+    flex-direction: column;
+    background: var(--bg);
+    border-left: 1px solid var(--border);
+    box-shadow: -4px 0 24px rgba(0, 0, 0, 0.25);
+    transition: right 0.3s var(--drawer-ease), transform 0.35s var(--drawer-ease);
+}
+.drawer-panel.open { right: 0; }
+
+/* Shared dimmed backdrop behind the panel — gives these bare panels the same
+   full-screen scrim the memory modal's `.modal` element provides, so clicking
+   empty space can close them and the buttons underneath are covered.
+   A fixed sibling layer created via the `.drawer-backdrop` element (injected by
+   js/ui/drawer.js) sitting just below the panel in the same stacking band. */
+.drawer-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 2000;
+    background: rgba(0, 0, 0, 0.7);
+    backdrop-filter: blur(6px);
+    opacity: 0;
+    visibility: hidden;
+    transition: opacity 0.3s ease, visibility 0.3s ease;
+}
+.drawer-backdrop.active {
+    opacity: 1;
+    visibility: visible;
+}
+
+/* ── Flavour B: backdrop + sliding surface (memory) ────────────────────────── */
+/* These share the `.modal` / `.modal-content` markup (and stylesheet) with the
+   centered MCP modal, so we deliberately raise specificity by chaining the
+   drawer class with the base class. That way ONLY the memory modal is turned
+   into a drawer; the plain `.modal` / `.modal-content` rules still govern MCP. */
+.modal.drawer-modal {
+    /* position/inset/z-index/display come from the base .modal rule */
+    /* Desktop: pin the surface to the right edge instead of centering it. */
+    justify-content: flex-end;
+    align-items: stretch;
+    padding: 0;
+}
+
+.drawer-modal .modal-content.drawer-surface {
+    width: var(--drawer-width);
+    max-width: 92vw;
+    height: 100vh;
+    max-height: 100vh;
+    border-radius: 0;
+    border-left: 1px solid var(--border);
+    box-shadow: -4px 0 24px rgba(0, 0, 0, 0.35);
+    /* Slide in from the right edge on desktop (override modalSlideUp). */
+    animation: none;
+    transform: translateX(100%);
+    transition: transform 0.35s var(--drawer-ease);
+}
+.drawer-modal.active .modal-content.drawer-surface { transform: translateX(0); }
+
+/* ── Mobile: both flavours become a bottom sheet ───────────────────────────── */
+@media (max-width: 768px) {
+    .drawer-panel {
+        top: auto;
+        bottom: 0;
+        right: 0;
+        left: 0;
+        width: 100%;
+        max-width: 100%;
+        height: auto;
+        max-height: var(--drawer-sheet-max-h);
+        border-left: none;
+        border-top: 1px solid var(--border);
+        border-radius: 18px 18px 0 0;
+        box-shadow: 0 -4px 24px rgba(0, 0, 0, 0.3);
+        /* Clip the flat header bar to the rounded top corners (mobile only, so
+           the desktop resize handle that juts past the left edge isn't clipped). */
+        overflow: hidden;
+        /* Hidden state: pushed fully below the fold. `right` no longer applies. */
+        transform: translateY(100%);
+        transition: transform 0.35s var(--drawer-ease);
+    }
+    .drawer-panel.open { transform: translateY(0); }
+
+    .modal.drawer-modal {
+        justify-content: stretch;
+        align-items: flex-end;
+    }
+    .drawer-modal .modal-content.drawer-surface {
+        /* memory.css's generic mobile `.modal-content` rule sets position:absolute
+           + its own animation; override here so the surface stays in the parent's
+           flex flow and uses the shared transform-slide instead. */
+        position: relative;
+        bottom: auto;
+        width: 100%;
+        max-width: 100%;
+        height: auto;
+        max-height: var(--drawer-sheet-max-h);
+        border-left: none;
+        border-top: 1px solid var(--border);
+        border-radius: 18px 18px 0 0;
+        box-shadow: 0 -4px 24px rgba(0, 0, 0, 0.3);
+        animation: none;
+        transform: translateY(100%);
+    }
+    .drawer-modal.active .modal-content.drawer-surface { transform: translateY(0); }
+}
+
+/* The resize handle only makes sense for the desktop side-drawer. */
+@media (max-width: 768px) {
+    .drawer-panel .subagent-resizer { display: none; }
+}

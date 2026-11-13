@@ -2,6 +2,7 @@ import { API } from '../constants.js';
 import { escHtml, setStatus, showToast, scrollToBottom } from '../utils/dom.js';
 import { appendMsg, appendMsgAttachments, appendMsgQuotes, appendPill, renderLinkCard, renderMarkdown, renderActionButton, createThinkingBlock, appendOllamaStats, renderMath, upgradeFileChipLinks, appendEditPill, appendEditRejectPill, toolRequestLabel, appendToolResultPill } from '../ui/chatRenderer.js';
 import { handleConfirmRequired, hasPendingEdit } from '../ui/editPanel.js';
+import { handleSubagentEvent, resetSubagentBatch } from '../ui/subagentPanel.js';
 import { getPendingAttachments, hasPendingAttachments, clearPendingAttachments } from '../ui/attachments.js';
 import { getPendingQuote, hasPendingQuote, clearPendingQuote } from '../ui/quotes.js';
 
@@ -101,6 +102,10 @@ export async function sendMessage(customText = null) {
     setIsStreaming(true);
     document.getElementById('send-btn').disabled = true;
     setStatus(true, 'thinking...');
+
+    // New turn: re-arm the subagent panel's auto-slide-out so the first
+    // subagent of THIS turn opens the panel (the user may have hidden it).
+    resetSubagentBatch();
 
     const userDiv = appendMsg('user', escHtml(text));
     if (attachments.length) appendMsgAttachments(userDiv, attachments);
@@ -240,6 +245,9 @@ export async function respondToPendingEdit(conversationId, toolCallId, decision,
     const sendBtn = document.getElementById('send-btn');
     if (sendBtn) sendBtn.disabled = true;
     setStatus(true, 'thinking...');
+
+    // Resumed turn can spawn subagents too — re-arm the auto-slide-out.
+    resetSubagentBatch();
 
     const { state, cursor } = createAssistantStream({});
 
@@ -462,6 +470,15 @@ export function handleStreamEvent(event, data, state) {
         // drives /respond, which reopens this same stream path to resume.
         const payload = typeof data === 'string' ? JSON.parse(data) : data;
         handleConfirmRequired(payload);
+    }
+
+    if (event === 'subagent_start' || event === 'subagent_token' ||
+        event === 'subagent_tool' || event === 'subagent_tool_result' ||
+        event === 'subagent_digest' || event === 'subagent_failed') {
+        // Live subagent activity → the slide-out panel. Each payload carries a
+        // tool_call_id keying its card. subagent_start auto-opens the panel.
+        const payload = typeof data === 'string' ? JSON.parse(data) : data;
+        handleSubagentEvent(event, payload);
     }
 
     if (event === 'plan_update') {

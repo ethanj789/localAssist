@@ -648,6 +648,14 @@ async def get_conversation_details(conversation_id: str):
     return {"conversation": conv, "messages": messages}
 
 
+@app.get("/subagent_runs/{conversation_id}")
+async def get_subagent_runs(conversation_id: str):
+    """Return all persisted subagent runs for a conversation (oldest first),
+    each with its parsed transcript, so the subagent-activity panel can restore
+    past runs on reopen. Returns an empty list when there are none."""
+    return {"runs": db.get_subagent_runs(conversation_id)}
+
+
 @app.put("/conversations/{conversation_id}")
 async def rename_conversation(conversation_id: str, req: RenameConversationRequest):
     conv = db.get_conversation(conversation_id)

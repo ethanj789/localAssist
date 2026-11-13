@@ -26,4 +26,5 @@ main {
     flex-direction: column;
     overflow: hidden;
     min-width: 0;
+    position: relative;    /* positioning context for the edit panel */
 }

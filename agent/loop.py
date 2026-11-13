@@ -485,15 +485,39 @@ async def _run_tool_loop(
                 if name in subagents.SUBAGENT_NAMES:
                     sub_task = args.get("query") or args.get("task") or ""
                     _t0 = time.perf_counter()
+
+                    _sub_q: asyncio.Queue = asyncio.Queue()
+
+                    async def _sub_emit(event_type: str, payload: dict, _cid=tc.id):
+                        enriched = {"tool_call_id": _cid, **payload}
+                        await _sub_q.put(_sse(event_type, json.dumps(enriched)))
+
+                    async def _run_sub():
+                        try:
+                            return await subagents.run_subagent(name, sub_task, emit=_sub_emit)
+                        except Exception as sub_exc:
+                            log.error("subagent %s crashed in loop: %s", name, sub_exc, exc_info=True)
+                            return {
+                                "digest": f"Subagent {name} failed to complete ({sub_exc}). Retry the call or proceed without it.",
+                                "transcript": [],
+                                "ok": False,
+                            }
+
+                    _sub_task_fut = asyncio.ensure_future(_run_sub())
+                    # Drain emitted SSE records while the subagent runs. 
                     try:
-                        sub_result = await subagents.run_subagent(name, sub_task)
-                    except Exception as sub_exc:
-                        log.error("subagent %s crashed in loop: %s", name, sub_exc, exc_info=True)
-                        sub_result = {
-                            "digest": f"Subagent {name} failed to complete ({sub_exc}). Retry the call or proceed without it.",
-                            "transcript": [],
-                            "ok": False,
-                        }
+                        while True:
+                            if _sub_task_fut.done() and _sub_q.empty():
+                                break
+                            try:
+                                rec = await asyncio.wait_for(_sub_q.get(), timeout=0.2)
+                                yield rec
+                            except asyncio.TimeoutError:
+                                continue
+                        sub_result = _sub_task_fut.result()
+                    finally:
+                        if not _sub_task_fut.done():
+                            _sub_task_fut.cancel()
                     _dt = (time.perf_counter() - _t0) * 1000
                     result = sub_result["digest"]
                     log.info(

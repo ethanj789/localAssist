@@ -24,9 +24,15 @@ async def _noop_emit(event_type: str, data: dict) -> None:
     return None
 
 
-async def _call_worker(messages: list[dict], tools: list[dict]) -> SimpleNamespace:
+async def _call_worker(
+    messages: list[dict],
+    tools: list[dict],
+    *,
+    agent_name: str,
+    emit,
+) -> SimpleNamespace:
     # model= overrides per-call without touching CONFIG["model"] (gemma). Never
-    # send think:true to granite — it 400s. Returned message is a SimpleNamespace
+    # send think:true to granite — it 400s. Returns a SimpleNamespace
     # (content, tool_calls, thinking); tc.function.arguments is a JSON string.
     request_kwargs = {
         "model": WORKER_MODEL,
@@ -36,8 +42,42 @@ async def _call_worker(messages: list[dict], tools: list[dict]) -> SimpleNamespa
         "max_completion_tokens": WORKER_MAX_TOKENS,
         "num_ctx": WORKER_NUM_CTX,
     }
-    resp = await llm_provider._ollama_chat_completion(request_kwargs, CONFIG)
-    return resp.choices[0].message
+
+    assembled = None
+    async for chunk in llm_provider._ollama_stream_chat_completion(request_kwargs, CONFIG):
+        choice = chunk.choices[0]
+        delta = choice.delta
+        if delta.content:
+            await emit("subagent_token", {"agent": agent_name, "token": delta.content})
+        if choice.finish_reason is not None:
+            assembled = chunk.assembled
+            break
+
+    if assembled is None:
+        # Stream ended with no done chunk (rare): recover with a blocking call so
+        # a round is never silently lost.
+        log.warning("subagent %s | stream ended with no done chunk — falling back", agent_name)
+        resp = await llm_provider._ollama_chat_completion(request_kwargs, CONFIG)
+        return resp.choices[0].message
+
+    content = assembled.content or ""
+    thinking = assembled.thinking
+    tool_calls = llm_provider._parse_ollama_tool_calls_raw(assembled.tool_calls_raw)
+
+    if not tool_calls and not content:
+        log.warning(
+            "subagent %s | stream yielded no content/tool_calls — "
+            "falling back to non-streaming call to recover",
+            agent_name,
+        )
+        resp = await llm_provider._ollama_chat_completion(request_kwargs, CONFIG)
+        return resp.choices[0].message
+
+    return SimpleNamespace(
+        content=content,
+        tool_calls=tool_calls,
+        thinking=thinking,
+    )
 
 
 def _parse_args(raw) -> dict:
@@ -99,7 +139,12 @@ async def run_subagent_loop(
             at_last_round = rnd == max_rounds - 1
             offer_tools = not (budget_exhausted or at_last_round)
 
-            msg = await _call_worker(messages, tools_schema if offer_tools else [])
+            msg = await _call_worker(
+                messages,
+                tools_schema if offer_tools else [],
+                agent_name=agent_name,
+                emit=emit,
+            )
             content = (msg.content or "").strip()
             tool_calls = msg.tool_calls or []
 

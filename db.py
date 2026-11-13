@@ -330,6 +330,29 @@ def get_subagent_run(conversation_id: str, tool_call_id: str) -> dict | None:
         d["transcript"] = None
     return d
 
+def get_subagent_runs(conversation_id: str) -> list[dict]:
+    """Return all subagent runs for a conversation, oldest first, with each
+    row's `transcript_json` parsed into `transcript`. Used to restore the
+    subagent-activity panel on chat reopen (mirrors how pending edits are
+    restored from the DB). Keyed by conversation only — scoped to the current
+    chat, matching the sidebar model."""
+    with get_db_connection() as conn:
+        rows = conn.execute(
+            "SELECT * FROM subagent_runs WHERE conversation_id = ? ORDER BY id ASC",
+            (conversation_id,)
+        ).fetchall()
+    out = []
+    for row in rows:
+        d = dict(row)
+        raw = d.pop("transcript_json", None)
+        try:
+            d["transcript"] = json.loads(raw) if raw else None
+        except (json.JSONDecodeError, TypeError):
+            d["transcript"] = None
+        out.append(d)
+    return out
+
+
 def delete_conversation(conversation_id: str):
     with get_db_connection() as conn:
         conn.execute("DELETE FROM conversations WHERE id = ?", (conversation_id,))

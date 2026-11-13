@@ -1,47 +1,43 @@
-/* ═══════════════════════════════════════════════════════════════
-   Edit Panel — slide-out panel for reviewing proposed edits
-   ═══════════════════════════════════════════════════════════════ */
-
+/* Edit Panel — bottom-anchored card for reviewing a proposed edit. */
 .edit-panel {
-    position: fixed;
-    top: 0;
-    right: -100%;
-    width: 800px;
-    max-width: 90vw;
-    height: 100vh;
-    background: var(--bg);
-    border-left: 1px solid var(--border);
-    transition: right 0.3s cubic-bezier(0.16, 1, 0.3, 1);
-    z-index: 200;
-    display: flex;
-    flex-direction: column;
-    box-shadow: -4px 0 24px rgba(0, 0, 0, 0.1);
-}
-
-.edit-panel.open {
-    right: 0;
-}
-
-.edit-resizer {
     position: absolute;
-    top: 0;
-    left: -4px;
-    width: 8px;
-    height: 100%;
-    cursor: ew-resize;
-    z-index: 201;
+    left: 16px;
+    right: 16px;
+    bottom: 12px;
+    z-index: 50;              /* above messages + composer, below floating buttons (900) */
+    max-height: min(60vh, 560px);
+    min-height: 0;
+    display: none;
+    flex-direction: column;
+    overflow: hidden;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
 }
-.edit-resizer:hover {
-    background: var(--accent);
-    opacity: 0.5;
+.edit-panel.open {
+    display: flex;
+    animation: edit-panel-in 0.25s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
-/* Header */
+@keyframes edit-panel-in {
+    from { opacity: 0; transform: translateY(12px); }
+    to   { opacity: 1; transform: translateY(0); }
+}
+
+/* While an edit is pending, hide the composer and pad the message list so the
+   history tail scrolls clear of the card. (Mobile overrides in mobile.css.) */
+body.edit-pending .input-area {
+    display: none;
+}
+body.edit-pending #messages {
+    padding-bottom: calc(min(60vh, 560px) + 24px);
+}
+
 .edit-header {
-    padding: 14px 20px;
+    padding: 12px 18px;
     border-bottom: 1px solid var(--border);
     display: flex;
-    justify-content: space-between;
     align-items: center;
     background: var(--surface);
 }
@@ -51,15 +47,6 @@
     font-size: 1rem;
     font-weight: 500;
 }
-
-.close-edit-panel {
-    background: none;
-    border: none;
-    color: var(--text-dim);
-    font-size: 1.5rem;
-    cursor: pointer;
-}
-.close-edit-panel:hover { color: var(--text); }
 
 /* Content area */
 .edit-content {
@@ -110,12 +97,12 @@
     line-height: 1.4;
 }
 
-/* Optional rejection-reason input (above the action bar) */
 .edit-reason {
+    flex: 1;
+    min-width: 0;
     display: flex;
     flex-direction: column;
     gap: 4px;
-    padding: 10px 18px 0;
 }
 .edit-reason-label {
     font-size: 0.72rem;
@@ -126,7 +113,8 @@
     width: 100%;
     box-sizing: border-box;
     resize: vertical;
-    min-height: 2.2em;
+    min-height: 2.4em;
+    max-height: 6em;
     padding: 6px 8px;
     border: 1px solid var(--border);
     border-radius: 5px;
@@ -141,11 +129,10 @@
     border-color: var(--accent, #4a9eff);
 }
 
-/* Action bar pinned below the edit */
 .edit-actions-bar {
     display: flex;
-    align-items: center;
-    gap: 8px;
+    align-items: flex-end;
+    gap: 12px;
     padding: 12px 18px;
     border-top: 1px solid var(--border);
     background: var(--surface);
@@ -154,7 +141,7 @@
 .edit-actions-buttons {
     display: flex;
     gap: 8px;
-    margin-left: auto;
+    flex: none;
 }
 
 .btn-approve-edit,

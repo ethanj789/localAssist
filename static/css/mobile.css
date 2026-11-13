@@ -133,6 +133,19 @@
         height: 32px;
         font-size: 14px;
     }
+
+    /* Pending edit: hide composer, keep the card bottom-anchored, pad the
+       message list so history scrolls clear. */
+    body.edit-pending .input-area {
+        display: none;
+    }
+    body.edit-pending .edit-panel.open {
+        bottom: 16px;
+        max-height: 55vh;
+    }
+    body.edit-pending #messages {
+        padding-bottom: calc(55vh + 32px);
+    }
 }
 
 /* Hide toggle on desktop */
