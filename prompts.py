@@ -20,6 +20,15 @@ SYSTEM_PROMPT = (
 
     "If a tool call fails, try a different approach immediately rather than giving up. "
 
+    "RESEARCH SUBAGENTS: you have two helpers that offload research and return only a short digest, "
+    "keeping your context clean — subagent_search (web lookups) and subagent_context (finding and "
+    "reading workspace files). Each helper is small: it answers ONE focused question well but CANNOT "
+    "combine multiple questions into one answer. So when a request is complex or has multiple parts, "
+    "DECOMPOSE it yourself into several simple single-focus subagent calls (one fact or one file-topic "
+    "per call) and synthesize the digests into your own final answer — do NOT send one broad, multi-part "
+    "query and expect a complete answer back. For a quick single fact or a file you are about to EDIT, "
+    "it is fine to use the direct tools (web_tool, read_file) yourself instead. "
+
     "Respond directly without tools only for casual conversation or questions you can answer "
     "with certainty from training data. "
 

@@ -58,6 +58,21 @@ def init_db():
             conn.execute("ALTER TABLE messages ADD COLUMN files TEXT")
         except Exception:
             pass  # column already exists
+        # Subagent sidecar
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS subagent_runs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                conversation_id TEXT NOT NULL,
+                tool_call_id TEXT NOT NULL,
+                agent_name TEXT NOT NULL,
+                task TEXT,
+                digest TEXT,
+                transcript_json TEXT,
+                status TEXT NOT NULL DEFAULT 'done',
+                created_at TEXT NOT NULL,
+                FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
+            )
+        """)
         conn.commit()
 
 
@@ -275,6 +290,45 @@ def update_message_content(conversation_id: str, tool_call_id: str, new_content:
             (new_content, conversation_id, tool_call_id)
         )
         conn.commit()
+
+def add_subagent_run(
+    conversation_id: str,
+    tool_call_id: str,
+    agent_name: str,
+    task: str,
+    digest: str,
+    transcript: list | dict | None = None,
+    status: str = "done",
+):
+    """Write one subagent sidecar row. `digest` is stored verbatim (the exact
+    string used as the inline tool result), not re-derived from the transcript."""
+    now = datetime.utcnow().isoformat()
+    transcript_str = json.dumps(transcript) if transcript is not None else None
+    with get_db_connection() as conn:
+        conn.execute(
+            "INSERT INTO subagent_runs (conversation_id, tool_call_id, agent_name, task, digest, transcript_json, status, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (conversation_id, tool_call_id, agent_name, task, digest, transcript_str, status, now)
+        )
+        conn.commit()
+
+def get_subagent_run(conversation_id: str, tool_call_id: str) -> dict | None:
+    """Fetch a subagent run by (conversation_id, tool_call_id); `transcript` is
+    parsed from JSON into a Python object (or None)."""
+    with get_db_connection() as conn:
+        row = conn.execute(
+            "SELECT * FROM subagent_runs WHERE conversation_id = ? AND tool_call_id = ?",
+            (conversation_id, tool_call_id)
+        ).fetchone()
+    if not row:
+        return None
+    d = dict(row)
+    raw = d.get("transcript_json")
+    try:
+        d["transcript"] = json.loads(raw) if raw else None
+    except (json.JSONDecodeError, TypeError):
+        d["transcript"] = None
+    return d
 
 def delete_conversation(conversation_id: str):
     with get_db_connection() as conn:

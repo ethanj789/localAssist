@@ -9,6 +9,8 @@ from config import CONFIG, MAX_HISTORY, get_model_setting
 import llm_provider
 import plans
 
+from . import subagents
+
 from .sse import _sse
 from .prompt import build_system_prompt
 from .parsing import _extract_tool_call_from_text
@@ -327,6 +329,21 @@ async def _run_tool_loop(
                 }))
                 return
 
+            # Make tool_call ids unique within the conversation (the sidecar is
+            # keyed on them). Ollama omits ids, so llm_provider mints a fallback
+            # of exactly `call_<name>` — two same-name calls in one batch collide.
+            # Re-mint only those fallback-shaped (or missing) ids; real
+            # Groq/OpenAI ids are already unique and left untouched. Mutating
+            # tc.id in place keeps one source of truth for every downstream reader.
+            # (Ollama never receives the id — stripped in _normalize_messages_for_ollama
+            # — so this has zero KV impact.)
+            _seq = len(conversation_history)
+            for _batch_idx, tc in enumerate(tool_calls):
+                _name = getattr(tc.function, "name", "tool") or "tool"
+                _is_ollama_fallback = (not tc.id) or (tc.id == f"call_{_name}")
+                if _is_ollama_fallback:
+                    tc.id = f"call_{_name}_{_seq}_{_batch_idx}"
+
             tool_calls_for_history = [
                 {
                     "id": tc.id,
@@ -449,6 +466,10 @@ async def _run_tool_loop(
                     event_payload["count"] = email_count + 1
                     event_payload["max"] = max_emails
                     event_payload["label"] = f'drafting email to {args.get("to","NA")}, about {args.get("subject","NA")} ({email_count + 1}/{max_emails})'
+                elif name == "subagent_search":
+                    event_payload["label"] = f'researching web: "{args.get("query", "")}"'
+                elif name == "subagent_context":
+                    event_payload["label"] = f'researching workspace: "{args.get("task", "")}"'
                 else:
                     event_payload["label"] = f'{name}: {json.dumps(args)}'
 
@@ -460,8 +481,40 @@ async def _run_tool_loop(
                     _args_str = _args_str[:500] + f"...(+{len(_args_str) - 500} chars)"
                 log.info("tool_call | %s | args=%s", name, _args_str)
 
+                # Intercept subagents in-process
+                if name in subagents.SUBAGENT_NAMES:
+                    sub_task = args.get("query") or args.get("task") or ""
+                    _t0 = time.perf_counter()
+                    try:
+                        sub_result = await subagents.run_subagent(name, sub_task)
+                    except Exception as sub_exc:
+                        log.error("subagent %s crashed in loop: %s", name, sub_exc, exc_info=True)
+                        sub_result = {
+                            "digest": f"Subagent {name} failed to complete ({sub_exc}). Retry the call or proceed without it.",
+                            "transcript": [],
+                            "ok": False,
+                        }
+                    _dt = (time.perf_counter() - _t0) * 1000
+                    result = sub_result["digest"]
+                    log.info(
+                        "subagent_result | %s | %.0fms | ok=%s | %d chars",
+                        name, _dt, sub_result.get("ok"), len(result),
+                    )
+                    try:
+                        db.add_subagent_run(
+                            conversation_id=conversation_id,
+                            tool_call_id=tc.id,
+                            agent_name=name,
+                            task=sub_task,
+                            digest=result,
+                            transcript=sub_result.get("transcript"),
+                            status="done",
+                        )
+                    except Exception as db_exc:
+                        log.error("failed to write subagent sidecar for %s: %s", name, db_exc)
+
                 # Intercept plan tool (needs conversation_id, not MCP)
-                if name == "plan":
+                elif name == "plan":
                     action = args.get("action")
                     if action == "create":
                         plan = plans.create_plan(conversation_id, args["goal"], args["steps"])

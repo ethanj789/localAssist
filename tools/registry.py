@@ -270,6 +270,64 @@ async def list_tools() -> list[types.Tool]:
             }
         ),
         types.Tool(
+            name="subagent_search",
+            description=(
+                "Delegate a SINGLE, focused web-research question to a lightweight research "
+                "worker. The worker searches the web on its own and returns a short digest of "
+                "what it found — you get only the digest, not the raw pages, so it keeps your "
+                "context clean. Use this to offload a self-contained fact-finding lookup "
+                "(e.g. 'What license is X released under?', 'current stable version of Y').\n"
+                "\n"
+                "IMPORTANT — one focus per call. The worker is small and reliably answers ONE "
+                "focused question, but CANNOT synthesize multi-part answers. For a complex or "
+                "multi-part research request, DECOMPOSE it yourself into several simple "
+                "single-focus subagent_search calls (one fact each) and combine the digests in "
+                "your own answer — do NOT send one broad multi-part query. "
+                "Prefer recent_events for live news/weather. This worker is read-only: it "
+                "cannot edit files, send email, or call other tools."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "A single, focused research question for the worker to answer. Keep it to one fact/topic."
+                    }
+                },
+                "required": ["query"]
+            }
+        ),
+        types.Tool(
+            name="subagent_context",
+            description=(
+                "Delegate a SINGLE, focused workspace-gathering task to a lightweight research "
+                "worker. The worker searches and reads local workspace files on its own and "
+                "returns a short digest — you get only the digest, not the raw file dumps, so it "
+                "keeps your context clean. Use this to offload a self-contained 'find / summarize "
+                "X in the project' task (e.g. 'Which file defines the Ollama payload builder and "
+                "what does it do?', 'Summarize what greeting.txt contains').\n"
+                "\n"
+                "IMPORTANT — one focus per call. The worker is small and reliably answers ONE "
+                "focused task, but CANNOT synthesize multi-part answers. For a complex or "
+                "multi-part request, DECOMPOSE it yourself into several simple single-focus "
+                "subagent_context calls (one thing each) and combine the digests in your own "
+                "answer — do NOT send one broad multi-part task. This worker is read-only: it "
+                "can search and read files but cannot edit them or call other tools. For a file "
+                "you intend to EDIT, read it yourself with read_file first (do not edit based "
+                "only on a digest)."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "task": {
+                        "type": "string",
+                        "description": "A single, focused workspace task (find/summarize one thing). Keep it to one topic."
+                    }
+                },
+                "required": ["task"]
+            }
+        ),
+        types.Tool(
             name="plan",
             description=(
                 "Manage a step-by-step plan for the current task. "
@@ -414,6 +472,11 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
     elif name == "plan":
         # Plan tool is intercepted in agent.py (needs conversation_id).
         # If it somehow reaches here, return a no-op acknowledgment.
+        return [types.TextContent(type="text", text="OK (handled by agent)")]
+    elif name in ("subagent_search", "subagent_context"):
+        # Intercepted in agent/loop.py (needs conversation_id + tool_call_id).
+        # Dead no-op stub — exists only so the schema is advertised via
+        # list_tools(). Mirrors the `plan` stub above.
         return [types.TextContent(type="text", text="OK (handled by agent)")]
     else:
         raise ValueError(f"Unknown tool: {name}")
