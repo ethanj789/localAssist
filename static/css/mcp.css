@@ -1,11 +1,5 @@
 /* ───────────────────────── MCP server panel (sidebar) ───────────────────── */
 
-/* MCP lives in its own accordion block above Settings. Give it a touch of
-   separation from the block below it. */
-.mcp-accordion {
-    margin-bottom: 10px;
-}
-
 /* Reload sits in its own toolbar row, right-aligned above the server list. */
 .mcp-toolbar {
     display: flex;

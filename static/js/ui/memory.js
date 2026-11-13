@@ -20,11 +20,6 @@ export function initMemoryUI() {
     if (closeBtn) {
         closeBtn.addEventListener('click', closeMemoryModal);
     }
-    if (modal) {
-        modal.addEventListener('click', (e) => {
-            if (e.target === modal) closeMemoryModal();
-        });
-    }
     if (addForm) {
         addForm.addEventListener('submit', onAddSubmit);
     }
@@ -64,14 +59,14 @@ function initBucketSelect() {
 
 async function openMemoryModal() {
     if (!modal) return;
-    modal.classList.add('active');
+    modal.classList.add('open');
     document.body.style.overflow = 'hidden'; // Prevent background scrolling
     await refreshMemories();
 }
 
 function closeMemoryModal() {
     if (!modal) return;
-    modal.classList.remove('active');
+    modal.classList.remove('open');
     document.body.style.overflow = '';
 }
 

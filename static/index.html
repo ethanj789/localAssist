@@ -12,6 +12,7 @@
   <link rel="stylesheet" href="/static/css/chat.css">
   <link rel="stylesheet" href="/static/css/input.css">
   <link rel="stylesheet" href="/static/css/toast.css">
+  <link rel="stylesheet" href="/static/css/modal.css">
   <link rel="stylesheet" href="/static/css/drawer.css">
   <link rel="stylesheet" href="/static/css/memory.css">
   <link rel="stylesheet" href="/static/css/edit.css">
@@ -44,7 +45,12 @@
     <!-- MCP Servers Section (its own block, above Settings) -->
     <div class="settings-accordion mcp-accordion">
       <button class="settings-toggle-btn" id="mcp-toggle-btn">
-        <span>🔌 MCP Servers</span>
+        <span class="toggle-label">
+          <svg class="toggle-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M9 2v5M15 2v5"/><path d="M6 7h12v4a6 6 0 0 1-12 0V7z"/><path d="M12 17v5"/>
+          </svg>
+          MCP Servers
+        </span>
         <span class="arrow-icon" id="mcp-arrow">▸</span>
       </button>
       <div class="settings-content" id="mcp-content" style="display: none;">
@@ -67,7 +73,13 @@
     <!-- Collapsible Settings Section -->
     <div class="settings-accordion">
       <button class="settings-toggle-btn" id="settings-toggle-btn">
-        <span>⚙ Settings</span>
+        <span class="toggle-label">
+          <svg class="toggle-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <circle cx="12" cy="12" r="3"/>
+            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+          </svg>
+          Settings
+        </span>
         <span class="arrow-icon" id="settings-arrow">▸</span>
       </button>
       <div class="settings-content" id="settings-content" style="display: none;">
@@ -253,13 +265,12 @@
 
   <div class="toast" id="toast"></div>
 
-  <div id="memory-modal" class="modal drawer-modal">
-    <div class="modal-content drawer-surface">
-      <div class="modal-header">
-        <h2>Agent Memory</h2>
-        <button id="close-memory-modal" class="close-modal">&times;</button>
+  <div id="memory-modal" class="memory-panel drawer-panel">
+      <div class="drawer-head">
+        <h2 class="drawer-title">Agent Memory</h2>
+        <button id="close-memory-modal" class="drawer-close">&times;</button>
       </div>
-      <div class="modal-body">
+      <div class="memory-body">
         <form id="memory-add-form" class="memory-add-form">
           <input id="memory-add-key" class="memory-add-input" type="text" placeholder="key (e.g. preferred_language)" autocomplete="off" />
           <input id="memory-add-value" class="memory-add-input" type="text" placeholder="value (e.g. Python)" autocomplete="off" />
@@ -279,7 +290,6 @@
           <!-- Slots rendered here -->
         </div>
       </div>
-    </div>
   </div>
 
   <div id="mcp-modal" class="modal">
@@ -354,9 +364,9 @@
 
   <div id="subagent-panel" class="subagent-panel drawer-panel">
     <div id="subagent-resizer" class="subagent-resizer"></div>
-    <div class="subagent-header">
-      <h2>🤖 Subagent activity</h2>
-      <button class="close-subagent-panel" id="close-subagent-panel" title="Hide">&times;</button>
+    <div class="drawer-head subagent-header">
+      <h2 class="drawer-title">Subagent Activity</h2>
+      <button class="drawer-close close-subagent-panel" id="close-subagent-panel" title="Hide">&times;</button>
     </div>
     <div class="subagent-content">
       <div id="subagent-list" class="subagent-list">

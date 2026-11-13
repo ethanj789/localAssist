@@ -28,6 +28,8 @@ function setupDrawer(panel) {
 
     backdrop.addEventListener('click', () => {
         panel.classList.remove('open');
+        // Memory locks body scroll while open; restore it on click-outside close.
+        document.body.style.overflow = '';
     });
 
     const sync = () => backdrop.classList.toggle('active', panel.classList.contains('open'));

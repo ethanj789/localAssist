@@ -1,7 +1,7 @@
 /* Floating Memory Button and App Buttons */
 .memory-btn, .app-btn {
     position: fixed;
-    top: 12px;
+    top: var(--drawer-btn-top, 12px);
     right: 12px;
     z-index: 900;
     display: flex;
@@ -60,79 +60,12 @@
     font-size: 18px;
 }
 
-/* Modal Styles */
-.modal {
-    position: fixed;
-    inset: 0;
-    z-index: 2000;
-    display: none;
-    align-items: center;
-    justify-content: center;
-    background: rgba(0, 0, 0, 0.7);
-    backdrop-filter: blur(6px);
-    padding: 20px;
-    animation: modalFadeIn 0.25s ease;
-}
-
-.modal.active {
-    display: flex;
-}
-
-.modal-content {
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: 24px;
-    width: 100%;
-    max-width: 500px;
-    max-height: 85vh;
-    overflow: hidden;
-    display: flex;
-    flex-direction: column;
-    box-shadow: 0 25px 60px rgba(0, 0, 0, 0.6);
-    animation: modalSlideUp 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
-}
-
-.modal-header {
-    padding: 20px 24px;
-    border-bottom: 1px solid var(--border);
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-}
-
-.modal-header h2 {
-    margin: 0;
-    font-size: 18px;
-    letter-spacing: 0.5px;
-    text-transform: uppercase;
-    font-weight: 600;
-    color: var(--accent);
-}
-
-.close-modal {
-    background: rgba(255, 255, 255, 0.05);
-    border: none;
-    color: var(--text);
-    width: 32px;
-    height: 32px;
-    border-radius: 50%;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 20px;
-    cursor: pointer;
-    transition: all 0.2s;
-}
-
-.close-modal:hover {
-    background: rgba(255, 255, 255, 0.1);
-    transform: rotate(90deg);
-}
-
-.modal-body {
-    padding: 20px;
-    overflow-y: auto;
+/* Memory drawer body — scrollable region below the shared .drawer-head. */
+.memory-body {
     flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    padding: 20px;
 }
 
 /* Add Memory Form — single row on desktop: key | value | bucket | Add.
@@ -291,17 +224,6 @@
     padding: 60px 0;
 }
 
-/* Animations */
-@keyframes modalFadeIn {
-    from { opacity: 0; }
-    to { opacity: 1; }
-}
-
-@keyframes modalSlideUp {
-    from { transform: translateY(30px) scale(0.95); opacity: 0; }
-    to { transform: translateY(0) scale(1); opacity: 1; }
-}
-
 /* Mobile Adjustments */
 @media (max-width: 768px) {
     /* Reflow the add form: key + value on their own full-width row each,
@@ -319,6 +241,15 @@
     .memory-btn, .app-btn {
         padding: 10px;
     }
+    /* Match the ☰ menu toggle (44x44, radius 12) so the Notes icon button
+       next to it is the same size instead of slightly larger. */
+    .top-left-apps .app-btn {
+        width: 44px;
+        height: 44px;
+        padding: 0;
+        border-radius: 12px;
+        justify-content: center;
+    }
     .memory-btn {
         top: 12px;
         right: 12px;
@@ -327,17 +258,4 @@
     .top-left-apps {
         left: 68px; /* 12px padding + 44px menu toggle + 12px gap */
     }
-    
-    .modal-content {
-        max-height: 90vh;
-        border-radius: 24px 24px 0 0;
-        position: absolute;
-        bottom: 0;
-        animation: mobileSlideUp 0.4s cubic-bezier(0.32, 0.72, 0, 1);
-    }
-}
-
-@keyframes mobileSlideUp {
-    from { transform: translateY(100%); }
-    to { transform: translateY(0); }
 }

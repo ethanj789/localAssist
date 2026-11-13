@@ -1,13 +1,12 @@
 /* ═══════════════════════════════════════════════════════════════
    Subagent activity — slide-out panel for live + past subagent runs.
-   Mirrors the edit-panel pattern (fixed, right:-100% → .open right:0) so it
-   feels like the edit-approval popup. Trigger button clones .memory-btn,
-   stacked directly under it.
+   Built on the shared .drawer-panel component (drawer.css) with the shared
+   .drawer-head chrome. Trigger button is slot 1 in the top-right button stack.
    ═══════════════════════════════════════════════════════════════ */
 
-/* ── Trigger button (under the Memory/brain button) ───────────────────────── */
+/* ── Trigger button (slot 1 in the top-right drawer-button stack) ─────────── */
 .subagent-btn {
-    top: 60px; /* sits directly beneath .memory-btn (top:12px, ~40px tall) */
+    top: calc(var(--drawer-btn-top) + var(--drawer-btn-step));
     right: 12px;
 }
 
@@ -49,28 +48,8 @@
 }
 .subagent-resizer:hover { background: var(--accent); opacity: 0.5; }
 
-.subagent-header {
-    padding: 14px 20px;
-    border-bottom: 1px solid var(--border);
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    background: var(--surface);
-}
-.subagent-header h2 {
-    margin: 0;
-    font-size: 1rem;
-    font-weight: 500;
-}
-.close-subagent-panel {
-    background: none;
-    border: none;
-    color: var(--text-dim);
-    font-size: 1.5rem;
-    cursor: pointer;
-    line-height: 1;
-}
-.close-subagent-panel:hover { color: var(--text); }
+/* Header/title/close come from the shared .drawer-head component (drawer.css);
+   both the subagent panel and memory modal render the same chrome. */
 
 .subagent-content {
     flex: 1;
