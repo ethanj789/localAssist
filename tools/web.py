@@ -15,6 +15,7 @@ from mcp import types
 log = logging.getLogger(__name__)
 
 MAX_SEARCH_RESULTS = 10
+MAX_RENDERED_RESULTS = 3
 FETCH_TIMEOUT   = 8
 MAX_TEXT_CHARS  = 2000
 
@@ -47,7 +48,7 @@ async def _web_search(query: str, topic: str = "general", time_range: str | None
     lines = []
     if answer:
         lines.append(f"Summary: {answer}\n")
-    for i, r in enumerate(results, 1):
+    for i, r in enumerate(results[:MAX_RENDERED_RESULTS], 1):
         date = f" ({r['published_date']})" if r.get("published_date") else ""
         lines.append(f"{i}. {r['title']}{date}\n   URL: {r['url']}\n   {r['snippet']}\n")
 
