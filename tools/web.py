@@ -38,26 +38,39 @@ MAX_TEXT_CHARS  = 2000
 #         lines.append(f"{i}. {r['title']}\n   URL: {r['url']}\n   {r['snippet']}\n")
 #     return [types.TextContent(type="text", text="\n".join(lines))]
 
-async def _web_search(query: str) -> list[types.TextContent]:
-    results = _tavily_search(query)
+async def _web_search(query: str, topic: str = "general", time_range: str | None = None) -> list[types.TextContent]:
+    results = _tavily_search(query, topic=topic, time_range=time_range)
 
     if not results:
         return [types.TextContent(type="text", text="No results found.")]
 
     lines = []
     for i, r in enumerate(results, 1):
-        lines.append(f"{i}. {r['title']}\n   URL: {r['url']}\n   {r['snippet']}\n")
+        date = f" ({r['published_date']})" if r.get("published_date") else ""
+        lines.append(f"{i}. {r['title']}{date}\n   URL: {r['url']}\n   {r['snippet']}\n")
 
     return [types.TextContent(type="text", text="\n".join(lines))]
 
 
-def _tavily_search(query: str) -> list[dict]:
+def _tavily_search(query: str, topic: str = "general", time_range: str | None = None) -> list[dict]:
     TAVILY_API_KEY = os.getenv("TAVILY_API_KEY", "")
+    # Not setting filter_by_published_date on purpose — it also drops sources with
+    # no detectable date, which can lose a fresh article Tavily can't date-parse.
+    kwargs: dict = {"max_results": DDG_MAX_RESULTS, "topic": topic}
+    if topic == "news":
+        kwargs["include_published_date"] = True
+    if time_range is not None:
+        kwargs["time_range"] = time_range
     try:
         client = TavilyClient(api_key=TAVILY_API_KEY)
-        response = client.search(query, max_results=DDG_MAX_RESULTS)
+        response = client.search(query, **kwargs)
         return [
-            {"title": r.get("title", ""), "url": r.get("url", ""), "snippet": r.get("content", "")}
+            {
+                "title": r.get("title", ""),
+                "url": r.get("url", ""),
+                "snippet": r.get("content", ""),
+                "published_date": r.get("published_date", ""),
+            }
             for r in response.get("results", [])
         ]
     except Exception as e:

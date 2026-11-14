@@ -368,12 +368,12 @@ async def _gnews(query: str) -> list[types.TextContent]:
     if not articles:
         from tools.web import _web_search
         today = datetime.date.today().isoformat()
-        web = await _web_search(f"{query} {today}")
+        web = await _web_search(query, topic="news", time_range="week")
         web_text = web[0].text if web else "No results found."
         return [types.TextContent(type="text", text=(
             f"The news feed had nothing for '{query}' yet (free tier lags ~12h). "
-            f"Live web results as of {today} are below — summarize them for the user:\n\n"
-            f"{web_text}"
+            f"Live news-topic web results (past week, as of {today}) are below — "
+            f"summarize them for the user:\n\n{web_text}"
         ))]
     text = "\n\n".join(
         f"{a.get('title', '')}\n{a.get('url', '')}\n{a.get('description', '')}"
