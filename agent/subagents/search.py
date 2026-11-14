@@ -14,9 +14,11 @@ MAX_TOOL_CALLS = 3
 
 SYSTEM_PROMPT = (
     "You are a focused web-research worker. You are given ONE specific question. "
-    "Use web_search for general facts, news_search for current events or anything "
-    "time-sensitive, and fetch_page to read a specific URL when a snippet is not "
-    "enough. When you have the facts, STOP calling tools "
+    "FIRST decide the tool: if the question mentions today, now, latest, current, "
+    "recent, this week, or any ongoing/breaking event, you MUST use news_search — "
+    "NOT web_search. Use web_search only for timeless general facts with no recency. "
+    "Use fetch_page to read a specific URL when a snippet is not enough. "
+    "When you have the facts, STOP calling tools "
     "and write a short, concrete digest that directly answers the question — "
     "include the key facts, numbers, and any source URLs. Do not pad it. "
     "Stay on the single question you were given; do not branch into related topics."
@@ -27,12 +29,12 @@ TOOLS_SCHEMA = [
     {
         "type": "function",
         "function": {
-            "name": "web_search",
-            "description": "Search the web for a focused query. Returns titled result snippets with URLs.",
+            "name": "news_search",
+            "description": "Search recent NEWS for a focused query. Use this (not web_search) when the question is about current events, breaking news, or anything time-sensitive — it filters to the last week and prefers news sources.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "query": {"type": "string", "description": "The focused search query."}
+                    "query": {"type": "string", "description": "The focused news query."}
                 },
                 "required": ["query"],
             },
@@ -41,12 +43,12 @@ TOOLS_SCHEMA = [
     {
         "type": "function",
         "function": {
-            "name": "news_search",
-            "description": "Search recent NEWS for a focused query. Use this (not web_search) when the question is about current events, breaking news, or anything time-sensitive — it filters to the last week and prefers news sources.",
+            "name": "web_search",
+            "description": "Search the web for a focused query. Returns titled result snippets with URLs. Use only for timeless facts, not current events.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "query": {"type": "string", "description": "The focused news query."}
+                    "query": {"type": "string", "description": "The focused search query."}
                 },
                 "required": ["query"],
             },
