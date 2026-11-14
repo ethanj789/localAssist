@@ -4,6 +4,7 @@ agent/subagents/search.py — the `subagent_search` worker (web research).
 Bounded granite loop whitelisted to the web tools only (web_search, fetch_page).
 """
 from tools.web import _web_search, _fetch_webpage
+from tools.events import _recent_events
 from .core import run_subagent_loop
 
 AGENT_NAME = "subagent_search"
@@ -13,8 +14,9 @@ MAX_TOOL_CALLS = 3
 
 SYSTEM_PROMPT = (
     "You are a focused web-research worker. You are given ONE specific question. "
-    "Use web_search to find the missing facts, and fetch_page to read a specific "
-    "URL when a snippet is not enough. When you have the facts, STOP calling tools "
+    "Use web_search for general facts, news_search for current events or anything "
+    "time-sensitive, and fetch_page to read a specific URL when a snippet is not "
+    "enough. When you have the facts, STOP calling tools "
     "and write a short, concrete digest that directly answers the question — "
     "include the key facts, numbers, and any source URLs. Do not pad it. "
     "Stay on the single question you were given; do not branch into related topics."
@@ -31,6 +33,20 @@ TOOLS_SCHEMA = [
                 "type": "object",
                 "properties": {
                     "query": {"type": "string", "description": "The focused search query."}
+                },
+                "required": ["query"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "news_search",
+            "description": "Search recent NEWS for a focused query. Use this (not web_search) when the question is about current events, breaking news, or anything time-sensitive — it filters to the last week and prefers news sources.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "The focused news query."}
                 },
                 "required": ["query"],
             },
@@ -67,6 +83,15 @@ async def _run_web_search(args: dict) -> str:
     return _text(await _web_search(query))
 
 
+async def _run_news_search(args: dict) -> str:
+    query = (args.get("query") or args.get("target") or "").strip()
+    if not query:
+        return "news_search needs a 'query'."
+    # Same path as the main agent: GNews free budget first, Tavily-news fallback
+    # on empty — keeps news handling uniform across the app.
+    return _text(await _recent_events("news", query))
+
+
 async def _run_fetch_page(args: dict) -> str:
     url = (args.get("url") or args.get("target") or "").strip()
     if not url:
@@ -79,6 +104,7 @@ async def _run_fetch_page(args: dict) -> str:
 
 TOOL_RUNNERS = {
     "web_search": _run_web_search,
+    "news_search": _run_news_search,
     "fetch_page": _run_fetch_page,
 }
 
