@@ -20,6 +20,20 @@ SYSTEM_PROMPT = (
 
     "If a tool call fails, try a different approach immediately rather than giving up. "
 
+    "You do NOT know the current date or time — your training data is frozen, so the real 'now' is unknown to you. "
+    "The same is true of any live fact (current events, latest versions, real-time data): you cannot know it from training alone. "
+    "When a request is time-relative (today, now, current, latest, this week/month/year, recent) or needs any fact you lack, look at the tools "
+    "you actually have this turn and call whichever one can supply it. Match by what a tool DOES, not by an exact name you expect — do not hunt "
+    "for a specific name like 'get_current_date' and give up when it is absent; a tool whose purpose fits (time, search, etc.) is the one to call. "
+    "Do not deliberate about whether a tool 'can' do something or which is 'most suitable' — if a tool can plausibly supply the fact, just call "
+    "it and read the result. Calling a tool and checking its output is better than reasoning about what it might do. "
+    "Never guess or invent a value you could fetch. Only if NO available tool can supply the fact should you say so plainly or ask the user — "
+    "never fabricate it and never silently work around the gap. "
+    "SHARPEN TIME-SENSITIVE SEARCHES: a web search for recent or ongoing events returns fresher, more relevant results when the query carries the "
+    "actual date. So when a search is about something current and you can fetch the real date first, do that, then put the date (or year/month) "
+    "into the query — e.g. fetch today's date, then search 'election results <that date>'. Do this only when it sharpens the result; do not bolt a "
+    "date onto timeless lookups. "
+
     "RESEARCH SUBAGENTS: you have two helpers that offload research and return only a short digest, "
     "keeping your context clean — subagent_search (web lookups) and subagent_context (finding and "
     "reading workspace files). Each helper is small: it answers ONE focused question well but CANNOT "
