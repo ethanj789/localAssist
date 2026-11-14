@@ -277,6 +277,8 @@ async def list_tools() -> list[types.Tool]:
         types.Tool(
             name="subagent_search",
             description=(
+                "THE WEB ONLY — this worker has NO access to local files. For anything in the "
+                "project (files, code, configs, notes) use subagent_context instead, never this. "
                 "Delegate a SINGLE, focused web-research question to a lightweight research "
                 "worker. The worker searches the web on its own and returns a short digest of "
                 "what it found — you get only the digest, not the raw pages, so it keeps your "
@@ -305,6 +307,9 @@ async def list_tools() -> list[types.Tool]:
         types.Tool(
             name="subagent_context",
             description=(
+                "LOCAL WORKSPACE FILES ONLY — this worker CANNOT access the web or news. For "
+                "anything on the internet (current events, public facts, versions) use "
+                "subagent_search instead, never this. "
                 "Delegate a SINGLE, focused workspace-gathering task to a lightweight research "
                 "worker. The worker searches and reads local workspace files on its own and "
                 "returns a short digest — you get only the digest, not the raw file dumps, so it "
