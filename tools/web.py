@@ -14,7 +14,7 @@ from mcp import types
 
 log = logging.getLogger(__name__)
 
-DDG_MAX_RESULTS = 3
+MAX_SEARCH_RESULTS = 10
 FETCH_TIMEOUT   = 8
 MAX_TEXT_CHARS  = 2000
 
@@ -39,12 +39,14 @@ MAX_TEXT_CHARS  = 2000
 #     return [types.TextContent(type="text", text="\n".join(lines))]
 
 async def _web_search(query: str, topic: str = "general", time_range: str | None = None) -> list[types.TextContent]:
-    results = _tavily_search(query, topic=topic, time_range=time_range)
+    answer, results = _tavily_search(query, topic=topic, time_range=time_range)
 
     if not results:
         return [types.TextContent(type="text", text="No results found.")]
 
     lines = []
+    if answer:
+        lines.append(f"Summary: {answer}\n")
     for i, r in enumerate(results, 1):
         date = f" ({r['published_date']})" if r.get("published_date") else ""
         lines.append(f"{i}. {r['title']}{date}\n   URL: {r['url']}\n   {r['snippet']}\n")
@@ -52,11 +54,15 @@ async def _web_search(query: str, topic: str = "general", time_range: str | None
     return [types.TextContent(type="text", text="\n".join(lines))]
 
 
-def _tavily_search(query: str, topic: str = "general", time_range: str | None = None) -> list[dict]:
+def _tavily_search(query: str, topic: str = "general", time_range: str | None = None) -> tuple[str, list[dict]]:
+    """Returns (answer, results). `answer` is Tavily's own LLM synthesis of the
+    results (include_answer) — free on a basic search — so our small local model
+    gets a pre-digested summary instead of having to distill raw snippets itself.
+    Empty string if Tavily returned none."""
     TAVILY_API_KEY = os.getenv("TAVILY_API_KEY", "")
     # Not setting filter_by_published_date on purpose — it also drops sources with
     # no detectable date, which can lose a fresh article Tavily can't date-parse.
-    kwargs: dict = {"max_results": DDG_MAX_RESULTS, "topic": topic}
+    kwargs: dict = {"max_results": MAX_SEARCH_RESULTS, "topic": topic, "include_answer": True}
     if topic == "news":
         kwargs["include_published_date"] = True
     if time_range is not None:
@@ -64,7 +70,7 @@ def _tavily_search(query: str, topic: str = "general", time_range: str | None = 
     try:
         client = TavilyClient(api_key=TAVILY_API_KEY)
         response = client.search(query, **kwargs)
-        return [
+        results = [
             {
                 "title": r.get("title", ""),
                 "url": r.get("url", ""),
@@ -73,16 +79,17 @@ def _tavily_search(query: str, topic: str = "general", time_range: str | None = 
             }
             for r in response.get("results", [])
         ]
+        return response.get("answer") or "", results
     except Exception as e:
         log.error("Tavily error: %s", e)
-        return []
+        return "", []
 
 
 # def _ddg_search(query: str) -> list[dict]:
 #     """DuckDuckGo search (available as an alternative to Tavily)."""
 #     try:
 #         with DDGS(timeout=5) as ddgs:
-#             raw = ddgs.text(query, max_results=DDG_MAX_RESULTS)
+#             raw = ddgs.text(query, max_results=MAX_SEARCH_RESULTS)
 #             return [
 #                 {"title": r.get("title", ""), "url": r.get("href", ""), "snippet": r.get("body", "")}
 #                 for r in (raw or [])
