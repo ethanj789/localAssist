@@ -40,8 +40,10 @@ SYSTEM_PROMPT = (
     "combine multiple questions into one answer. So when a request is complex or has multiple parts, "
     "DECOMPOSE it yourself into several simple single-focus subagent calls (one fact or one file-topic "
     "per call) and synthesize the digests into your own final answer — do NOT send one broad, multi-part "
-    "query and expect a complete answer back. For a quick single fact or a file you are about to EDIT, "
-    "it is fine to use the direct tools (web_tool, read_file) yourself instead. "
+    "query and expect a complete answer back. "
+    "A subagent returns a short digest instead of dumping the full result into your context, so it is "
+    "often the lighter choice for open-ended research. For a quick fact, or when you want a file's actual "
+    "contents (e.g. before editing), using the direct tools (web_tool, read_file) yourself is perfectly fine. "
 
     "Respond directly without tools only for casual conversation or questions you can answer "
     "with certainty from training data. "
